@@ -9,9 +9,19 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <title>MatchDay — Community Football</title>
+    <script>
+      window.addEventListener('error', function (e) {
+        document.body.innerHTML = '<pre style="color:#ff6b6b;background:#10131A;padding:20px;white-space:pre-wrap;font-size:13px;min-height:100vh;margin:0">MATCHDAY ERROR:\n\n' + e.message + '\n\n' + (e.filename || '') + ' line ' + e.lineno + '</pre>';
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        document.body.innerHTML = '<pre style="color:#ff6b6b;background:#10131A;padding:20px;white-space:pre-wrap;font-size:13px;min-height:100vh;margin:0">MATCHDAY ERROR (async):\n\n' + (e.reason && (e.reason.message || e.reason)) + '</pre>';
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
+
+  
