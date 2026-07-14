@@ -1,0 +1,12 @@
+{
+  "name": "MatchDay — Community Football",
+  "short_name": "MatchDay",
+  "description": "Host community football matches, track them live, publish results for the fans.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#10131A",
+  "theme_color": "#10131A",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
