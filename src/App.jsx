@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase.js";
 
 /* ---------- DB row ⇄ app shape ---------- */
-const rowToMatch = (r) => ({
+const rowToMatchBase = (r) => ({
   id: r.id,
   teamA: { name: r.team_a_name, color: r.team_a_color },
   teamB: { name: r.team_b_name, color: r.team_b_color },
@@ -32,8 +32,16 @@ const rowToMatch = (r) => ({
   scorersA: r.scorers_a || "",
   scorersB: r.scorers_b || "",
   duration: r.duration_minutes || 90,
-  halfPrompt: r.status === "Live" && !r.running && !r.on_break && r.elapsed_seconds >= ((r.duration_minutes || 90) * 30) && !r.second_half,
+  timerStartedAt: r.timer_started_at,
+  breakEndsAt: r.break_ends_at,
+  awaitingSince: r.awaiting_since,
 });
+
+/* Half-time prompt is a derived state, never stored */
+const deriveHalfPrompt = (m) =>
+  m.status === "Live" && !m.running && !m.onBreak && !m.secondHalf && m.elapsed >= ((m.duration || 90) * 30);
+
+const rowToMatch = (r) => { const m = rowToMatchBase(r); m.halfPrompt = deriveHalfPrompt(m); return m; };
 
 const matchToRow = (p) => {
   const out = {};
@@ -49,11 +57,14 @@ const matchToRow = (p) => {
   if (p.odds !== undefined) { out.odds_a = p.odds.A; out.odds_draw = p.odds.Draw; out.odds_b = p.odds.B; }
   if (p.postponed !== undefined) out.postponed = p.postponed;
   if (p.pauseReason !== undefined) out.pause_reason = p.pauseReason;
+  if (p.timerStartedAt !== undefined) out.timer_started_at = p.timerStartedAt;
+  if (p.breakEndsAt !== undefined) out.break_ends_at = p.breakEndsAt;
+  if (p.awaitingSince !== undefined) out.awaiting_since = p.awaitingSince;
   return out;
 };
 
 /* ============================================================
-   MATCHDAY — Community Football Website
+   MATCH ERA — Community Football Website
    Flow: Captain creates → starts 90-min timer → at FULL TIME the
    site REQUESTS the final score from the captain → captain submits
    → result is published to the News Feed and bets are settled
@@ -88,6 +99,10 @@ const DEFAULT_ODDS = { A: 1.8, Draw: 3.0, B: 1.8 };
 
 export default function App() {
   const [screen, setScreen] = useState("auth");
+  const screenRef = useRef("auth");
+  useEffect(() => { screenRef.current = screen; }, [screen]);
+  const [newPass, setNewPass] = useState("");
+  const [newPass2, setNewPass2] = useState("");
   const [authStep, setAuthStep] = useState("form");
   const [authMode, setAuthMode] = useState("signup");
   const [form, setForm] = useState({ contact: "", name: "", role: "Fan", otp: "", password: "", password2: "" });
@@ -108,9 +123,10 @@ export default function App() {
   const [follows, setFollows] = useState([]); // captain ids I follow
   const [adminPosts, setAdminPosts] = useState([]);
   const [adminPostText, setAdminPostText] = useState("");
+  const [onlineCount, setOnlineCount] = useState(1);
+  const [followerCounts, setFollowerCounts] = useState({});
   const [posterFor, setPosterFor] = useState(null);
   const [toast, setToast] = useState(null);
-  const [demoSpeed, setDemoSpeed] = useState(false); // real time by default
   const [now, setNow] = useState(Date.now());
   const alertsFired = useRef({});
 
@@ -126,9 +142,10 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) loadMe(session.user.id);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (session) loadMe(session.user.id);
-      else { setMe(null); setScreen("auth"); }
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") { setScreen("recovery"); return; }
+      if (session && screenRef.current !== "recovery") loadMe(session.user.id);
+      else if (!session) { setMe(null); setScreen("auth"); }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -153,6 +170,12 @@ export default function App() {
     ]);
     const { data: fl } = await supabase.from("follows").select("captain_id").eq("fan_id", meObj.id);
     if (fl) setFollows(fl.map((x) => x.captain_id));
+    const { data: allFl } = await supabase.from("follows").select("captain_id");
+    if (allFl) {
+      const counts = {};
+      allFl.forEach((x) => { counts[x.captain_id] = (counts[x.captain_id] || 0) + 1; });
+      setFollowerCounts(counts);
+    }
     const { data: ps } = await supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(20);
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
@@ -187,6 +210,18 @@ export default function App() {
     return () => { supabase.removeChannel(channel); clearInterval(poll); };
   }, [me && me.id]);
 
+  /* ---------- PRESENCE: live count of users on the site ---------- */
+  useEffect(() => {
+    if (!me) return;
+    const ch = supabase.channel("online-users", { config: { presence: { key: me.id } } });
+    ch.on("presence", { event: "sync" }, () => {
+      setOnlineCount(Math.max(1, Object.keys(ch.presenceState()).length));
+    }).subscribe(async (status) => {
+      if (status === "SUBSCRIBED") await ch.track({ at: Date.now() });
+    });
+    return () => { supabase.removeChannel(ch); };
+  }, [me && me.id]);
+
   /* A scheduled match can only be kicked off by its captain,
      and only once its scheduled date & time is due */
   const kickoffAt = (m) => new Date(`${m.date}T${m.time}`).getTime();
@@ -199,64 +234,63 @@ export default function App() {
     return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${mm}m` : `${mm}m ${Math.floor((ms % 60000) / 1000)}s`;
   };
 
-  /* ---------- TIMER: at 90' status becomes AwaitingScore and the
-     site requests the final score from the captain ---------- */
-  const pushCounter = useRef({});
+  /* ---------- TIMESTAMP TIMER ENGINE ----------
+     The clock is computed from WHEN it started, not from counting
+     ticks — exact real time for captain and fans alike, immune to
+     pauses, refreshes, and slow connections. */
+  const liveElapsed = (m) => {
+    if (m.status !== "Live") return m.elapsed;
+    if (m.running && m.timerStartedAt) {
+      const FULL = (m.duration || 90) * 60;
+      return Math.min(FULL, m.elapsed + Math.max(0, Math.floor((now - new Date(m.timerStartedAt).getTime()) / 1000)));
+    }
+    return m.elapsed;
+  };
+  const breakLeft = (m) => (m.onBreak && m.breakEndsAt ? Math.max(0, Math.floor((new Date(m.breakEndsAt).getTime() - now) / 1000)) : 0);
+
+  /* Captain's client watches its own live matches and fires the
+     half-time / full-time / break-over transitions */
   useEffect(() => {
-    const iv = setInterval(() => {
-      setMatches((ms) =>
-        ms.map((m) => {
-          if (m.status !== "Live") return m;
-          const iAmCaptain = me && m.createdBy === me.id;
-          const step = demoSpeed && iAmCaptain ? 60 : 1;
+    if (!me) return;
+    matches.forEach((m) => {
+      if (m.status !== "Live" || m.createdBy !== me.id) return;
+      const FULL = (m.duration || 90) * 60, HALF = FULL / 2;
+      if (!alertsFired.current[m.id]) alertsFired.current[m.id] = {};
+      const el = liveElapsed(m);
 
-          /* Half-time break countdown */
-          if (m.onBreak) {
-            const left = Math.max(0, m.breakRemaining - step);
-            if (!iAmCaptain) return { ...m, breakRemaining: left }; // fans: local display only
-            if (left === 0) {
-              notify(`▶ SECOND HALF — ${m.teamA.name} vs ${m.teamB.name}. Break over, timer resumed.`);
-              patchMatch(m.id, { onBreak: false, breakRemaining: 0, running: true, secondHalf: true });
-              return m;
-            }
-            pushCounter.current[m.id] = (pushCounter.current[m.id] || 0) + 1;
-            if (pushCounter.current[m.id] % 15 === 0) patchMatch(m.id, { breakRemaining: left });
-            return { ...m, breakRemaining: left };
-          }
+      if (m.onBreak && m.breakEndsAt && breakLeft(m) === 0 && !alertsFired.current[m.id].breakDone) {
+        alertsFired.current[m.id].breakDone = true;
+        notify(`▶ SECOND HALF — ${m.teamA.name} vs ${m.teamB.name}. Break over, timer resumed.`);
+        patchMatch(m.id, { onBreak: false, breakEndsAt: null, running: true, secondHalf: true, timerStartedAt: new Date().toISOString() });
+        return;
+      }
+      if (m.running && el >= HALF && !m.secondHalf && !alertsFired.current[m.id].half) {
+        alertsFired.current[m.id].half = true;
+        notify(`⏱ HALF TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain: take a 10-minute break?`);
+        patchMatch(m.id, { elapsed: HALF, running: false, timerStartedAt: null });
+        return;
+      }
+      if (m.running && el >= FULL && !alertsFired.current[m.id].full) {
+        alertsFired.current[m.id].full = true;
+        notify(`🏁 FULL TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain, please upload the result.`);
+        patchMatch(m.id, { elapsed: FULL, running: false, timerStartedAt: null, status: "AwaitingScore", awaitingSince: new Date().toISOString() });
+      }
+    });
+  }, [now, me && me.id, matches]);
 
-          if (!m.running) return m;
-          const FULL = (m.duration || 90) * 60, HALF = FULL / 2;
-          const next = Math.min(m.elapsed + step, FULL);
-
-          /* Fans interpolate the clock locally between realtime updates */
-          if (!iAmCaptain) return { ...m, elapsed: next };
-
-          if (!alertsFired.current[m.id]) alertsFired.current[m.id] = {};
-
-          /* 45' — pause and ask the captain about a half-time break */
-          if (next >= HALF && !m.secondHalf && !alertsFired.current[m.id].half) {
-            alertsFired.current[m.id].half = true;
-            notify(`⏱ HALF TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain: take a 10-minute break?`);
-            patchMatch(m.id, { elapsed: HALF, running: false, halfPrompt: true });
-            return { ...m, elapsed: HALF, running: false, halfPrompt: true };
-          }
-
-          if (next >= FULL && !alertsFired.current[m.id].full) {
-            alertsFired.current[m.id].full = true;
-            notify(`🏁 FULL TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain, please submit the final score.`);
-            patchMatch(m.id, { elapsed: next, running: false, status: "AwaitingScore" });
-            return { ...m, elapsed: next, running: false, status: "AwaitingScore" };
-          }
-
-          /* Throttled push: every 15 ticks the true clock syncs to the database */
-          pushCounter.current[m.id] = (pushCounter.current[m.id] || 0) + 1;
-          if (pushCounter.current[m.id] % 15 === 0) patchMatch(m.id, { elapsed: next });
-          return { ...m, elapsed: next };
-        })
-      );
-    }, 1000);
-    return () => clearInterval(iv);
-  }, [demoSpeed, me]);
+  /* Late-score nudge: 20 minutes after full time, remind the captain */
+  useEffect(() => {
+    if (!me) return;
+    matches.forEach((m) => {
+      if (m.status !== "AwaitingScore" || m.createdBy !== me.id || !m.awaitingSince) return;
+      const mins = (now - new Date(m.awaitingSince).getTime()) / 60000;
+      if (!alertsFired.current[m.id]) alertsFired.current[m.id] = {};
+      if (mins >= 20 && !alertsFired.current[m.id].late) {
+        alertsFired.current[m.id].late = true;
+        notify(`⚠️ ${m.teamA.name} vs ${m.teamB.name} ended over 20 minutes ago — please upload the result now. After 25 minutes the admin can override.`);
+      }
+    });
+  }, [now, me && me.id, matches]);
 
   /* ---------- AUTH ---------- */
   const submitAuth = async () => {
@@ -342,7 +376,12 @@ export default function App() {
   /* ---------- MATCH ACTIONS ---------- */
   /* Optimistic local update + database write; realtime confirms for everyone */
   const patchMatch = (id, patch) => {
-    setMatches((ms) => ms.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+    setMatches((ms) => ms.map((m) => {
+      if (m.id !== id) return m;
+      const merged = { ...m, ...patch };
+      merged.halfPrompt = deriveHalfPrompt(merged);
+      return merged;
+    }));
     const row = matchToRow(patch);
     if (Object.keys(row).length > 0) {
       supabase.from("matches").update(row).eq("id", id).then(({ error }) => {
@@ -363,7 +402,7 @@ export default function App() {
   const startMatch = (m) => {
     if (m.createdBy !== me.id) return notify("Only this match's captain can start it");
     if (!isDue(m)) return notify(`Kick-off unlocks at ${m.time} on ${m.date}`);
-    patchMatch(m.id, { status: "Live", running: true });
+    patchMatch(m.id, { status: "Live", running: true, elapsed: 0, timerStartedAt: new Date().toISOString() });
     notify(`🟢 KICK OFF — ${m.teamA.name} vs ${m.teamB.name}`);
   };
 
@@ -421,7 +460,9 @@ export default function App() {
     refreshAll();
   };
 
-  const minute = (m) => Math.min(m.duration || 90, Math.floor(m.elapsed / 60));
+  const minute = (m) => Math.min(m.duration || 90, Math.floor(liveElapsed(m) / 60));
+  /* Past results older than 30 days are retired from view (and purged nightly by the database) */
+  const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
   const myBal = me ? wallets[me.id] || 0 : 0;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
 
@@ -489,13 +530,43 @@ export default function App() {
     }
   `;
 
+  /* ============================================================ PASSWORD RECOVERY */
+  if (screen === "recovery") {
+    return (
+      <div className="md-root" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px" }}>
+        <style>{css}</style>
+        <div style={{ maxWidth: 440, width: "100%" }}>
+          <div className="display" style={{ fontSize: 40, color: T.floodlight, lineHeight: 1 }}>Reset Password</div>
+          <div style={{ color: T.muted, marginTop: 8, marginBottom: 24 }}>Set a new password for your account.</div>
+          <div className="card" style={{ display: "grid", gap: 12 }}>
+            <input className="input" type="password" autoComplete="new-password" placeholder="New password (8+ letters & numbers)" maxLength={64}
+              value={newPass} onChange={(e) => setNewPass(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 64))} />
+            <input className="input" type="password" autoComplete="new-password" placeholder="Confirm new password" maxLength={64}
+              value={newPass2} onChange={(e) => setNewPass2(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 64))} />
+            <button className="btn btn-gold" onClick={async () => {
+              if (!isStrongPassword(newPass)) return notify("Password must be 8+ characters with letters and numbers");
+              if (newPass !== newPass2) return notify("Passwords don't match");
+              const { error } = await supabase.auth.updateUser({ password: newPass });
+              if (error) return notify(error.message);
+              setNewPass(""); setNewPass2("");
+              notify("✔ Password updated — welcome back!");
+              const { data: { session } } = await supabase.auth.getSession();
+              if (session) loadMe(session.user.id); else setScreen("auth");
+            }}>Save new password</button>
+          </div>
+        </div>
+        {toast && <Toast msg={toast} />}
+      </div>
+    );
+  }
+
   /* ============================================================ AUTH */
   if (screen === "auth") {
     return (
       <div className="md-root" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px" }}>
         <style>{css}</style>
         <div style={{ maxWidth: 440, width: "100%" }}>
-          <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>MatchDay</div>
+          <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Match Era</div>
           <div style={{ color: T.muted, marginTop: 8, marginBottom: 30, fontSize: 17 }}>
             The community football website. Host matches, track them live, publish results for the fans.
           </div>
@@ -561,7 +632,7 @@ export default function App() {
   }
 
   /* ============================================================ WEBSITE */
-  const published = matches.filter((m) => m.published);
+  const published = matches.filter((m) => m.published && isFresh(m));
   const upcoming = published.filter((m) => m.status === "Scheduled");
   const liveNow = published.filter((m) => m.status === "Live" || m.status === "AwaitingScore");
   const results = published.filter((m) => m.status === "ResultPublished");
@@ -576,7 +647,7 @@ export default function App() {
       <header style={{ borderBottom: "1px solid #232b25", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
-            <div className="display" style={{ fontSize: 26, color: T.floodlight }}>MatchDay</div>
+            <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Match Era</div>
             <div className={`user-pill ${me.role !== "Admin" ? "user-pill-clickable" : ""}`} title="View profile" onClick={() => me.role !== "Admin" && setPage("profile")}>
               <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
@@ -611,17 +682,18 @@ export default function App() {
         ))}
 
         {/* SCORE REQUEST BANNER — the site requests the final score */}
-        {pendingScores.map((m) => (
-          <div key={m.id} className="banner" style={{ marginBottom: 16 }}>
-            <span>🏁 Full time: {m.teamA.name} vs {m.teamB.name}. Submit the final score to publish the result.</span>
-            <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => setOpenMatch(m.id)}>Submit final score</button>
-          </div>
-        ))}
-
-        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: T.muted, marginBottom: 18 }}>
-          <input type="checkbox" checked={demoSpeed} onChange={(e) => setDemoSpeed(e.target.checked)} />
-          Testing mode: fast timer (1 second = 1 match minute). Leave off for real-time matches.
-        </label>
+        {pendingScores.map((m) => {
+          const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
+          return (
+            <div key={m.id} className="banner" style={{ marginBottom: 16 }}>
+              <span>
+                {mins >= 20 ? `⚠️ ${mins} MINUTES LATE — ` : "🏁 Full time: "}
+                {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it{mins >= 20 ? " (admin can override after 25 mins)" : ""}.
+              </span>
+              <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => setOpenMatch(m.id)}>Upload result</button>
+            </div>
+          );
+        })}
 
         {/* ---------- NEWS FEED (homepage) ---------- */}
         {page === "feed" && (
@@ -639,7 +711,7 @@ export default function App() {
             {adminPosts.length > 0 && adminPosts.slice(0, 3).map((p) => (
               <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#FFD447", borderWidth: 1.5 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                  <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 MatchDay</span>
+                  <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Match Era</span>
                   <span style={{ fontSize: 11, color: T.muted }}>{(p.created_at || "").slice(0, 10)}</span>
                 </div>
                 <div style={{ fontSize: 14, lineHeight: 1.5 }}>{p.message}</div>
@@ -653,7 +725,7 @@ export default function App() {
                 <>
                   <SectionTitle color={T.floodlight}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
                   </div>
                 </>
               ) : null;
@@ -663,7 +735,7 @@ export default function App() {
               <>
                 <SectionTitle color={T.live}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
                 </div>
               </>
             )}
@@ -671,13 +743,13 @@ export default function App() {
             <SectionTitle color={T.floodlight}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: T.muted, marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 28 }}>
-              {upcoming.map((m) => <MatchCard key={m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+              {upcoming.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
             </div>
 
             <SectionTitle color={T.chalk}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: T.muted }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid">
-              {results.map((m) => <MatchCard key={m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+              {results.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
             </div>
           </>
         )}
@@ -691,7 +763,7 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {mine.map((m) => <MatchCard key={m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView myBetCount={0} />)}
+              {mine.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView myBetCount={0} />)}
             </div>
           </>
         )}
@@ -727,7 +799,7 @@ export default function App() {
             me={me}
             wallet={myBal}
             stats={me.role === "Captain"
-              ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["Published", matches.filter((x) => x.createdBy === me.id && x.published).length], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
+              ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["🔔 Followers", followerCounts[me.id] || 0], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
               : { a: ["Bets placed", myBets.length], b: ["Bets won", myBets.filter((x) => x.won).length], c: ["Total winnings", `₦${myBets.filter((x) => x.won).reduce((t, x) => t + Math.round(x.stake * x.odds), 0).toLocaleString()}`] }}
             onSave={updateProfile}
             notify={notify}
@@ -743,7 +815,7 @@ export default function App() {
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 <div className="feedgrid">
                   {users.filter((u) => u.role === "Captain").sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0)).map((c) => {
-                    const theirs = matches.filter((x) => x.createdBy === c.id && x.published);
+                    const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                     const today = new Date().toISOString().slice(0, 10);
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
                     const publishedToday = theirs.filter((x) => x.date === today).length;
@@ -763,6 +835,7 @@ export default function App() {
                         <div style={{ display: "flex", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
                           <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>{publishedToday} match{publishedToday === 1 ? "" : "es"} today</span>
                           <span className="chip" style={{ background: "#232b25", color: T.chalk }}>{theirs.length} all-time</span>
+                          <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</span>
                         </div>
                         {c.contactInfo && <div style={{ fontSize: 12, color: T.muted }}>📞 Join the team: <span style={{ color: T.chalk }}>{c.contactInfo}</span></div>}
                         {me.role === "Fan" && c.id !== me.id && (
@@ -779,7 +852,7 @@ export default function App() {
             ) : (
               (() => {
                 const c = users.find((u) => u.id === viewCaptain);
-                const theirs = matches.filter((x) => x.createdBy === c.id && x.published);
+                const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                 return (
                   <>
                     <button className="btn btn-ghost" style={{ marginBottom: 14, padding: "8px 14px", fontSize: 13 }} onClick={() => setViewCaptain(null)}>← All captains</button>
@@ -789,7 +862,7 @@ export default function App() {
                       </div>
                       <div style={{ flex: 1 }}>
                         <div className="display" style={{ fontSize: 24 }}>{c.name}</div>
-                        <div style={{ fontSize: 13, color: T.muted }}>{theirs.length} published match{theirs.length === 1 ? "" : "es"}</div>
+                        <div style={{ fontSize: 13, color: T.muted }}>{theirs.length} published match{theirs.length === 1 ? "" : "es"} · 🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</div>
                         {c.contactInfo && <div style={{ fontSize: 13, color: T.floodlight, marginTop: 4 }}>📞 Want to join the team? Contact: {c.contactInfo}</div>}
                       </div>
                       {me.role === "Fan" && c.id !== me.id && (
@@ -801,11 +874,11 @@ export default function App() {
                     {theirs.length === 0 && <div className="card" style={{ color: T.muted }}>This captain hasn't published any matches yet.</div>}
                     {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <SectionTitle color={T.floodlight}>Current & Upcoming</SectionTitle>}
                     <div className="feedgrid" style={{ marginBottom: 20 }}>
-                      {theirs.filter((x) => x.status !== "ResultPublished").map((m) => <MatchCard key={m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
+                      {theirs.filter((x) => x.status !== "ResultPublished").map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
                     </div>
                     {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <SectionTitle color={T.chalk}>Past Games Record</SectionTitle>}
                     <div className="feedgrid">
-                      {theirs.filter((x) => x.status === "ResultPublished").sort((a, b) => (a.date < b.date ? 1 : -1)).map((m) => <MatchCard key={m.id} m={m} minute={minute} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+                      {theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1)).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
                     </div>
                   </>
                 );
@@ -829,7 +902,7 @@ export default function App() {
           <div style={{ maxWidth: 560 }}>
             <div className="display" style={{ fontSize: 24, marginBottom: 16 }}>Wallet</div>
             <div className="card" style={{ textAlign: "center", padding: 30, marginBottom: 16 }}>
-              <div style={{ color: T.muted, fontSize: 13 }}>Balance (demo coins)</div>
+              <div style={{ color: T.muted, fontSize: 13 }}>Balance</div>
               <div className="display" style={{ fontSize: 44, color: T.floodlight }}>₦{myBal.toLocaleString()}</div>
               <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12, flexWrap: "wrap" }}>
                 <button className="btn btn-turf" onClick={() => setComingSoon("Wallet funding")}>+ Top up</button>
@@ -881,15 +954,28 @@ export default function App() {
 
             <SectionTitle color={T.live}>Awaiting Captain Score</SectionTitle>
             {matches.filter((m) => m.status === "AwaitingScore").length === 0 && <div className="card" style={{ color: T.muted, marginBottom: 16 }}>No matches waiting on a captain's score.</div>}
-            {matches.filter((m) => m.status === "AwaitingScore").map((m) => (
-              <div key={m.id} className="card" style={{ marginBottom: 10, fontSize: 14 }}>
-                {m.teamA.name} vs {m.teamB.name} — full time reached, captain has not yet submitted the score.
-              </div>
-            ))}
+            {matches.filter((m) => m.status === "AwaitingScore").map((m) => {
+              const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
+              return (
+                <div key={m.id} className="card" style={{ marginBottom: 10, fontSize: 14, display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700 }}>{m.teamA.name} vs {m.teamB.name}</span>
+                    <span className="chip" style={{ background: mins >= 25 ? "#3a1f1a" : "#232b25", color: mins >= 25 ? T.live : T.chalk }}>
+                      waiting {mins} min{mins === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {mins >= 25 ? (
+                    <AdminScoreOverride m={m} onSubmit={(a, b) => submitFinalScore(m, a, b)} />
+                  ) : (
+                    <div style={{ fontSize: 12, color: T.muted }}>Captain has {Math.max(0, 25 - mins)} more minutes before admin override unlocks.</div>
+                  )}
+                </div>
+              );
+            })}
 
             {/* Site stats */}
-            <div className="feedgrid" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 18 }}>
-              {[["Total users", users.length], ["Captains", users.filter((u) => u.role === "Captain").length], ["Fans", users.filter((u) => u.role === "Fan").length]].map(([l, v]) => (
+            <div className="feedgrid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", marginBottom: 18 }}>
+              {[["🟢 Online now", onlineCount], ["Total users", users.length], ["Captains", users.filter((u) => u.role === "Captain").length], ["Fans", users.filter((u) => u.role === "Fan").length]].map(([l, v]) => (
                 <div key={l} className="card" style={{ textAlign: "center", padding: 14 }}>
                   <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{l}</div>
                   <div className="display" style={{ fontSize: 26, color: T.floodlight }}>{v}</div>
@@ -910,6 +996,23 @@ export default function App() {
                   refreshAll();
                   notify("📢 Posted to the News Feed");
                 }}>Post announcement</button>
+              {adminPosts.length > 0 && (
+                <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: ".05em" }}>Live announcements</div>
+                  {adminPosts.map((p) => (
+                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 13, background: "#131a15", borderRadius: 10, padding: "8px 12px" }}>
+                      <span style={{ flex: 1 }}>{p.message}</span>
+                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, color: T.live, borderColor: "#3a1f1a" }}
+                        onClick={async () => {
+                          const { error } = await supabase.from("posts").delete().eq("id", p.id);
+                          if (error) return notify(error.message);
+                          refreshAll();
+                          notify("Announcement deleted");
+                        }}>Delete</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <SectionTitle color={T.floodlight}>Feature Requests ({feedbacks.length})</SectionTitle>
@@ -924,15 +1027,23 @@ export default function App() {
               </div>
             ))}
 
-            <SectionTitle color={T.chalk}>Users</SectionTitle>
-            <div style={{ display: "grid", gap: 8 }}>
-              {users.map((u) => (
-                <div key={u.id} className="card" style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: 12 }}>
-                  <span>{u.name} <span style={{ color: T.muted }}>· joined {u.joined}</span></span>
-                  <span className="chip" style={{ background: "#232b25" }}>{u.role}</span>
+            {["Admin", "Captain", "Fan"].map((role) => {
+              const group = users.filter((u) => u.role === role);
+              return (
+                <div key={role} style={{ marginBottom: 18 }}>
+                  <SectionTitle color={role === "Admin" ? T.floodlight : role === "Captain" ? T.turf === "#0E4D3A" ? "#5BC48F" : T.chalk : T.chalk}>{role}s ({group.length})</SectionTitle>
+                  {group.length === 0 && <div className="card" style={{ color: T.muted, fontSize: 13, padding: 12 }}>None yet.</div>}
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {group.map((u) => (
+                      <div key={u.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, padding: 12 }}>
+                        <span style={{ fontWeight: 700 }}>{u.name}</span>
+                        <span style={{ color: T.muted, fontSize: 12 }}>joined {u.joined}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
       </main>
@@ -943,18 +1054,21 @@ export default function App() {
           m={matches.find((x) => x.id === openMatch)}
           me={me}
           minute={minute}
+          breakLeft={breakLeft}
           myMatchBets={bets.filter((b) => b.userId === me.id && b.matchId === openMatch)}
           isDue={isDue}
           untilKickoff={untilKickoff}
           onClose={() => setOpenMatch(null)}
           onStart={startMatch}
-          onPauseResume={(m, reason) => patchMatch(m.id, m.running ? { running: false, pauseReason: reason || "Paused by captain" } : { running: true, pauseReason: null })}
+          onPauseResume={(m, reason) => patchMatch(m.id, m.running
+            ? { running: false, elapsed: liveElapsed(m), timerStartedAt: null, pauseReason: reason || "Paused by captain" }
+            : { running: true, timerStartedAt: new Date().toISOString(), pauseReason: null })}
           onHalfTime={(m, takeBreak) => {
             if (takeBreak) {
-              patchMatch(m.id, { halfPrompt: false, onBreak: true, breakRemaining: 600 });
+              patchMatch(m.id, { onBreak: true, breakEndsAt: new Date(Date.now() + 10 * 60000).toISOString() });
               notify("☕ 10-minute half-time break started. Second half resumes automatically.");
             } else {
-              patchMatch(m.id, { halfPrompt: false, running: true, secondHalf: true });
+              patchMatch(m.id, { onBreak: false, breakEndsAt: null, running: true, secondHalf: true, timerStartedAt: new Date().toISOString() });
               notify("▶ Second half under way!");
             }
           }}
@@ -971,7 +1085,7 @@ export default function App() {
       <footer style={{ borderTop: "1px solid #232b25", marginTop: 40, background: "#0d1014" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 20px", display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ maxWidth: 300 }}>
-            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>MatchDay</div>
+            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Match Era</div>
             <div style={{ fontSize: 13, color: T.muted, marginTop: 6, lineHeight: 1.5 }}>
               Community football. Host your matches, track them live, and publish results for the fans.
             </div>
@@ -984,7 +1098,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ borderTop: "1px solid #1a2019", padding: "14px 20px", textAlign: "center", fontSize: 12, color: T.muted }}>
-          © {new Date().getFullYear()} MatchDay · Built for the community
+          © {new Date().getFullYear()} Match Era · Built for the community
         </div>
       </footer>
 
@@ -1043,7 +1157,7 @@ function MiniLogo({ team, size = 42 }) {
   );
 }
 
-function MatchCard({ m, minute, onOpen, onPoster, onPlaceBet, mineView, canBetHint, myBetCount }) {
+function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineView, canBetHint, myBetCount }) {
   const showScore = m.status === "ResultPublished";
   return (
     <div className="card" style={{ display: "grid", gap: 12, cursor: "pointer", alignContent: "start" }} onClick={onOpen}>
@@ -1063,7 +1177,7 @@ function MatchCard({ m, minute, onOpen, onPoster, onPlaceBet, mineView, canBetHi
             <>
               <div className="display" style={{ fontSize: 22, color: "#FFD447" }}>HT</div>
               <div style={{ fontSize: 11, color: "#FFD447", fontWeight: 700 }}>
-                {m.onBreak ? `Break · ${Math.floor(m.breakRemaining / 60)}:${String(m.breakRemaining % 60).padStart(2, "0")}` : "Half-time break"}
+                {m.onBreak ? `Break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")}` : "Half-time break"}
               </div>
             </>
           ) : m.status === "Live" && !m.running ? (
@@ -1102,7 +1216,7 @@ function MatchCard({ m, minute, onOpen, onPoster, onPlaceBet, mineView, canBetHi
   );
 }
 
-function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onClose, onStart, onPauseResume, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
+function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilKickoff, onClose, onStart, onPauseResume, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
   const [fa, setFa] = useState(0);
   const [fb, setFb] = useState(0);
   const [postponing, setPostponing] = useState(false);
@@ -1111,6 +1225,7 @@ function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onC
   const [shootout, setShootout] = useState(false);
   const [scorersA, setScorersA] = useState("");
   const [scorersB, setScorersB] = useState("");
+  const [unknowns, setUnknowns] = useState([]); // [{name, team, tag: null|'sub'|'pen'}]
   const [pa, setPa] = useState(0);
   const [pb, setPb] = useState(0);
   useEffect(() => { setFa(0); setFb(0); setShootout(false); setPa(0); setPb(0); }, [m && m.id]);
@@ -1137,7 +1252,7 @@ function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onC
             </div>
             {m.status === "Live" && (m.halfPrompt || m.onBreak) && (
               <div style={{ color: "#FFD447", fontWeight: 700, fontSize: 13 }}>
-                {m.onBreak ? `Half-time break · ${Math.floor(m.breakRemaining / 60)}:${String(m.breakRemaining % 60).padStart(2, "0")} left` : "Half-time break"}
+                {m.onBreak ? `Half-time break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")} left` : "Half-time break"}
               </div>
             )}
             {m.status === "Live" && !m.halfPrompt && !m.onBreak && (m.running
@@ -1232,7 +1347,7 @@ function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onC
               <div style={{ background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 14, textAlign: "center" }}>
                 <div style={{ fontWeight: 700, color: "#FFD447" }}>☕ Half-time break</div>
                 <div className="display" style={{ fontSize: 30, color: "#FAF7EF" }}>
-                  {Math.floor(m.breakRemaining / 60)}:{String(m.breakRemaining % 60).padStart(2, "0")}
+                  {Math.floor(breakLeft(m) / 60)}:{String(breakLeft(m) % 60).padStart(2, "0")}
                 </div>
                 <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }} onClick={() => onHalfTime(m, false)}>Skip break — start second half now</button>
               </div>
@@ -1290,7 +1405,44 @@ function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onC
                     </div>
                   </div>
                 )}
-                <button className="btn btn-gold" onClick={() => onSubmitScore(m, fa, fb, shootout, pa, pb, scorersA, scorersB)}>Upload match result</button>
+                <button className="btn btn-gold" onClick={() => {
+                  /* Check scorer names against the starting squads */
+                  const squad = (list) => (list || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+                  const parseNames = (str) => (str || "").split(",").map((x) => x.trim().replace(/\s*x\d+$/i, "").replace(/\s*\((sub|pen)\)$/i, "")).filter(Boolean);
+                  const inSquad = (name, list) => squad(list).some((p) => p.includes(name.toLowerCase()) || name.toLowerCase().includes(p));
+                  const found = [];
+                  parseNames(scorersA).forEach((n) => { if (!inSquad(n, m.playersA)) found.push({ name: n, team: "A", tag: null }); });
+                  parseNames(scorersB).forEach((n) => { if (!inSquad(n, m.playersB)) found.push({ name: n, team: "B", tag: null }); });
+                  const unresolved = found.filter((f) => !unknowns.find((u) => u.name === f.name && u.team === f.team && u.tag));
+                  if (unresolved.length > 0) {
+                    setUnknowns(found.map((f) => unknowns.find((u) => u.name === f.name && u.team === f.team) || f));
+                    return;
+                  }
+                  /* Append (sub)/(pen) tags to the resolved names */
+                  const tagUp = (str) => (str || "").split(",").map((x) => {
+                    const clean = x.trim();
+                    const base = clean.replace(/\s*x\d+$/i, "").replace(/\s*\((sub|pen)\)$/i, "");
+                    const u = unknowns.find((k) => k.name.toLowerCase() === base.toLowerCase() && k.tag);
+                    return u ? `${clean} (${u.tag})` : clean;
+                  }).filter(Boolean).join(", ");
+                  onSubmitScore(m, fa, fb, shootout, pa, pb, tagUp(scorersA), tagUp(scorersB));
+                  setUnknowns([]);
+                }}>Upload match result</button>
+                {unknowns.filter((u) => !u.tag).length > 0 && (
+                  <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>Some scorers aren't in the starting squads — who are they?</div>
+                    {unknowns.map((u, i) => (
+                      <div key={u.team + u.name} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{u.name} <span style={{ color: "#7A8B83", fontWeight: 400 }}>({u.team === "A" ? m.teamA.name : m.teamB.name})</span></span>
+                        <button className={`btn ${u.tag === "sub" ? "btn-gold" : "btn-ghost"}`} style={{ padding: "6px 12px", fontSize: 12 }}
+                          onClick={() => setUnknowns(unknowns.map((x, j) => (j === i ? { ...x, tag: "sub" } : x)))}>🔁 Substitute</button>
+                        <button className={`btn ${u.tag === "pen" ? "btn-gold" : "btn-ghost"}`} style={{ padding: "6px 12px", fontSize: 12 }}
+                          onClick={() => setUnknowns(unknowns.map((x, j) => (j === i ? { ...x, tag: "pen" } : x)))}>🎯 Penalty taker</button>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 11, color: "#7A8B83" }}>Choose for each name, then tap Upload match result again.</div>
+                  </div>
+                )}
                 <div style={{ fontSize: 12, color: "#7A8B83" }}>Your uploaded score is the official result. It publishes to the News Feed and settles all bets on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
               </div>
             )}
@@ -1330,11 +1482,11 @@ function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onC
                    m.shootout && m.pensWinner ? `(${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}-${m.pensB} on pens)` : "",
                    m.scorersA ? `⚽ ${m.teamA.name}: ${m.scorersA}` : "",
                    m.scorersB ? `⚽ ${m.teamB.name}: ${m.scorersB}` : "",
-                   ``, `📍 ${m.location}`, `Hosted on MatchDay ⚽`]
+                   ``, `📍 ${m.location}`, `Hosted on Match Era ⚽`]
                 : [`⚽ *MATCH DAY!* ${m.teamA.name} vs ${m.teamB.name}`,
                    `📅 ${m.date} at ${m.time} (${m.duration || 90} mins)`, `📍 ${m.location}`, ``,
                    `*${m.teamA.name} squad:*`, m.playersA || "TBA", ``,
-                   `*${m.teamB.name} squad:*`, m.playersB || "TBA", ``, `Come support! Hosted on MatchDay ⚽`];
+                   `*${m.teamB.name} squad:*`, m.playersB || "TBA", ``, `Come support! Hosted on Match Era ⚽`];
               window.open(`https://wa.me/?text=${encodeURIComponent(lines.filter(Boolean).join("\n"))}`, "_blank");
             }}>💬 Share squad on WhatsApp</button>
           </div>
@@ -1353,6 +1505,23 @@ function MatchDetail({ m, me, minute, myMatchBets = [], isDue, untilKickoff, onC
             {m.shootout && m.pensWinner ? ` — ${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}–${m.pensB} on penalties.` : m.result === "Draw" ? " — Draw." : ` — ${m.result === "A" ? m.teamA.name : m.teamB.name} win.`} All bets settled on the 90-minute score.
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- ADMIN SCORE OVERRIDE — for captains 25+ mins late ---------- */
+function AdminScoreOverride({ m, onSubmit }) {
+  const [a, setA] = useState(0);
+  const [b, setB] = useState(0);
+  return (
+    <div style={{ display: "grid", gap: 8, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 10, padding: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#FFD447" }}>⚠️ Captain is over 25 minutes late — override and publish the result:</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
+        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} type="number" min="0" value={a} onChange={(e) => setA(Math.max(0, +e.target.value))} />
+        <span className="display" style={{ color: "#FFD447" }}>–</span>
+        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} type="number" min="0" value={b} onChange={(e) => setB(Math.max(0, +e.target.value))} />
+        <button className="btn btn-gold" style={{ marginLeft: "auto", padding: "10px 14px", fontSize: 13 }} onClick={() => onSubmit(a, b)}>Publish result</button>
       </div>
     </div>
   );
@@ -1648,7 +1817,7 @@ function PosterModal({ m, onClose, notify }) {
   const download = () => toPng((png) => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(png);
-    a.download = `${m.teamA.name}-vs-${m.teamB.name}-poster.png`;
+    a.download = `${m.teamA.name}-vs-${m.teamB.name}-match-era.png`;
     a.click();
     notify("Poster downloaded — share it on WhatsApp, IG or TikTok 📲");
   });
@@ -1670,7 +1839,7 @@ function PosterModal({ m, onClose, notify }) {
           <line x1="0" y1="250" x2="400" y2="250" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
           <rect x="130" y="0" width="140" height="55" fill="none" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
           <rect x="130" y="445" width="140" height="55" fill="none" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
-          <text x="200" y="60" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">MATCHDAY</text>
+          <text x="200" y="60" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">MATCH ERA</text>
           <text x="200" y="82" textAnchor="middle" fill="#FAF7EF" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
           <circle cx="110" cy="185" r="46" fill={m.teamA.color} stroke="#FAF7EF" strokeOpacity="0.3" strokeWidth="3" />
           <text x="110" y="197" textAnchor="middle" fill="#fff" fontFamily="Anton, sans-serif" fontSize="32">{initials(m.teamA)}</text>
@@ -1703,14 +1872,14 @@ function PosterModal({ m, onClose, notify }) {
               <text x="200" y="388" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontSize="15">📍 {m.location}</text>
             </>
           )}
-          <text x="200" y="470" textAnchor="middle" fill="#FAF7EF" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON MATCHDAY" : "HOSTED ON MATCHDAY · COME SUPPORT YOUR TEAM"}</text>
+          <text x="200" y="470" textAnchor="middle" fill="#FAF7EF" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON MATCH ERA" : "HOSTED ON MATCH ERA · COME SUPPORT YOUR TEAM"}</text>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
           <button className="btn btn-turf" style={{ flex: 1 }} onClick={() => toPng((png) => {
-            const file = new File([png], "matchday-poster.png", { type: "image/png" });
+            const file = new File([png], "match-era-poster.png", { type: "image/png" });
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              navigator.share({ files: [file], title: "MatchDay", text: `${m.teamA.name} vs ${m.teamB.name} — hosted on MatchDay ⚽` }).catch(() => {});
+              navigator.share({ files: [file], title: "Match Era", text: `${m.teamA.name} vs ${m.teamB.name} — hosted on Match Era ⚽` }).catch(() => {});
             } else {
               notify("Sharing isn't supported on this browser — use Download instead");
             }
