@@ -142,12 +142,16 @@ export default function App() {
   const [likeCounts, setLikeCounts] = useState({});
   const [requests, setRequests] = useState([]); // match change requests
   const [adminSection, setAdminSection] = useState("newsfeed");
+  const [adminViewUser, setAdminViewUser] = useState(null);
+  const [supportLink, setSupportLink] = useState("");
+  const [supportDraft, setSupportDraft] = useState("");
   const [feedState, setFeedState] = useState("All");
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
-  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [booting, setBooting] = useState(true);
+  const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
+  const loginClicked = useRef(false);
   const [posterFor, setPosterFor] = useState(null);
   const [toast, setToast] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -188,7 +192,7 @@ export default function App() {
     setScreen("site");
     setPage(p.role === "Admin" ? "admin" : "feed");
     supabase.from("profiles").update({ last_seen: new Date().toISOString() }).eq("id", p.id).then(() => {});
-    if (freshLogin) notify("✔ Logged In Successfully");
+    if (freshLogin && loginClicked.current) { notify("✔ Logged In Successfully"); loginClicked.current = false; }
     if (freshLogin && !localStorage.getItem("me_pwa_prompted")) {
       setPwaPromptOpen(true);
       localStorage.setItem("me_pwa_prompted", "1");
@@ -215,6 +219,8 @@ export default function App() {
     }
     const { data: rq } = await supabase.from("match_requests").select("*").order("created_at", { ascending: false });
     if (rq) setRequests(rq);
+    const { data: st } = await supabase.from("site_settings").select("value").eq("key", "support_link").single();
+    if (st) { setSupportLink(st.value || ""); setSupportDraft(st.value || ""); }
     const { data: fl } = await supabase.from("follows").select("captain_id").eq("fan_id", meObj.id);
     if (fl) setFollows(fl.map((x) => x.captain_id));
     const { data: allFl } = await supabase.from("follows").select("captain_id");
@@ -256,6 +262,15 @@ export default function App() {
     const poll = setInterval(() => refreshAll(), 30000); // safety net
     return () => { supabase.removeChannel(channel); clearInterval(poll); };
   }, [me && me.id]);
+
+  /* Network status — show the reconnecting animation when offline */
+  useEffect(() => {
+    const on = () => setOffline(false);
+    const off = () => setOffline(true);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
 
   /* Heartbeat: keep last_seen fresh */
   useEffect(() => {
@@ -316,8 +331,8 @@ export default function App() {
 
       if (m.onBreak && m.breakEndsAt && breakLeft(m) === 0 && !alertsFired.current[m.id].breakDone) {
         alertsFired.current[m.id].breakDone = true;
-        notify(`▶ SECOND HALF — ${m.teamA.name} vs ${m.teamB.name}. Break over, timer resumed.`);
-        patchMatch(m.id, { onBreak: false, breakEndsAt: null, running: true, secondHalf: true, timerStartedAt: new Date().toISOString() });
+        notify(`⏱ Break over — ${m.teamA.name} vs ${m.teamB.name}. Tap "Start second half" when your teams are ready.`);
+        patchMatch(m.id, { onBreak: false, breakEndsAt: null, running: false });
         return;
       }
       if (m.running && el >= HALF && !m.secondHalf && !alertsFired.current[m.id].half) {
@@ -330,7 +345,8 @@ export default function App() {
         alertsFired.current[m.id].full = true;
         notify(`🏁 FULL TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain, please upload the result.`);
         patchMatch(m.id, { elapsed: FULL, running: false, timerStartedAt: null, status: "AwaitingScore", awaitingSince: new Date().toISOString() });
-        logEvent(m.id, `🏁 Full time: ${m.teamA.name} vs ${m.teamB.name} — result coming soon`);
+        /* No ticker announcement at full time — the result appears on the
+           live updates only when the captain uploads the official score. */
       }
     });
   }, [now, me && me.id, matches]);
@@ -374,6 +390,7 @@ export default function App() {
     } else {
       // Log in with password — no code needed
       if (!form.password) return notify("Enter your password");
+      loginClicked.current = true;
       const { error } = await supabase.auth.signInWithPassword({ email, password: form.password });
       if (error) {
         if (Date.now() < lockedUntil) return notify(`Too many attempts. Try again in ${Math.ceil((lockedUntil - Date.now()) / 1000)}s`);
@@ -410,7 +427,8 @@ export default function App() {
         return notify(`Wrong or expired code (${MAX_OTP_ATTEMPTS - tries} attempts left)`);
       }
     }
-    setForm({ contact: "", name: "", role: "Fan", otp: "", password: "", password2: "" });
+    loginClicked.current = true;
+    setForm({ contact: "", name: "", role: "Fan", otp: "", password: "", password2: "", state: "" });
     setAuthStep("form");
   };
 
@@ -546,7 +564,8 @@ export default function App() {
   const css = `
     ${FONT}
     * { box-sizing: border-box; margin: 0; }
-    .md-root { min-height: 100vh; background: ${T.night}; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; }
+    .md-root { min-height: 100vh; background: ${T.night}; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
+    input, textarea, select { -webkit-user-select: text; user-select: text; }
     .display { font-family: 'Anton', sans-serif; letter-spacing: .02em; text-transform: uppercase; }
     .btn { border: 0; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-weight: 700; border-radius: 10px; padding: 12px 18px; font-size: 15px; transition: transform .08s; }
     .btn:active { transform: scale(.97); }
@@ -571,6 +590,33 @@ export default function App() {
     .banner { background: ${T.live}; color: #fff; border-radius: 12px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     @media (prefers-reduced-motion: reduce) { .pulse { animation: none } }
     .md-root { overflow-x: hidden; }
+    @keyframes spin { to { transform: rotate(360deg) } }
+    .adm-wrap { display: flex; min-height: 100vh; }
+    .adm-side { width: 216px; flex-shrink: 0; background: linear-gradient(180deg, #0c1512, #0d1014); border-right: 1px solid #232b25; padding: 18px 12px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    .adm-brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px; }
+    .adm-menu { display: flex; flex-direction: column; gap: 3px; }
+    .adm-item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: none; border: 0; border-left: 3px solid transparent; border-radius: 0 10px 10px 0; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; transition: background .15s; }
+    .adm-item:hover { background: rgba(255, 212, 71, .06); }
+    .adm-item.on { background: rgba(255, 212, 71, .1); border-left-color: ${T.floodlight}; color: ${T.floodlight}; font-weight: 700; }
+    .adm-badge { margin-left: auto; background: ${T.live}; color: #fff; font-size: 10px; font-weight: 700; border-radius: 999px; padding: 2px 7px; }
+    .adm-online { display: flex; align-items: center; gap: 8px; font-size: 12px; color: ${T.muted}; padding: 0 6px; }
+    .adm-user { display: flex; align-items: center; gap: 10px; background: #12181420; border: 1px solid #232b25; border-radius: 12px; padding: 10px; }
+    .adm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .adm-topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 22px 24px 14px; border-bottom: 1px solid #1a211c; position: sticky; top: 0; background: ${T.night}; z-index: 30; }
+    .adm-pill { display: flex; align-items: center; gap: 6px; background: #131a15; border: 1px solid #232b25; border-radius: 999px; padding: 7px 12px; font-size: 12px; }
+    .adm-body { padding: 20px 24px 60px; max-width: 980px; }
+    .adm-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #232b25; background: #12161c; cursor: pointer; font-family: inherit; width: 100%; }
+    .adm-row:hover { border-color: ${T.floodlight}; }
+    @media (max-width: 760px) {
+      .adm-side { width: 62px; padding: 14px 8px; }
+      .adm-label { display: none; }
+      .adm-item { justify-content: center; padding: 12px 8px; border-radius: 10px; border-left: 0; }
+      .adm-item.on { border-left: 0; }
+      .adm-badge { position: absolute; margin: 0; transform: translate(14px, -12px); }
+      .adm-item { position: relative; }
+      .adm-user { justify-content: center; padding: 8px; }
+      .adm-topbar, .adm-body { padding-left: 14px; padding-right: 14px; }
+    }
     .user-pill { display: flex; align-items: center; gap: 9px; }
     .user-pill-clickable { cursor: pointer; padding: 4px 8px; border-radius: 999px; border: 1px solid #2c352f; transition: all .12s; }
     .user-pill-clickable:hover { border-color: ${T.floodlight}; background: #161b17; }
@@ -739,7 +785,8 @@ export default function App() {
     </button>
   ) : null);
   const upcoming = published.filter((m) => m.status === "Scheduled");
-  const liveNow = published.filter((m) => m.status === "Live" || m.status === "AwaitingScore");
+  const liveNow = published.filter((m) => m.status === "Live" || m.status === "AwaitingScore")
+    .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const results = published.filter((m) => m.status === "ResultPublished");
   const mine = matches.filter((m) => m.createdBy === me.id);
   const myBets = bets.filter((b) => b.userId === me.id);
@@ -749,6 +796,255 @@ export default function App() {
       <style>{css}</style>
 
       {/* ---------- TOP NAV (website header) ---------- */}
+      {me.role === "Admin" ? (
+        /* ==================== ADMIN DASHBOARD ==================== */
+        <div className="adm-wrap">
+          {/* SIDEBAR — the only navigation an admin needs */}
+          <aside className="adm-side">
+            <div className="adm-brand">
+              <div style={{ fontSize: 26 }}>⚽</div>
+              <div className="adm-label">
+                <div className="display" style={{ fontSize: 16, color: T.floodlight, lineHeight: 1 }}>MATCH ERA</div>
+                <div style={{ fontSize: 9, color: T.muted, letterSpacing: ".22em", fontWeight: 700 }}>ADMIN CONTROL</div>
+              </div>
+            </div>
+
+            <div className="adm-menu">
+              {[["newsfeed", "📰", "Newsfeed"], ["active", "🟢", "Active Users"], ["post", "📢", "Post to Feed"], ["scores", "🏁", "Awaiting Scores"], ["requests", "📨", "Match Requests"], ["feedback", "💡", "Feature Requests"], ["users", "👥", "Users & Blocking"], ["settings", "⚙️", "Settings"]].map(([k, icon, label]) => (
+                <button key={k} className={`adm-item ${adminSection === k ? "on" : ""}`} onClick={() => setAdminSection(k)}>
+                  <span style={{ fontSize: 17 }}>{icon}</span>
+                  <span className="adm-label">{label}</span>
+                  {k === "scores" && matches.filter((x) => x.status === "AwaitingScore").length > 0 && (
+                    <span className="adm-badge">{matches.filter((x) => x.status === "AwaitingScore").length}</span>
+                  )}
+                  {k === "requests" && requests.filter((r) => r.status === "pending").length > 0 && (
+                    <span className="adm-badge">{requests.filter((r) => r.status === "pending").length}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ marginTop: "auto", display: "grid", gap: 10 }}>
+              <div className="adm-online adm-label">
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#1DB954", display: "inline-block" }} />
+                {onlineCount} online now
+              </div>
+              <div className="adm-user">
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: T.floodlight, color: T.night, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", flexShrink: 0 }}>
+                  {me.name.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="adm-label" style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.name}</div>
+                  <button onClick={logout} style={{ background: "none", border: 0, color: T.live, fontSize: 11, cursor: "pointer", padding: 0, fontWeight: 700 }}>Log out →</button>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          {/* CONTENT */}
+          <div className="adm-main">
+            <div className="adm-topbar">
+              <div>
+                <div className="display" style={{ fontSize: 26, lineHeight: 1 }}>
+                  {{ newsfeed: "Newsfeed", active: "Active Users", post: "Post to Feed", scores: "Awaiting Scores", requests: "Match Requests", feedback: "Feature Requests", users: "Users & Blocking", settings: "Settings" }[adminSection]}
+                </div>
+                <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{new Date(now).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["🟢", onlineCount, "online"], ["👥", users.length, "users"], ["⚽", matches.filter((x) => x.status === "Live").length, "live"]].map(([i, v, l]) => (
+                  <div key={l} className="adm-pill"><span>{i}</span><b>{v}</b><span className="adm-label" style={{ color: T.muted }}>{l}</span></div>
+                ))}
+              </div>
+            </div>
+
+            <div className="adm-body">
+              {adminSection === "newsfeed" && (
+                <>
+                  {adminPosts.map((p) => (
+                    <div key={p.id} className="card" style={{ marginBottom: 10, borderColor: "#FFD447" }}>
+                      <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Match Era</span>
+                      <div style={{ fontSize: 14, marginTop: 8 }}>{p.message}</div>
+                    </div>
+                  ))}
+                  {events.slice(0, 3).map((e) => (
+                    <div key={e.id} className="card" style={{ marginBottom: 8, fontSize: 13, padding: 12, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span>{e.message}</span>
+                      <span style={{ color: T.muted, fontSize: 11, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                  ))}
+                  <div className="feedgrid" style={{ marginTop: 12 }}>
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} myBetCount={0} />)}
+                  </div>
+                </>
+              )}
+
+              {adminSection === "active" && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {[...users].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || "")).map((u) => {
+                    const mins = u.lastSeen ? Math.floor((now - new Date(u.lastSeen).getTime()) / 60000) : null;
+                    const online = mins !== null && mins < 3;
+                    return (
+                      <button key={u.id} className="card adm-row" onClick={() => setAdminViewUser(u.id)}>
+                        <div style={{ width: 40, height: 40, borderRadius: 12, background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", color: T.floodlight, position: "relative", flexShrink: 0 }}>
+                          {u.name.slice(0, 1).toUpperCase()}
+                          {online && <span style={{ position: "absolute", bottom: -2, right: -2, width: 11, height: 11, borderRadius: "50%", background: "#1DB954", border: "2px solid #161b17" }} />}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: T.chalk }}>{u.name} {u.blocked && <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span>}</div>
+                          <div style={{ fontSize: 12, color: T.muted }}>{u.role}{u.state ? ` · ${u.state}` : ""} · {online ? "🟢 online now" : mins === null ? "never seen" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`}</div>
+                        </div>
+                        <span style={{ color: T.muted }}>›</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {adminSection === "post" && (
+                <div className="card" style={{ display: "grid", gap: 10, maxWidth: 560 }}>
+                  <textarea className="input" rows={3} maxLength={280} placeholder="Announcement for all users"
+                    value={adminPostText} onChange={(e) => setAdminPostText(sanitizeText(e.target.value, 280))} style={{ resize: "none", fontFamily: "'Space Grotesk', sans-serif" }} />
+                  <button className="btn btn-gold" disabled={!adminPostText.trim()} style={{ opacity: adminPostText.trim() ? 1 : .5 }}
+                    onClick={async () => {
+                      const { error } = await supabase.from("posts").insert({ author_id: me.id, message: adminPostText.trim() });
+                      if (error) return notify(error.message);
+                      setAdminPostText("");
+                      refreshAll();
+                      notify("📢 Posted to the News Feed");
+                    }}>Post announcement</button>
+                  {adminPosts.map((p) => (
+                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 13, background: "#131a15", borderRadius: 10, padding: "8px 12px" }}>
+                      <span style={{ flex: 1 }}>{p.message}</span>
+                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, color: T.live, borderColor: "#3a1f1a" }}
+                        onClick={async () => { await supabase.from("posts").delete().eq("id", p.id); refreshAll(); notify("Announcement deleted"); }}>Delete</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {adminSection === "scores" && (
+                <>
+                  {matches.filter((m) => m.status === "AwaitingScore").length === 0 && <div className="card" style={{ color: T.muted }}>No matches waiting on a captain's score.</div>}
+                  {matches.filter((m) => m.status === "AwaitingScore").map((m) => {
+                    const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
+                    return (
+                      <div key={m.id} className="card" style={{ marginBottom: 10, fontSize: 14, display: "grid", gap: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 700 }}>{m.teamA.name} vs {m.teamB.name}</span>
+                          <span className="chip" style={{ background: mins >= 25 ? "#3a1f1a" : "#232b25", color: mins >= 25 ? T.live : T.chalk }}>waiting {mins} min{mins === 1 ? "" : "s"}</span>
+                        </div>
+                        {mins >= 25 ? (
+                          <AdminScoreOverride m={m} onSubmit={(a, b) => submitFinalScore(m, a, b)} />
+                        ) : (
+                          <div style={{ fontSize: 12, color: T.muted }}>Captain has {Math.max(0, 25 - mins)} more minutes before admin override unlocks.</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {adminSection === "requests" && (
+                <>
+                  {requests.filter((r) => r.status === "pending").length === 0 && <div className="card" style={{ color: T.muted }}>No pending requests.</div>}
+                  {requests.filter((r) => r.status === "pending").map((r) => {
+                    const m = matches.find((x) => x.id === r.match_id);
+                    const cap = users.find((u) => u.id === r.captain_id);
+                    if (!m) return null;
+                    return (
+                      <div key={r.id} className="card" style={{ marginBottom: 10, display: "grid", gap: 8, fontSize: 14 }}>
+                        <div style={{ fontWeight: 700 }}>✏️ Score correction: {m.teamA.name} {m.finalA}–{m.finalB} {m.teamB.name}</div>
+                        <div style={{ fontSize: 13, color: T.muted }}>From {cap ? cap.name : "captain"} — "{r.reason}"</div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button className="btn btn-ghost" style={{ flex: 1, fontSize: 13 }} onClick={async () => {
+                            await supabase.from("match_requests").update({ status: "denied" }).eq("id", r.id);
+                            refreshAll(); notify("Request denied");
+                          }}>Deny</button>
+                          <button className="btn btn-gold" style={{ flex: 1, fontSize: 13 }} onClick={async () => {
+                            await supabase.from("matches").update({ status: "AwaitingScore", awaiting_since: new Date().toISOString() }).eq("id", m.id);
+                            await supabase.from("match_requests").update({ status: "approved" }).eq("id", r.id);
+                            refreshAll();
+                            notify("Approved — the captain can now upload the corrected score.");
+                          }}>Approve</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {adminSection === "feedback" && (
+                <>
+                  {feedbacks.length === 0 && <div className="card" style={{ color: T.muted }}>No feedback yet. Requests from the "coming soon" prompts land here.</div>}
+                  {feedbacks.map((f) => (
+                    <div key={f.id} className="card" style={{ marginBottom: 8, fontSize: 13 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>{f.feature}</span>
+                        <span style={{ color: T.muted, fontSize: 11 }}>{users.find((u) => u.id === f.userId)?.name || "User"}</span>
+                      </div>
+                      <div style={{ color: T.chalk }}>{f.msg}</div>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {adminSection === "users" && (
+                <>
+                  <div className="feedgrid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", marginBottom: 14 }}>
+                    {[["🟢 Online", onlineCount], ["Total", users.length], ["Captains", users.filter((u) => u.role === "Captain").length], ["Fans", users.filter((u) => u.role === "Fan").length]].map(([l, v]) => (
+                      <div key={l} className="card" style={{ textAlign: "center", padding: 12 }}>
+                        <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{l}</div>
+                        <div className="display" style={{ fontSize: 22, color: T.floodlight }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {["Admin", "Captain", "Fan"].map((role) => {
+                    const group = users.filter((u) => u.role === role);
+                    return (
+                      <div key={role} style={{ marginBottom: 16 }}>
+                        <SectionTitle color={role === "Admin" ? T.floodlight : T.chalk}>{role}s ({group.length})</SectionTitle>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {group.map((u) => (
+                            <div key={u.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, padding: 12, gap: 8 }}>
+                              <button style={{ background: "none", border: 0, color: T.chalk, cursor: "pointer", textAlign: "left", minWidth: 0, padding: 0, fontFamily: "inherit", fontSize: 14 }} onClick={() => setAdminViewUser(u.id)}>
+                                <span style={{ fontWeight: 700 }}>{u.name}</span>
+                                <span style={{ color: T.muted, fontSize: 12 }}> · {u.state || "—"} · joined {u.joined}</span>
+                              </button>
+                              {u.role !== "Admin" && (
+                                <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 11, color: u.blocked ? "#1DB954" : T.live, borderColor: u.blocked ? "#173a26" : "#3a1f1a", flexShrink: 0 }}
+                                  onClick={async () => {
+                                    await supabase.from("profiles").update({ blocked: !u.blocked }).eq("id", u.id);
+                                    refreshAll();
+                                    notify(u.blocked ? `${u.name} unblocked` : `${u.name} blocked — they can no longer log in`);
+                                  }}>{u.blocked ? "Unblock" : "Block"}</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {adminSection === "settings" && (
+                <div className="card" style={{ display: "grid", gap: 10, maxWidth: 560 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: T.floodlight }}>💬 Customer Support Link</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>Shown in the footer for every user. Use a WhatsApp link (wa.me/234…), an email (mailto:support@…), or any web page. Leave empty to hide it.</div>
+                  <input className="input" maxLength={200} placeholder="e.g. https://wa.me/2348031234567" value={supportDraft}
+                    onChange={(e) => setSupportDraft(e.target.value.slice(0, 200))} />
+                  <button className="btn btn-gold" onClick={async () => {
+                    const { error } = await supabase.from("site_settings").upsert({ key: "support_link", value: supportDraft.trim() });
+                    if (error) return notify(error.message);
+                    setSupportLink(supportDraft.trim());
+                    notify("✔ Support link updated for all users");
+                  }}>Save support link</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+      <>
       <header style={{ borderBottom: "1px solid #232b25", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
@@ -768,7 +1064,6 @@ export default function App() {
             {me.role === "Fan" && <button className={page === "bets" ? "on" : ""} onClick={() => setPage("bets")}>Bets{myBets.length > 0 ? ` (${myBets.length})` : ""}</button>}
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             {me.role !== "Admin" && <button className={page === "wallet" ? "on" : ""} onClick={() => setPage("wallet")}>Wallet</button>}
-            {me.role === "Admin" && <button className={page === "admin" ? "on" : ""} onClick={() => setPage("admin")}>Admin</button>}
           </nav>
         </div>
       </header>
@@ -807,7 +1102,7 @@ export default function App() {
             {events.length > 0 && (
               <div style={{ background: "#131a15", border: "1px solid #232b25", borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: T.live, letterSpacing: ".1em" }}>⚡ LIVE UPDATES</div>
-                {events.slice(0, 4).map((e) => (
+                {events.slice(0, 3).map((e) => (
                   <div key={e.id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
                     <span style={{ flex: 1 }}>{e.message}</span>
                     <span style={{ color: T.muted, fontSize: 11, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
@@ -1034,16 +1329,6 @@ export default function App() {
         {page === "bets" && me.role === "Fan" && (
           <div style={{ maxWidth: 560 }}>
             <div className="display" style={{ fontSize: 24, marginBottom: 16 }}>Bets</div>
-            <div className="card" style={{ marginBottom: 14, border: "1.5px solid #E4572E", display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#E4572E" }}>🔞 Betting is strictly for users 18 and above.</div>
-              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" checked={ageConfirmed} onChange={(e) => setAgeConfirmed(e.target.checked)} style={{ marginTop: 2 }} />
-                I confirm that I am 18 years or older and understand betting carries financial risk.
-              </label>
-              <button className="btn btn-gold" disabled style={{ opacity: .45, cursor: "not-allowed" }}>
-                {ageConfirmed ? "Betting launches soon — you're on the list ✔" : "Confirm your age to continue"}
-              </button>
-            </div>
             <ComingSoonCard
               feature="Betting"
               detail="Back your team with your wallet — pick a winner or draw at the captain's odds, manage your bet slip, and get paid out the moment results are published."
@@ -1088,204 +1373,6 @@ export default function App() {
         )}
 
         {/* ---------- ADMIN ---------- */}
-        {page === "admin" && me.role === "Admin" && (
-          <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-            {/* SIDEBAR */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 170, flex: "0 0 auto", position: "sticky", top: 130 }}>
-              {[["newsfeed", "📰 Newsfeed"], ["active", "🟢 Active Users"], ["post", "📢 Post to Feed"], ["scores", "🏁 Awaiting Scores"], ["requests", "📨 Match Requests"], ["feedback", "💡 Feature Requests"], ["users", "👥 Users & Blocking"]].map(([k, label]) => (
-                <button key={k} className="btn" style={{ textAlign: "left", background: adminSection === k ? T.floodlight : "transparent", color: adminSection === k ? T.night : T.chalk, border: adminSection === k ? 0 : "1px solid #232b25", fontSize: 13, padding: "10px 14px" }}
-                  onClick={() => setAdminSection(k)}>{label}</button>
-              ))}
-            </div>
-
-            {/* CONTENT */}
-            <div style={{ flex: 1, minWidth: 280 }}>
-              {adminSection === "newsfeed" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 12 }}>Newsfeed Preview</div>
-                  {adminPosts.slice(0, 3).map((p) => (
-                    <div key={p.id} className="card" style={{ marginBottom: 10, borderColor: "#FFD447" }}>
-                      <span className="chip" style={{ background: T.floodlight, color: T.night, marginBottom: 6 }}>📢 Match Era</span>
-                      <div style={{ fontSize: 14, marginTop: 6 }}>{p.message}</div>
-                    </div>
-                  ))}
-                  {events.slice(0, 6).map((e) => (
-                    <div key={e.id} className="card" style={{ marginBottom: 8, fontSize: 13, padding: 12 }}>{e.message}</div>
-                  ))}
-                  <div className="feedgrid" style={{ marginTop: 10 }}>
-                    {publishedAll.slice(0, 4).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} myBetCount={0} />)}
-                  </div>
-                </>
-              )}
-
-              {adminSection === "active" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 6 }}>Active Users</div>
-                  <div style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>🟢 {onlineCount} online right now</div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {[...users].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || "")).map((u) => {
-                      const mins = u.lastSeen ? Math.floor((now - new Date(u.lastSeen).getTime()) / 60000) : null;
-                      const online = mins !== null && mins < 3;
-                      return (
-                        <div key={u.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 12 }}>
-                          <div style={{ width: 38, height: 38, borderRadius: "50%", background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", color: T.floodlight, position: "relative", flexShrink: 0 }}>
-                            {u.name.slice(0, 1).toUpperCase()}
-                            {online && <span style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, borderRadius: "50%", background: "#1DB954", border: "2px solid #161b17" }} />}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, fontSize: 14 }}>{u.name} {u.blocked && <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span>}</div>
-                            <div style={{ fontSize: 12, color: T.muted }}>{u.role}{u.state ? ` · ${u.state}` : ""} · {online ? "online now" : mins === null ? "never seen" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-
-              {adminSection === "post" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 12 }}>📢 Post to News Feed</div>
-                  <div className="card" style={{ display: "grid", gap: 10 }}>
-                    <textarea className="input" rows={3} maxLength={280} placeholder="Announcement for all users"
-                      value={adminPostText} onChange={(e) => setAdminPostText(sanitizeText(e.target.value, 280))} style={{ resize: "none", fontFamily: "'Space Grotesk', sans-serif" }} />
-                    <button className="btn btn-gold" disabled={!adminPostText.trim()} style={{ opacity: adminPostText.trim() ? 1 : .5 }}
-                      onClick={async () => {
-                        const { error } = await supabase.from("posts").insert({ author_id: me.id, message: adminPostText.trim() });
-                        if (error) return notify(error.message);
-                        setAdminPostText("");
-                        refreshAll();
-                        notify("📢 Posted to the News Feed");
-                      }}>Post announcement</button>
-                    {adminPosts.map((p) => (
-                      <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 13, background: "#131a15", borderRadius: 10, padding: "8px 12px" }}>
-                        <span style={{ flex: 1 }}>{p.message}</span>
-                        <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, color: T.live, borderColor: "#3a1f1a" }}
-                          onClick={async () => { await supabase.from("posts").delete().eq("id", p.id); refreshAll(); notify("Announcement deleted"); }}>Delete</button>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              {adminSection === "scores" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 12 }}>Awaiting Captain Score</div>
-                  {matches.filter((m) => m.status === "AwaitingScore").length === 0 && <div className="card" style={{ color: T.muted }}>No matches waiting on a captain's score.</div>}
-                  {matches.filter((m) => m.status === "AwaitingScore").map((m) => {
-                    const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
-                    return (
-                      <div key={m.id} className="card" style={{ marginBottom: 10, fontSize: 14, display: "grid", gap: 8 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <span style={{ fontWeight: 700 }}>{m.teamA.name} vs {m.teamB.name}</span>
-                          <span className="chip" style={{ background: mins >= 25 ? "#3a1f1a" : "#232b25", color: mins >= 25 ? T.live : T.chalk }}>waiting {mins} min{mins === 1 ? "" : "s"}</span>
-                        </div>
-                        {mins >= 25 ? (
-                          <AdminScoreOverride m={m} onSubmit={(a, b) => submitFinalScore(m, a, b)} />
-                        ) : (
-                          <div style={{ fontSize: 12, color: T.muted }}>Captain has {Math.max(0, 25 - mins)} more minutes before admin override unlocks.</div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-
-              {adminSection === "requests" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 12 }}>📨 Match Change Requests</div>
-                  {requests.filter((r) => r.status === "pending").length === 0 && <div className="card" style={{ color: T.muted }}>No pending requests.</div>}
-                  {requests.filter((r) => r.status === "pending").map((r) => {
-                    const m = matches.find((x) => x.id === r.match_id);
-                    const cap = users.find((u) => u.id === r.captain_id);
-                    if (!m) return null;
-                    return (
-                      <div key={r.id} className="card" style={{ marginBottom: 10, display: "grid", gap: 8, fontSize: 14 }}>
-                        <div style={{ fontWeight: 700 }}>{r.type === "delete" ? "🗑 Delete" : "✏️ Re-score"}: {m.teamA.name} {m.finalA}–{m.finalB} {m.teamB.name}</div>
-                        <div style={{ fontSize: 13, color: T.muted }}>From {cap ? cap.name : "captain"} — "{r.reason}"</div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button className="btn btn-ghost" style={{ flex: 1, fontSize: 13 }} onClick={async () => {
-                            await supabase.from("match_requests").update({ status: "denied" }).eq("id", r.id);
-                            refreshAll(); notify("Request denied");
-                          }}>Deny</button>
-                          <button className="btn btn-gold" style={{ flex: 1, fontSize: 13 }} onClick={async () => {
-                            if (r.type === "delete") {
-                              await supabase.from("match_events").delete().eq("match_id", m.id);
-                              await supabase.from("likes").delete().eq("match_id", m.id);
-                              await supabase.from("matches").delete().eq("id", m.id);
-                              notify("Match deleted ✔");
-                            } else {
-                              await supabase.from("matches").update({ status: "AwaitingScore", awaiting_since: new Date().toISOString() }).eq("id", m.id);
-                              notify("Match reopened — the captain can now upload the corrected score.");
-                            }
-                            await supabase.from("match_requests").update({ status: "approved" }).eq("id", r.id);
-                            refreshAll();
-                          }}>Approve</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-
-              {adminSection === "feedback" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 12 }}>Feature Requests ({feedbacks.length})</div>
-                  {feedbacks.length === 0 && <div className="card" style={{ color: T.muted }}>No feedback yet. Requests from the "coming soon" prompts land here.</div>}
-                  {feedbacks.map((f) => (
-                    <div key={f.id} className="card" style={{ marginBottom: 8, fontSize: 13 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>{f.feature}</span>
-                        <span style={{ color: T.muted, fontSize: 11 }}>{users.find((u) => u.id === f.userId)?.name || "User"}</span>
-                      </div>
-                      <div style={{ color: T.chalk }}>{f.msg}</div>
-                    </div>
-                  ))}
-                </>
-              )}
-
-              {adminSection === "users" && (
-                <>
-                  <div className="display" style={{ fontSize: 20, marginBottom: 6 }}>Users & Blocking</div>
-                  <div className="feedgrid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", marginBottom: 14 }}>
-                    {[["🟢 Online", onlineCount], ["Total", users.length], ["Captains", users.filter((u) => u.role === "Captain").length], ["Fans", users.filter((u) => u.role === "Fan").length]].map(([l, v]) => (
-                      <div key={l} className="card" style={{ textAlign: "center", padding: 12 }}>
-                        <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{l}</div>
-                        <div className="display" style={{ fontSize: 22, color: T.floodlight }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {["Admin", "Captain", "Fan"].map((role) => {
-                    const group = users.filter((u) => u.role === role);
-                    return (
-                      <div key={role} style={{ marginBottom: 16 }}>
-                        <SectionTitle color={role === "Admin" ? T.floodlight : T.chalk}>{role}s ({group.length})</SectionTitle>
-                        <div style={{ display: "grid", gap: 6 }}>
-                          {group.map((u) => (
-                            <div key={u.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, padding: 12, gap: 8 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <span style={{ fontWeight: 700 }}>{u.name}</span>
-                                <span style={{ color: T.muted, fontSize: 12 }}> · {u.state || "—"} · joined {u.joined}</span>
-                              </div>
-                              {u.role !== "Admin" && (
-                                <button className={`btn btn-ghost`} style={{ padding: "6px 12px", fontSize: 11, color: u.blocked ? "#1DB954" : T.live, borderColor: u.blocked ? "#173a26" : "#3a1f1a", flexShrink: 0 }}
-                                  onClick={async () => {
-                                    await supabase.from("profiles").update({ blocked: !u.blocked }).eq("id", u.id);
-                                    refreshAll();
-                                    notify(u.blocked ? `${u.name} unblocked` : `${u.name} blocked — they can no longer log in`);
-                                  }}>{u.blocked ? "Unblock" : "Block"}</button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-            </div>
-          </div>
-        )}
       </main>
 
       {/* ---------- MATCH DETAIL ---------- */}
@@ -1295,6 +1382,7 @@ export default function App() {
           me={me}
           minute={minute}
           breakLeft={breakLeft}
+          captainName={(users.find((u) => u.id === (matches.find((x) => x.id === openMatch) || {}).createdBy) || {}).name || ""}
           myMatchBets={bets.filter((b) => b.userId === me.id && b.matchId === openMatch)}
           isDue={isDue}
           untilKickoff={untilKickoff}
@@ -1322,6 +1410,16 @@ export default function App() {
           onLike={() => toggleLike(matches.find((x) => x.id === openMatch))}
           liked={myLikes.includes(openMatch)}
           likeCount={likeCounts[openMatch] || 0}
+          alreadyRequested={requests.some((r) => r.match_id === openMatch && r.captain_id === me.id && r.type === "rescore")}
+          onDeleteMatch={async (m) => {
+            await supabase.from("match_events").delete().eq("match_id", m.id);
+            await supabase.from("likes").delete().eq("match_id", m.id);
+            const { error } = await supabase.from("matches").delete().eq("id", m.id);
+            if (error) return notify(error.message);
+            setOpenMatch(null);
+            notify("🗑 Match deleted.");
+            refreshAll();
+          }}
           onRequestChange={async (m, type, reason) => {
             const { error } = await supabase.from("match_requests").insert({ match_id: m.id, captain_id: me.id, type, reason: sanitizeText(reason, 200) });
             if (error) return notify(error.message);
@@ -1365,7 +1463,21 @@ export default function App() {
         <div style={{ borderTop: "1px solid #1a2019", padding: "14px 20px", textAlign: "center", fontSize: 12, color: T.muted }}>
           © {new Date().getFullYear()} Match Era · Built for the community
         </div>
-      </footer>
+              {supportLink && (
+          <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 20px 10px", fontSize: 12 }}>
+            <a href={supportLink.startsWith("http") || supportLink.startsWith("mailto:") ? supportLink : `https://${supportLink}`}
+              target="_blank" rel="noopener noreferrer" style={{ color: T.floodlight, textDecoration: "none", fontWeight: 700 }}>
+              💬 Contact Customer Support →
+            </a>
+          </div>
+        )}
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 20px 16px", fontSize: 11, color: "#5a6a62", lineHeight: 1.5 }}>
+          🔞 You must be 18 years or older to participate in betting on Match Era. Betting carries financial risk — play responsibly.
+        </div>
+</footer>
+      </>
+      )}
+
 
       {pwaPromptOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setPwaPromptOpen(false)}>
@@ -1401,6 +1513,60 @@ export default function App() {
       )}
 
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
+      {adminViewUser && me && me.role === "Admin" && (() => {
+        const u = users.find((x) => x.id === adminViewUser);
+        if (!u) return null;
+        const theirMatches = matches.filter((x) => x.createdBy === u.id);
+        const mins = u.lastSeen ? Math.floor((now - new Date(u.lastSeen).getTime()) / 60000) : null;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setAdminViewUser(null)}>
+            <div style={{ background: "#12161c", border: "1px solid #232b25", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, display: "grid", gap: 14 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 54, height: 54, borderRadius: 16, background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 22, color: T.floodlight, position: "relative" }}>
+                  {u.name.slice(0, 1).toUpperCase()}
+                  {mins !== null && mins < 3 && <span style={{ position: "absolute", bottom: -2, right: -2, width: 13, height: 13, borderRadius: "50%", background: "#1DB954", border: "2px solid #12161c" }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="display" style={{ fontSize: 20 }}>{u.name}</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>{u.role} · {u.state || "no state"} {u.blocked && <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span>}</div>
+                </div>
+                <button onClick={() => setAdminViewUser(null)} style={{ background: "none", border: 0, color: T.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
+              </div>
+              <div className="feedgrid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {[["Joined", u.joined || "—"], ["Last seen", mins === null ? "never" : mins < 3 ? "online" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`], u.role === "Captain" ? ["Followers", followerCounts[u.id] || 0] : ["Role", u.role]].map(([l, v]) => (
+                  <div key={l} className="card" style={{ padding: 10, textAlign: "center" }}>
+                    <div style={{ fontSize: 9, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>{l}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {u.role === "Captain" && (
+                <div style={{ fontSize: 13, color: T.muted }}>
+                  ⚽ {theirMatches.length} match{theirMatches.length === 1 ? "" : "es"} created · {theirMatches.filter((x) => x.status === "Live").length} live now
+                  {u.contactInfo && <div style={{ marginTop: 4 }}>📞 {u.contactInfo}</div>}
+                </div>
+              )}
+              {u.role !== "Admin" && (
+                <button className="btn" style={{ background: u.blocked ? "#173a26" : "#3a1f1a", color: u.blocked ? "#1DB954" : T.live }}
+                  onClick={async () => {
+                    await supabase.from("profiles").update({ blocked: !u.blocked }).eq("id", u.id);
+                    refreshAll();
+                    notify(u.blocked ? `${u.name} unblocked` : `${u.name} blocked — they can no longer log in`);
+                    setAdminViewUser(null);
+                  }}>{u.blocked ? "✓ Unblock this user" : "🚫 Block this user"}</button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {offline && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(13,16,20,.88)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
+          <div style={{ width: 46, height: 46, border: "4px solid #232b25", borderTopColor: "#FFD447", borderRadius: "50%", animation: "spin .9s linear infinite" }} />
+          <div className="display" style={{ fontSize: 18, color: T.floodlight }}>No connection</div>
+          <div style={{ fontSize: 13, color: T.muted }}>Reconnecting to Match Era…</div>
+        </div>
+      )}
       {toast && <Toast msg={toast} />}
     </div>
   );
@@ -1418,9 +1584,21 @@ function PwInput({ value, onChange, placeholder, autoComplete }) {
     <div style={{ position: "relative" }}>
       <input className="input" type={show ? "text" : "password"} autoComplete={autoComplete} placeholder={placeholder} maxLength={64}
         style={{ paddingRight: 46 }} value={value} onChange={onChange} />
-      <button type="button" onClick={() => setShow(!show)} title={show ? "Hide" : "Show"}
-        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#7A8B83", fontSize: 18, cursor: "pointer", padding: 6 }}>
-        {show ? "🙈" : "👁"}
+      <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Hide password" : "Show password"} title={show ? "Hide password" : "Show password"}
+        style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#7A8B83", cursor: "pointer", padding: 8, display: "flex", alignItems: "center" }}>
+        {show ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        )}
       </button>
     </div>
   );
@@ -1514,14 +1692,13 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineVie
   );
 }
 
-function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilKickoff, onClose, onStart, onPauseResume, onLiveScore, onCancelMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
-  const [fa, setFa] = useState(0);
-  const [fb, setFb] = useState(0);
+function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
+  const [fa, setFa] = useState("");
+  const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
   const [la, setLa] = useState("");
   const [lb, setLb] = useState("");
   const [reqOpen, setReqOpen] = useState(false);
-  const [reqType, setReqType] = useState("rescore");
   const [reqReason, setReqReason] = useState("");
   useEffect(() => { if (m) { setLa(String(m.liveA ?? 0)); setLb(String(m.liveB ?? 0)); } }, [m && m.id, m && m.liveA, m && m.liveB]);
   const [newDate, setNewDate] = useState("");
@@ -1532,7 +1709,7 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
   const [unknowns, setUnknowns] = useState([]); // [{name, team, tag: null|'sub'|'pen'}]
   const [pa, setPa] = useState(0);
   const [pb, setPb] = useState(0);
-  useEffect(() => { setFa(0); setFb(0); setShootout(false); setPa(0); setPb(0); }, [m && m.id]);
+  useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(0); setPb(0); }, [m && m.id]);
   if (!m) return null;
   const isOwner = m.createdBy === me.id;
   const canBet = me.role === "Fan" && m.published && (m.status === "Scheduled" || m.status === "Live");
@@ -1571,43 +1748,60 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
         </div>
 
         <div style={{ fontSize: 13, color: "#7A8B83" }}>📍 {m.location} · {m.date} at {m.time}</div>
-        <div className="card" style={{ fontSize: 13, padding: 14 }}>
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>{m.teamA.name}</div>
-          <div style={{ color: "#7A8B83" }}>{m.playersA}</div>
-          <div style={{ fontWeight: 700, margin: "10px 0 4px" }}>{m.teamB.name}</div>
-          <div style={{ color: "#7A8B83" }}>{m.playersB}</div>
+        {captainName && <div style={{ fontSize: 13, color: "#7A8B83" }}>🧢 Hosted by Captain <span style={{ color: "#FFD447", fontWeight: 700 }}>{captainName}</span></div>}
+
+        {/* TEAM SHEETS */}
+        <div className="card" style={{ fontSize: 13, padding: 14, display: "grid", gap: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7A8B83", letterSpacing: ".08em", textTransform: "uppercase" }}>Team Sheets</div>
+          {[[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => (
+            <div key={i}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <MiniLogo team={team} badge={badge} size={26} />
+                <span style={{ fontWeight: 700 }}>{team.name}</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {(players || "").split(",").map((p) => p.trim()).filter(Boolean).length > 0
+                  ? (players || "").split(",").map((p) => p.trim()).filter(Boolean).map((p, j) => (
+                      <span key={j} className="chip" style={{ background: "#232b25", color: "#FAF7EF", fontWeight: 500 }}>{p}</span>
+                    ))
+                  : <span style={{ color: "#7A8B83" }}>Squad to be announced</span>}
+              </div>
+            </div>
+          ))}
         </div>
 
-        {/* LIKE — fans on live matches */}
-        {m.status === "Live" && me.role === "Fan" && (
-          <button className={`btn ${liked ? "btn-live" : "btn-ghost"}`} onClick={onLike}>
-            {liked ? "❤️" : "🤍"} {likeCount} like{likeCount === 1 ? "" : "s"}
+        {/* STAR — pin this match to the top of your feed */}
+        {m.status === "Live" && (
+          <button className={`btn ${liked ? "btn-gold" : "btn-ghost"}`} onClick={onLike}>
+            {liked ? "★ Starred" : "☆ Star this match"} · {likeCount}
           </button>
         )}
-        {m.status === "Live" && me.role !== "Fan" && likeCount > 0 && (
-          <div style={{ fontSize: 13, color: "#7A8B83" }}>❤️ {likeCount} fan{likeCount === 1 ? "" : "s"} liked this match</div>
-        )}
+        {m.status === "Live" && <div style={{ fontSize: 11, color: "#7A8B83", marginTop: -6 }}>Starred matches appear at the top of your News Feed for quick access.</div>}
 
-        {/* REQUEST CHANGE — captain on their own past match */}
+        {/* SCORE CORRECTION — captain, once per match, admin approval */}
         {isOwner && me.role === "Captain" && m.status === "ResultPublished" && (
-          !reqOpen ? (
-            <button className="btn btn-ghost" onClick={() => setReqOpen(true)}>📨 Request score correction or deletion</button>
+          alreadyRequested ? (
+            <div style={{ fontSize: 12, color: "#7A8B83" }}>✔ You've already requested a score correction for this match — each match can only be corrected once.</div>
+          ) : !reqOpen ? (
+            <button className="btn btn-ghost" onClick={() => setReqOpen(true)}>✏️ Request score correction</button>
           ) : (
             <div className="card" style={{ display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>Request a change (needs admin approval)</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className={`btn ${reqType === "rescore" ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1, fontSize: 12 }} onClick={() => setReqType("rescore")}>✏️ Re-update score</button>
-                <button className={`btn ${reqType === "delete" ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1, fontSize: 12 }} onClick={() => setReqType("delete")}>🗑 Delete match</button>
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>Request a score correction (needs admin approval — one request per match)</div>
               <textarea className="input" rows={2} maxLength={200} placeholder="Reason (required)" value={reqReason}
                 onChange={(e) => setReqReason(e.target.value)} style={{ resize: "none", fontFamily: "'Space Grotesk', sans-serif" }} />
               <div style={{ display: "flex", gap: 8 }}>
                 <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setReqOpen(false)}>Cancel</button>
                 <button className="btn btn-gold" style={{ flex: 2, opacity: reqReason.trim() ? 1 : .5 }} disabled={!reqReason.trim()}
-                  onClick={() => { onRequestChange(m, reqType, reqReason.trim()); setReqOpen(false); setReqReason(""); }}>Send request</button>
+                  onClick={() => { onRequestChange(m, "rescore", reqReason.trim()); setReqOpen(false); setReqReason(""); }}>Send request</button>
               </div>
             </div>
           )
+        )}
+
+        {/* DELETE — captain's own match, no approval needed */}
+        {isOwner && me.role === "Captain" && m.status !== "Live" && (
+          <button className="btn btn-ghost" style={{ color: "#E4572E", borderColor: "#3a1f1a" }}
+            onClick={() => { if (window.confirm("Delete this match permanently? This can't be undone.")) onDeleteMatch(m); }}>🗑 Delete this match</button>
         )}
 
         {/* ARTWORK — visible to everyone, downloadable from the poster view */}
@@ -1672,10 +1866,10 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
             )}
             {m.status === "Live" && m.halfPrompt && (
               <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 14 }}>
-                <div style={{ fontWeight: 700, color: "#FFD447" }}>⏱ HALF TIME — 45'. Pause for a 10-minute rest before the second half?</div>
+                <div style={{ fontWeight: 700, color: "#FFD447" }}>⏱ HALF TIME — the second half only starts when you say so.</div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => onHalfTime(m, true)}>☕ Yes, 10-min break</button>
-                  <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => onHalfTime(m, false)}>▶ No, start second half</button>
+                  <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => onHalfTime(m, true)}>☕ 10-min break</button>
+                  <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => onHalfTime(m, false)}>▶ Start second half</button>
                 </div>
               </div>
             )}
@@ -1734,12 +1928,12 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
                 <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4 }}>{m.teamA.name}</div>
-                    <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} type="number" min="0" value={fa} onChange={(e) => setFa(Math.max(0, +e.target.value))} />
+                    <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={fa} onChange={(e) => setFa(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                   </div>
                   <div className="display" style={{ fontSize: 22, color: "#FFD447", marginTop: 18 }}>–</div>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4 }}>{m.teamB.name}</div>
-                    <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} type="number" min="0" value={fb} onChange={(e) => setFb(Math.max(0, +e.target.value))} />
+                    <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={fb} onChange={(e) => setFb(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                   </div>
                 </div>
                 <input className="input" placeholder={`${m.teamA.name} goal scorers (e.g. Tunde x2, Kola)`} maxLength={150} value={scorersA} onChange={(e) => setScorersA(e.target.value)} />
@@ -1761,7 +1955,8 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
                     </div>
                   </div>
                 )}
-                <button className="btn btn-gold" onClick={() => {
+                <button className="btn btn-gold" disabled={fa === "" || fb === ""} onClick={() => {
+                  if (fa === "" || fb === "") return;
                   /* Check scorer names against the starting squads */
                   const squad = (list) => (list || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
                   const parseNames = (str) => (str || "").split(",").map((x) => x.trim().replace(/\s*x\d+$/i, "").replace(/\s*\((sub|pen)\)$/i, "")).filter(Boolean);
@@ -1781,7 +1976,7 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
                     const u = unknowns.find((k) => k.name.toLowerCase() === base.toLowerCase() && k.tag);
                     return u ? `${clean} (${u.tag})` : clean;
                   }).filter(Boolean).join(", ");
-                  onSubmitScore(m, fa, fb, shootout, pa, pb, tagUp(scorersA), tagUp(scorersB));
+                  onSubmitScore(m, +fa, +fb, shootout, pa, pb, tagUp(scorersA), tagUp(scorersB));
                   setUnknowns([]);
                 }}>Upload match result</button>
                 {unknowns.filter((u) => !u.tag).length > 0 && (
@@ -1868,16 +2063,16 @@ function MatchDetail({ m, me, minute, breakLeft, myMatchBets = [], isDue, untilK
 
 /* ---------- ADMIN SCORE OVERRIDE — for captains 25+ mins late ---------- */
 function AdminScoreOverride({ m, onSubmit }) {
-  const [a, setA] = useState(0);
-  const [b, setB] = useState(0);
+  const [a, setA] = useState("");
+  const [b, setB] = useState("");
   return (
     <div style={{ display: "grid", gap: 8, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 10, padding: 10 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#FFD447" }}>⚠️ Captain is over 25 minutes late — override and publish the result:</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
-        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} type="number" min="0" value={a} onChange={(e) => setA(Math.max(0, +e.target.value))} />
+        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={a} onChange={(e) => setA(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
         <span className="display" style={{ color: "#FFD447" }}>–</span>
-        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} type="number" min="0" value={b} onChange={(e) => setB(Math.max(0, +e.target.value))} />
-        <button className="btn btn-gold" style={{ marginLeft: "auto", padding: "10px 14px", fontSize: 13 }} onClick={() => onSubmit(a, b)}>Publish result</button>
+        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={b} onChange={(e) => setB(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
+        <button className="btn btn-gold" disabled={a === "" || b === ""} style={{ marginLeft: "auto", padding: "10px 14px", fontSize: 13, opacity: a === "" || b === "" ? .5 : 1 }} onClick={() => onSubmit(+a, +b)}>Publish result</button>
       </div>
     </div>
   );
