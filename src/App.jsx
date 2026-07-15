@@ -152,6 +152,8 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const loginClicked = useRef(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [notifPromptOpen, setNotifPromptOpen] = useState(false);
   const [posterFor, setPosterFor] = useState(null);
   const [toast, setToast] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -180,7 +182,12 @@ export default function App() {
 
   const loadMe = async (userId, freshLogin = false) => {
     const { data: p } = await supabase.from("profiles").select("*").eq("id", userId).single();
-    if (!p) return;
+    if (!p) {
+      await supabase.auth.signOut();
+      setBooting(false);
+      notify("This account no longer exists. Contact the Match Era admin if you think this is a mistake.");
+      return;
+    }
     if (p.blocked) {
       await supabase.auth.signOut();
       setBooting(false);
@@ -193,6 +200,9 @@ export default function App() {
     setPage(p.role === "Admin" ? "admin" : "feed");
     supabase.from("profiles").update({ last_seen: new Date().toISOString() }).eq("id", p.id).then(() => {});
     if (freshLogin && loginClicked.current) { notify("✔ Logged In Successfully"); loginClicked.current = false; }
+    if (p.role === "Captain" && typeof Notification !== "undefined" && Notification.permission === "default") {
+      setTimeout(() => setNotifPromptOpen(true), 1200);
+    }
     if (freshLogin && !localStorage.getItem("me_pwa_prompted")) {
       setPwaPromptOpen(true);
       localStorage.setItem("me_pwa_prompted", "1");
@@ -207,7 +217,7 @@ export default function App() {
       supabase.from("matches").select("*").order("created_at", { ascending: false }),
       supabase.from("wallets").select("*").eq("user_id", meObj.id).single().then((r) => ({ data: r.data ? [r.data] : [] })),
       supabase.from("bets").select("*").eq("user_id", meObj.id),
-      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen"),
+      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email"),
     ]);
     const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(12);
     if (ev) setEvents(ev);
@@ -234,7 +244,7 @@ export default function App() {
     if (ms) setMatches(ms.map(rowToMatch));
     if (w && w[0]) setWallets({ [meObj.id]: Number(w[0].balance) });
     if (bs) setBets(bs.map((b) => ({ id: b.id, userId: b.user_id, matchId: b.match_id, pick: b.pick, stake: Number(b.stake), odds: Number(b.odds), settled: b.settled, won: b.won })));
-    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
+    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
       if (fb) setFeedbacks(fb.map((f) => ({ id: f.id, userId: f.user_id, feature: f.feature, msg: f.message, at: f.created_at })));
@@ -261,6 +271,22 @@ export default function App() {
       .subscribe();
     const poll = setInterval(() => refreshAll(), 30000); // safety net
     return () => { supabase.removeChannel(channel); clearInterval(poll); };
+  }, [me && me.id]);
+
+  /* ---------- NOTIFICATIONS: reminders land as toast + device alert ---------- */
+  useEffect(() => {
+    if (!me) return;
+    const ch = supabase
+      .channel("my-notifications")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${me.id}` }, (payload) => {
+        const msg = payload.new.message;
+        notify(`🔔 ${msg}`);
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          try { new Notification("Match Era", { body: msg, icon: "/icon-512.png" }); } catch (e) {}
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
   }, [me && me.id]);
 
   /* Network status — show the reconnecting animation when offline */
@@ -360,7 +386,7 @@ export default function App() {
       if (!alertsFired.current[m.id]) alertsFired.current[m.id] = {};
       if (mins >= 20 && !alertsFired.current[m.id].late) {
         alertsFired.current[m.id].late = true;
-        notify(`⚠️ ${m.teamA.name} vs ${m.teamB.name} ended over 20 minutes ago — please upload the result now. After 25 minutes the admin can override.`);
+        notify(`⚠️ ${m.teamA.name} vs ${m.teamB.name} ended over 20 minutes ago — please upload the result now. Fans are waiting!`);
       }
     });
   }, [now, me && me.id, matches]);
@@ -377,21 +403,23 @@ export default function App() {
       if (form.password !== form.password2) return notify("Passwords don't match");
       if (!form.state) return notify("Select your state — it helps us show you matches near you");
       // Create the account with a password; a one-time email code verifies it
+      setAuthBusy(true);
+      loginClicked.current = true;
       const { error } = await supabase.auth.signUp({
         email,
         password: form.password,
         options: { data: { name: sanitizeText(form.name, 30).trim(), role: form.role, state: form.state } },
       });
-      if (error) return notify(error.message);
-      setForm({ ...form, contact: email });
-      setOtpAttempts(0);
-      setAuthStep("otp");
-      notify(`📧 We emailed a 6-digit code to ${email} to verify your account`);
+      setAuthBusy(false);
+      if (error) { loginClicked.current = false; return notify(error.message); }
+      notify("✔ Account created — logging you in…");
     } else {
       // Log in with password — no code needed
       if (!form.password) return notify("Enter your password");
       loginClicked.current = true;
+      setAuthBusy(true);
       const { error } = await supabase.auth.signInWithPassword({ email, password: form.password });
+      setAuthBusy(false);
       if (error) {
         if (Date.now() < lockedUntil) return notify(`Too many attempts. Try again in ${Math.ceil((lockedUntil - Date.now()) / 1000)}s`);
         const tries = otpAttempts + 1;
@@ -659,6 +687,7 @@ export default function App() {
         <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 46px; height: 46px; border: 4px solid #232b25; border-top-color: #FFD447; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
         <div className="display" style={{ fontSize: 34, color: T.floodlight }}>Match Era</div>
         <div className="loader" />
+        <BootSlowNotice />
       </div>
     );
   }
@@ -748,7 +777,10 @@ export default function App() {
                   <span style={{ color: T.floodlight, cursor: "pointer", fontWeight: 700 }} onClick={forgotPassword}>Forgot password?</span>
                 </div>
               )}
-              <button className="btn btn-gold" onClick={submitAuth}>{authMode === "signup" ? "Create account" : "Log in"}</button>
+              <button className="btn btn-gold" disabled={authBusy} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, opacity: authBusy ? .8 : 1 }} onClick={submitAuth}>
+                {authBusy && <span style={{ width: 16, height: 16, border: "2.5px solid rgba(16,19,26,.3)", borderTopColor: "#10131A", borderRadius: "50%", animation: "spin .8s linear infinite", display: "inline-block" }} />}
+                {authBusy ? (authMode === "signup" ? "Creating account…" : "Logging in…") : (authMode === "signup" ? "Create account" : "Log in")}
+              </button>
               <div style={{ fontSize: 12, color: T.muted }}>
                 🔒 {authMode === "signup"
                   ? "We'll email you a one-time code to verify your account. Your password is stored encrypted — we can never read it."
@@ -933,11 +965,16 @@ export default function App() {
                           <span style={{ fontWeight: 700 }}>{m.teamA.name} vs {m.teamB.name}</span>
                           <span className="chip" style={{ background: mins >= 25 ? "#3a1f1a" : "#232b25", color: mins >= 25 ? T.live : T.chalk }}>waiting {mins} min{mins === 1 ? "" : "s"}</span>
                         </div>
-                        {mins >= 25 ? (
-                          <AdminScoreOverride m={m} onSubmit={(a, b) => submitFinalScore(m, a, b)} />
-                        ) : (
-                          <div style={{ fontSize: 12, color: T.muted }}>Captain has {Math.max(0, 25 - mins)} more minutes before admin override unlocks.</div>
-                        )}
+                        <div style={{ fontSize: 12, color: T.muted }}>Waiting on the captain's official result. Send them a nudge:</div>
+                        <button className="btn btn-gold" style={{ fontSize: 13 }} onClick={async () => {
+                          const cap = users.find((u) => u.id === m.createdBy);
+                          const { error } = await supabase.from("notifications").insert({
+                            user_id: m.createdBy,
+                            message: `Reminder from the admin: please upload the result for ${m.teamA.name} vs ${m.teamB.name} — fans are waiting!`,
+                          });
+                          if (error) return notify(error.message);
+                          notify(`🔔 Reminder sent to ${cap ? cap.name : "the captain"}. Tap again to send another.`);
+                        }}>🔔 Send reminder to captain</button>
                       </div>
                     );
                   })}
@@ -1064,6 +1101,7 @@ export default function App() {
             {me.role === "Fan" && <button className={page === "bets" ? "on" : ""} onClick={() => setPage("bets")}>Bets{myBets.length > 0 ? ` (${myBets.length})` : ""}</button>}
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             {me.role !== "Admin" && <button className={page === "wallet" ? "on" : ""} onClick={() => setPage("wallet")}>Wallet</button>}
+            <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
       </header>
@@ -1088,7 +1126,7 @@ export default function App() {
             <div key={m.id} className="banner" style={{ marginBottom: 16 }}>
               <span>
                 {mins >= 20 ? `⚠️ ${mins} MINUTES LATE — ` : "🏁 Full time: "}
-                {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it{mins >= 20 ? " (admin can override after 25 mins)" : ""}.
+                {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it.
               </span>
               <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => setOpenMatch(m.id)}>Upload result</button>
             </div>
@@ -1165,6 +1203,14 @@ export default function App() {
               </>
             )}
 
+            {feedState !== "All" && published.length === 0 && (
+              <div className="card" style={{ marginBottom: 20, textAlign: "center", padding: 22 }}>
+                <div style={{ fontSize: 28, marginBottom: 6 }}>📍</div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>No matches in {feedState} yet</div>
+                <div style={{ fontSize: 13, color: T.muted }}>No captain has published a match in {feedState}. Check back soon, or switch to 🌍 All states to see everything.</div>
+              </div>
+            )}
+
             {inMyState.length > 0 && feedState === "All" && !feedFollowedOnly && (
               <>
                 <SectionTitle color={T.floodlight}>📍 Matches in {me.state}</SectionTitle>
@@ -1233,6 +1279,36 @@ export default function App() {
         {/* ---------- WALLET ---------- */}
         {/* ---------- BETS ---------- */}
         {/* ---------- PROFILE ---------- */}
+        {page === "about" && (
+          <div style={{ maxWidth: 640 }}>
+            <div className="hero" style={{ marginBottom: 20 }}>
+              <div className="display" style={{ fontSize: 34, lineHeight: 1.05 }}>About <span style={{ color: T.floodlight }}>Match Era</span></div>
+            </div>
+            <div className="card" style={{ display: "grid", gap: 14, fontSize: 14, lineHeight: 1.7 }}>
+              <div>
+                <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>⚽ Our Mission</div>
+                Match Era exists to bring local community football to life. Every weekend, on pitches across Nigeria, brilliant football is played — and forgotten by Monday. We believe street and community matches deserve the same treatment as the big leagues: fixtures announced, kick-offs tracked live, results published, and heroes remembered.
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>🧢 For Captains</div>
+                Captains are the heartbeat of Match Era. Host your matches, publish your line-ups, run the official match clock, update live scores as the goals fly in, and upload the full-time result — complete with shareable artwork for your team's socials.
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>📣 For Fans</div>
+                Follow your favourite captains, find matches happening in your state, star the games you don't want to miss, and watch results roll in on the live feed. Community football finally has a home — and it's in your pocket.
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>🇳🇬 Built for the Community</div>
+                From Lagos to Kano, Enugu to Ibadan — if there's a pitch and two teams, there's a story worth telling. Match Era is built to tell it.
+              </div>
+              <div style={{ borderTop: "1px solid #232b25", paddingTop: 12, fontSize: 12, color: T.muted, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                <span>Match Era — The community football website</span>
+                <span style={{ color: T.floodlight, fontWeight: 700 }}>App Version 1.0</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {page === "profile" && me.role !== "Admin" && (
           <ProfilePage
             me={me}
@@ -1479,6 +1555,23 @@ export default function App() {
       )}
 
 
+      {notifPromptOpen && me && me.role === "Captain" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 85, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 40 }}>🔔</div>
+            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Turn on notifications</div>
+            <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
+              Captain, enable notifications so Match Era can remind you — <b style={{ color: T.chalk }}>it's in case you forget to update your match scores</b> after full time. Fans are waiting on your results!
+            </div>
+            <button className="btn btn-gold" onClick={async () => {
+              try { await Notification.requestPermission(); } catch (e) {}
+              setNotifPromptOpen(false);
+            }}>Turn on notifications</button>
+            <button className="btn btn-ghost" onClick={() => setNotifPromptOpen(false)}>Not now</button>
+          </div>
+        </div>
+      )}
+
       {pwaPromptOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setPwaPromptOpen(false)}>
           <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
@@ -1528,7 +1621,8 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="display" style={{ fontSize: 20 }}>{u.name}</div>
-                  <div style={{ fontSize: 12, color: T.muted }}>{u.role} · {u.state || "no state"} {u.blocked && <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span>}</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>{u.role} · 📍 {u.state || "no state"} {u.blocked && <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span>}</div>
+                  {u.email && <div style={{ fontSize: 12, color: T.floodlight, marginTop: 2, wordBreak: "break-all" }}>✉️ {u.email}</div>}
                 </div>
                 <button onClick={() => setAdminViewUser(null)} style={{ background: "none", border: 0, color: T.muted, fontSize: 22, cursor: "pointer" }}>✕</button>
               </div>
@@ -1547,13 +1641,41 @@ export default function App() {
                 </div>
               )}
               {u.role !== "Admin" && (
-                <button className="btn" style={{ background: u.blocked ? "#173a26" : "#3a1f1a", color: u.blocked ? "#1DB954" : T.live }}
-                  onClick={async () => {
-                    await supabase.from("profiles").update({ blocked: !u.blocked }).eq("id", u.id);
-                    refreshAll();
-                    notify(u.blocked ? `${u.name} unblocked` : `${u.name} blocked — they can no longer log in`);
-                    setAdminViewUser(null);
-                  }}>{u.blocked ? "✓ Unblock this user" : "🚫 Block this user"}</button>
+                <>
+                  <button className="btn" style={{ background: u.blocked ? "#173a26" : "#3a1f1a", color: u.blocked ? "#1DB954" : T.live }}
+                    onClick={async () => {
+                      await supabase.from("profiles").update({ blocked: !u.blocked }).eq("id", u.id);
+                      refreshAll();
+                      notify(u.blocked ? `${u.name} unblocked` : `${u.name} blocked — they can no longer log in`);
+                      setAdminViewUser(null);
+                    }}>{u.blocked ? "✓ Unblock this user" : "🚫 Block this user"}</button>
+                  <button className="btn btn-ghost" style={{ color: T.live, borderColor: "#3a1f1a", fontSize: 12 }}
+                    onClick={async () => {
+                      if (!window.confirm(`Permanently delete ${u.name} and ALL their data (matches, follows, bets, wallet)? This cannot be undone.`)) return;
+                      const theirs = matches.filter((x) => x.createdBy === u.id).map((x) => x.id);
+                      for (const mid of theirs) {
+                        await supabase.from("match_events").delete().eq("match_id", mid);
+                        await supabase.from("likes").delete().eq("match_id", mid);
+                        await supabase.from("match_requests").delete().eq("match_id", mid);
+                        await supabase.from("bets").delete().eq("match_id", mid);
+                        await supabase.from("transactions").delete().eq("match_id", mid);
+                        await supabase.from("matches").delete().eq("id", mid);
+                      }
+                      await supabase.from("likes").delete().eq("user_id", u.id);
+                      await supabase.from("follows").delete().eq("fan_id", u.id);
+                      await supabase.from("follows").delete().eq("captain_id", u.id);
+                      await supabase.from("bets").delete().eq("user_id", u.id);
+                      await supabase.from("transactions").delete().eq("user_id", u.id);
+                      await supabase.from("feedback").delete().eq("user_id", u.id);
+                      await supabase.from("notifications").delete().eq("user_id", u.id);
+                      await supabase.from("wallets").delete().eq("user_id", u.id);
+                      const { error } = await supabase.from("profiles").delete().eq("id", u.id);
+                      if (error) return notify(error.message);
+                      setAdminViewUser(null);
+                      refreshAll();
+                      notify(`🗑 ${u.name} deleted from the database.`);
+                    }}>🗑 Delete this user from the database</button>
+                </>
               )}
             </div>
           </div>
@@ -1576,6 +1698,20 @@ export default function App() {
 
 function SectionTitle({ children, color }) {
   return <div className="display" style={{ fontSize: 18, color, margin: "0 0 12px" }}>{children}</div>;
+}
+
+function BootSlowNotice() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
+  if (!slow) return null;
+  return (
+    <div style={{ fontSize: 13, color: "#7A8B83", textAlign: "center", maxWidth: 280, lineHeight: 1.5 }}>
+      This is taking longer than usual — your network may be slow. Hang tight, we're still loading…
+    </div>
+  );
 }
 
 function PwInput({ value, onChange, placeholder, autoComplete }) {
@@ -1798,8 +1934,8 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
           )
         )}
 
-        {/* DELETE — captain's own match, no approval needed */}
-        {isOwner && me.role === "Captain" && m.status !== "Live" && (
+        {/* DELETE — captain's own match, or any match for the admin */}
+        {((isOwner && me.role === "Captain") || me.role === "Admin") && m.status !== "Live" && (
           <button className="btn btn-ghost" style={{ color: "#E4572E", borderColor: "#3a1f1a" }}
             onClick={() => { if (window.confirm("Delete this match permanently? This can't be undone.")) onDeleteMatch(m); }}>🗑 Delete this match</button>
         )}
@@ -2056,23 +2192,6 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
             {m.shootout && m.pensWinner ? ` — ${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}–${m.pensB} on penalties.` : m.result === "Draw" ? " — Draw." : ` — ${m.result === "A" ? m.teamA.name : m.teamB.name} win.`} All bets settled on the 90-minute score.
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-/* ---------- ADMIN SCORE OVERRIDE — for captains 25+ mins late ---------- */
-function AdminScoreOverride({ m, onSubmit }) {
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
-  return (
-    <div style={{ display: "grid", gap: 8, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 10, padding: 10 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#FFD447" }}>⚠️ Captain is over 25 minutes late — override and publish the result:</div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
-        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={a} onChange={(e) => setA(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
-        <span className="display" style={{ color: "#FFD447" }}>–</span>
-        <input className="input" style={{ width: 70, textAlign: "center", fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={b} onChange={(e) => setB(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
-        <button className="btn btn-gold" disabled={a === "" || b === ""} style={{ marginLeft: "auto", padding: "10px 14px", fontSize: 13, opacity: a === "" || b === "" ? .5 : 1 }} onClick={() => onSubmit(+a, +b)}>Publish result</button>
       </div>
     </div>
   );
@@ -2428,8 +2547,30 @@ function PosterModal({ m, onClose, notify }) {
           ) : (
             <>
               <rect x="60" y="315" width="280" height="2" fill="#FFD447" opacity="0.5" />
-              <text x="200" y="356" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="24">{m.date}  ·  {m.time}</text>
-              <text x="200" y="388" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontSize="15">📍 {m.location}</text>
+              <text x="200" y="345" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="22">{m.date}  ·  {m.time}</text>
+              <text x="200" y="368" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontSize="13">📍 {m.location}</text>
+              {/* LINE-UPS — for fans sharing before kick-off */}
+              {(() => {
+                const names = (str) => (str || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 6);
+                const nA = names(m.playersA), nB = names(m.playersB);
+                const extraA = Math.max(0, (m.playersA || "").split(",").filter((x) => x.trim()).length - 6);
+                const extraB = Math.max(0, (m.playersB || "").split(",").filter((x) => x.trim()).length - 6);
+                if (nA.length === 0 && nB.length === 0) return null;
+                return (
+                  <>
+                    <text x="110" y="392" textAnchor="middle" fill="#FFD447" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
+                    <text x="290" y="392" textAnchor="middle" fill="#FFD447" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
+                    {nA.map((p, i) => (
+                      <text key={"a" + i} x="110" y={404 + i * 11} textAnchor="middle" fill="#FAF7EF" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
+                    ))}
+                    {extraA > 0 && <text x="110" y={404 + nA.length * 11} textAnchor="middle" fill="#7A8B83" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraA} more</text>}
+                    {nB.map((p, i) => (
+                      <text key={"b" + i} x="290" y={404 + i * 11} textAnchor="middle" fill="#FAF7EF" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
+                    ))}
+                    {extraB > 0 && <text x="290" y={404 + nB.length * 11} textAnchor="middle" fill="#7A8B83" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraB} more</text>}
+                  </>
+                );
+              })()}
             </>
           )}
           <text x="200" y="470" textAnchor="middle" fill="#FAF7EF" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON MATCH ERA" : "HOSTED ON MATCH ERA · COME SUPPORT YOUR TEAM"}</text>
