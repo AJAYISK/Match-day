@@ -204,6 +204,16 @@ export default function App() {
     return () => clearInterval(iv);
   }, []);
 
+  /* Recovery links carry their purpose in the URL — read it directly,
+     immune to auth-event timing races */
+  useEffect(() => {
+    const h = window.location.hash || "";
+    if (h.includes("type=recovery")) setScreen("recovery");
+    if (h.includes("otp_expired") || h.includes("error=access_denied")) {
+      notify("That reset link has expired or was already used — request a fresh one from Forgot password.");
+    }
+  }, []);
+
   /* ---------- SESSION: restore login, react to auth changes ---------- */
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -211,7 +221,7 @@ export default function App() {
       else setBooting(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "PASSWORD_RECOVERY") { setScreen("recovery"); return; }
+      if (event === "PASSWORD_RECOVERY" || (window.location.hash || "").includes("type=recovery")) { setScreen("recovery"); setBooting(false); return; }
       if (session && screenRef.current !== "recovery") loadMe(session.user.id, event === "SIGNED_IN");
       else if (!session) { setMe(null); setScreen("auth"); setBooting(false); }
     });
