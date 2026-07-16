@@ -182,9 +182,6 @@ export default function App() {
   const [supportLink, setSupportLink] = useState("");
   const [annes, setAnnes] = useState([]);
   const [annDraft, setAnnDraft] = useState("");
-  const [announcements, setAnnouncements] = useState([]);
-  const [annDraft, setAnnDraft] = useState("");
-  const [capStateFilter, setCapStateFilter] = useState("All");
   const [supportDraft, setSupportDraft] = useState("");
   const [feedState, setFeedState] = useState("All");
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
@@ -270,8 +267,6 @@ export default function App() {
     }
     const { data: rq } = await supabase.from("match_requests").select("*").order("created_at", { ascending: false });
     if (rq) setRequests(rq);
-    const { data: an } = await supabase.from("announcements").select("*").gte("created_at", new Date(Date.now() - 24 * 3600000).toISOString()).order("created_at", { ascending: false });
-    if (an) setAnnouncements(an);
     const { data: an } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
     if (an) setAnnes(an.filter((a) => Date.now() - new Date(a.created_at).getTime() < 86400000));
     const { data: st } = await supabase.from("site_settings").select("value").eq("key", "support_link").single();
@@ -1462,7 +1457,6 @@ export default function App() {
                   {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
                 </select>
               </div>
-              <>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 <div className="feedgrid">
