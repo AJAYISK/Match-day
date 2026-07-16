@@ -37,6 +37,7 @@ const rowToMatchBase = (r) => ({
   badgeA: r.badge_a || "",
   badgeB: r.badge_b || "",
   cancelledAt: r.cancelled_at,
+  streamUrl: r.stream_url || "",
   timerStartedAt: r.timer_started_at,
   breakEndsAt: r.break_ends_at,
   awaitingSince: r.awaiting_since,
@@ -65,6 +66,7 @@ const matchToRow = (p) => {
   if (p.liveA !== undefined) out.live_a = p.liveA;
   if (p.liveB !== undefined) out.live_b = p.liveB;
   if (p.cancelledAt !== undefined) out.cancelled_at = p.cancelledAt;
+  if (p.streamUrl !== undefined) out.stream_url = p.streamUrl;
   if (p.timerStartedAt !== undefined) out.timer_started_at = p.timerStartedAt;
   if (p.breakEndsAt !== undefined) out.break_ends_at = p.breakEndsAt;
   if (p.awaitingSince !== undefined) out.awaiting_since = p.awaitingSince;
@@ -105,6 +107,28 @@ const LOCKOUT_SECONDS = 30;
 const DEFAULT_ODDS = { A: 1.8, Draw: 3.0, B: 1.8 };
 
 const NG_STATES = ["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara","FCT Abuja"];
+
+/* ---------- LIVE STREAM helpers ---------- */
+const STREAM_DOMAINS = ["facebook.com", "fb.watch", "youtube.com", "youtu.be"];
+const isValidStreamUrl = (v) => {
+  try {
+    const u = new URL(v.startsWith("http") ? v : `https://${v}`);
+    return STREAM_DOMAINS.some((d) => u.hostname === d || u.hostname.endsWith("." + d));
+  } catch { return false; }
+};
+const normalizeStreamUrl = (v) => (v.startsWith("http") ? v : `https://${v}`).slice(0, 300);
+const youtubeEmbedId = (v) => {
+  try {
+    const u = new URL(v);
+    if (u.hostname.includes("youtu.be")) return u.pathname.slice(1).split("/")[0];
+    if (u.hostname.includes("youtube.com")) {
+      if (u.searchParams.get("v")) return u.searchParams.get("v");
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts[0] === "live" || parts[0] === "embed") return parts[1] || null;
+    }
+    return null;
+  } catch { return null; }
+};
 
 const BADGES = ["⚽","🦁","🦅","🛡️","⭐","🔥","🐆","🦂","👑","🚀","⚡","🐘"];
 
@@ -518,7 +542,7 @@ export default function App() {
       p_shootout: shootout, p_pens_a: shootout ? pa : null, p_pens_b: shootout ? pb : null,
     });
     if (error) return notify(error.message);
-    await supabase.from("matches").update({ scorers_a: sanitizeText(scorersA, 150), scorers_b: sanitizeText(scorersB, 150) }).eq("id", m.id);
+    await supabase.from("matches").update({ scorers_a: sanitizeText(scorersA, 150), scorers_b: sanitizeText(scorersB, 150), stream_url: null }).eq("id", m.id);
     const result = a > b ? "A" : b > a ? "B" : "Draw";
     const pensWinner = shootout ? (pa > pb ? "A" : pb > pa ? "B" : null) : null;
     const winnerText = pensWinner
@@ -1478,6 +1502,18 @@ export default function App() {
             if (a > m.liveA || b > m.liveB) logEvent(m.id, `⚽ Goal! ${m.teamA.name} ${a}-${b} ${m.teamB.name}`);
             else logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`);
           }}
+          onSetStream={(m, url) => {
+            if (url === null) {
+              patchMatch(m.id, { streamUrl: "" });
+              notify("Stream link removed.");
+              return;
+            }
+            if (!isValidStreamUrl(url)) return notify("That doesn't look like a Facebook or YouTube link. Paste the link from your live video.");
+            const clean = normalizeStreamUrl(url);
+            patchMatch(m.id, { streamUrl: clean });
+            if (m.status === "Live") logEvent(m.id, `🔴 Live stream started: ${m.teamA.name} vs ${m.teamB.name} — watch now!`);
+            notify("🔴 Stream link saved — fans can now watch live!");
+          }}
           onCancelMatch={(m) => {
             patchMatch(m.id, { status: "Cancelled", running: false, timerStartedAt: null, cancelledAt: new Date().toISOString() });
             logEvent(m.id, `❌ Match Cancelled: ${m.teamA.name} vs ${m.teamB.name}`);
@@ -1801,6 +1837,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineVie
             <>
               <div className="display" style={{ fontSize: 24, color: "#E4572E" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
               <div className="pulse" style={{ fontSize: 12, color: "#E4572E", fontWeight: 700 }}>LIVE {minute(m)}'</div>
+              {m.streamUrl && <div className="chip pulse" style={{ background: "#E4572E", color: "#fff", fontSize: 9, marginTop: 2 }}>🔴 LIVE STREAM</div>}
             </>
           ) : m.status === "AwaitingScore" ? (
             <>
@@ -1828,13 +1865,17 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineVie
   );
 }
 
-function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
+function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
   const [la, setLa] = useState("");
   const [lb, setLb] = useState("");
   const [reqOpen, setReqOpen] = useState(false);
+  const [streamInput, setStreamInput] = useState("");
+  const [streamHelpOpen, setStreamHelpOpen] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
+  useEffect(() => { setStreamInput(m ? m.streamUrl || "" : ""); setWatchOpen(false); }, [m && m.id]);
   const [reqReason, setReqReason] = useState("");
   useEffect(() => { if (m) { setLa(String(m.liveA ?? 0)); setLb(String(m.liveB ?? 0)); } }, [m && m.id, m && m.liveA, m && m.liveB]);
   const [newDate, setNewDate] = useState("");
@@ -1905,6 +1946,78 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
             </div>
           ))}
         </div>
+
+        {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
+        {isOwner && me.role === "Captain" && (m.status === "Scheduled" || m.status === "Live") && (
+          <div className="card" style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>🔴 Live Stream</div>
+              <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => setStreamHelpOpen(true)}>📖 How to go live — step by step</button>
+            </div>
+            <input className="input" maxLength={300} placeholder="Paste your Facebook live video link here"
+              value={streamInput} onChange={(e) => setStreamInput(e.target.value.slice(0, 300))} />
+            <div style={{ display: "flex", gap: 8 }}>
+              {m.streamUrl && (
+                <button className="btn btn-ghost" style={{ flex: 1, color: "#E4572E", borderColor: "#3a1f1a", fontSize: 13 }}
+                  onClick={() => { onSetStream(m, null); setStreamInput(""); }}>Remove</button>
+              )}
+              <button className="btn btn-gold" style={{ flex: 2, fontSize: 13, opacity: streamInput.trim() ? 1 : .5 }} disabled={!streamInput.trim()}
+                onClick={() => onSetStream(m, streamInput.trim())}>{m.streamUrl ? "Update stream link" : "Save stream link"}</button>
+            </div>
+          </div>
+        )}
+
+        {/* STREAM INSTRUCTIONS MODAL */}
+        {streamHelpOpen && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setStreamHelpOpen(false)}>
+            <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+              <div className="display" style={{ fontSize: 18, color: "#FFD447" }}>📖 How to go live</div>
+              <div style={{ fontSize: 13, lineHeight: 1.7, display: "grid", gap: 10 }}>
+                <div><b style={{ color: "#FFD447" }}>1.</b> Open <b>Facebook</b> and tap <b>Live</b> (where you'd normally write a post).</div>
+                <div><b style={{ color: "#FFD447" }}>2.</b> <b style={{ color: "#E4572E" }}>Important:</b> set the audience to <b>Public 🌍</b> — not Friends — or fans won't be able to watch.</div>
+                <div><b style={{ color: "#FFD447" }}>3.</b> Start your broadcast.</div>
+                <div><b style={{ color: "#FFD447" }}>4.</b> On your live video, tap <b>Share → Copy Link</b>.</div>
+                <div><b style={{ color: "#FFD447" }}>5.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
+                <div style={{ borderTop: "1px solid #232b25", paddingTop: 10, color: "#7A8B83", fontSize: 12 }}>
+                  💡 Tips: streaming ~90 minutes uses around 1.5–2GB of data. Prop your phone steady or let a teammate film — you're also running the match! YouTube links work too if you have a channel.
+                </div>
+              </div>
+              <button className="btn btn-gold" onClick={() => setStreamHelpOpen(false)}>Got it</button>
+            </div>
+          </div>
+        )}
+
+        {/* WATCH LIVE — fans, tap to expand */}
+        {m.streamUrl && m.status === "Live" && !isOwner && (
+          youtubeEmbedId(m.streamUrl) ? (
+            !watchOpen ? (
+              <button className="btn btn-live pulse" onClick={() => setWatchOpen(true)}>▶ Watch Live Stream</button>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ position: "relative", paddingTop: "56.25%", borderRadius: 12, overflow: "hidden", background: "#000" }}>
+                  <iframe src={`https://www.youtube.com/embed/${youtubeEmbedId(m.streamUrl)}?autoplay=1`} title="Live stream"
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+                    allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+                </div>
+                <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setWatchOpen(false)}>✕ Close stream</button>
+                <div style={{ fontSize: 11, color: "#7A8B83", textAlign: "center" }}>Streaming uses mobile data</div>
+              </div>
+            )
+          ) : (
+            <a href={m.streamUrl} target="_blank" rel="noopener noreferrer" className="btn btn-live pulse" style={{ textAlign: "center", textDecoration: "none" }}>
+              ▶ Watch Live on Facebook
+            </a>
+          )
+        )}
+        {m.streamUrl && m.status === "Live" && !isOwner && !watchOpen && (
+          <div style={{ fontSize: 11, color: "#7A8B83", marginTop: -8, textAlign: "center" }}>Streaming uses mobile data</div>
+        )}
+
+        {/* ADMIN — strip a bad stream link */}
+        {me.role === "Admin" && m.streamUrl && (
+          <button className="btn btn-ghost" style={{ color: "#E4572E", borderColor: "#3a1f1a", fontSize: 12 }}
+            onClick={() => onSetStream(m, null)}>🛡 Remove stream link (admin)</button>
+        )}
 
         {/* STAR — pin this match to the top of your feed */}
         {m.status === "Live" && (
