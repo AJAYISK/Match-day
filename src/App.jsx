@@ -109,6 +109,10 @@ const DEFAULT_ODDS = { A: 1.8, Draw: 3.0, B: 1.8 };
 
 const NG_STATES = ["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara","FCT Abuja"];
 
+/* Captured at the very first moment the code runs — before the auth
+   client processes (and removes) the reset link's URL marker */
+const RECOVERY_LANDING = typeof window !== "undefined" && (window.location.hash || "").includes("type=recovery");
+
 const fmtDate = (d) => {
   try { return new Date(d + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }); }
   catch { return d; }
@@ -148,6 +152,17 @@ export default function App() {
   const [screen, setScreen] = useState("auth");
   const screenRef = useRef("auth");
   useEffect(() => { screenRef.current = screen; }, [screen]);
+  const recoveryPending = useRef(RECOVERY_LANDING);
+  /* Strict mode: leaving the reset screen without saving signs the
+     link's session out — no password change, no entry */
+  useEffect(() => {
+    if (!RECOVERY_LANDING) return;
+    const bail = () => {
+      if (recoveryPending.current) supabase.auth.signOut();
+    };
+    window.addEventListener("pagehide", bail);
+    return () => window.removeEventListener("pagehide", bail);
+  }, []);
   const [newPass, setNewPass] = useState("");
   const [newPass2, setNewPass2] = useState("");
   const [authStep, setAuthStep] = useState("form");
@@ -217,11 +232,12 @@ export default function App() {
   /* ---------- SESSION: restore login, react to auth changes ---------- */
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (recoveryPending.current) { setScreen("recovery"); setBooting(false); return; }
       if (session) loadMe(session.user.id);
       else setBooting(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "PASSWORD_RECOVERY" || (window.location.hash || "").includes("type=recovery")) { setScreen("recovery"); setBooting(false); return; }
+      if (event === "PASSWORD_RECOVERY" || recoveryPending.current) { setScreen("recovery"); setBooting(false); return; }
       if (session && screenRef.current !== "recovery") loadMe(session.user.id, event === "SIGNED_IN");
       else if (!session) { setMe(null); setScreen("auth"); setBooting(false); }
     });
@@ -772,6 +788,7 @@ export default function App() {
               if (newPass !== newPass2) return notify("Passwords don't match");
               const { error } = await supabase.auth.updateUser({ password: newPass });
               if (error) return notify(error.message);
+              recoveryPending.current = false;
               setNewPass(""); setNewPass2("");
               notify("✔ Password updated — welcome back!");
               const { data: { session } } = await supabase.auth.getSession();
