@@ -78,20 +78,20 @@ const matchToRow = (p) => {
    MATCH ERA — Community Football Website
    Flow: Captain creates → starts 90-min timer → at FULL TIME the
    site REQUESTS the final score from the captain → captain submits
-   → result is published to the News Feed and bets are settled
+   → result is published to the News Feed and Highlights
    based on the captain's submitted score.
-   Roles: Captain / Fan / Admin. Demo wallet = virtual coins.
+   Roles: Captain / Fan / Admin.
    Demo OTP is always 1234.
    ============================================================ */
 
 const T = {
-  turf: "#0E4D3A",
-  turfDeep: "#08301F",
-  floodlight: "#FFD447",
-  chalk: "#FAF7EF",
-  night: "#10131A",
-  live: "#E4572E",
-  muted: "#7A8B83",
+  turf: "#14532D",
+  turfDeep: "#0D3A1F",
+  floodlight: "#E6B31E",
+  chalk: "#F5F0E1",
+  night: "#0C120E",
+  live: "#E8442E",
+  muted: "#8FA396",
 };
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;700&display=swap');`;
@@ -105,7 +105,6 @@ const sanitizeText = (v, max = 60) => v.replace(/[<>\\{}$`]/g, "").slice(0, max)
 const isStrongPassword = (v) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,64}$/.test(v);
 const MAX_OTP_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 30;
-const DEFAULT_ODDS = { A: 1.8, Draw: 3.0, B: 1.8 };
 
 const NG_STATES = ["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara","FCT Abuja"];
 
@@ -173,12 +172,9 @@ export default function App() {
   const [lockedUntil, setLockedUntil] = useState(0);
   const [users, setUsers] = useState([]);
   const [me, setMe] = useState(null);
-  const [wallets, setWallets] = useState({});
   const [matches, setMatches] = useState([]);
-  const [bets, setBets] = useState([]);
-  const [page, setPage] = useState("feed"); // feed | mymatches | create | wallet | admin
+  const [page, setPage] = useState("feed"); // feed | mymatches | create | highlights | admin
   const [openMatch, setOpenMatch] = useState(null);
-  const [betSlipFor, setBetSlipFor] = useState(null);
   const [viewCaptain, setViewCaptain] = useState(null);
   const [capStateFilter, setCapStateFilter] = useState("All");
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
@@ -189,6 +185,8 @@ export default function App() {
   const [onlineCount, setOnlineCount] = useState(1);
   const [followerCounts, setFollowerCounts] = useState({});
   const [events, setEvents] = useState([]); // live ticker
+  const [motmVotes, setMotmVotes] = useState({}); // { matchId: { playerName: count } }
+  const [myMotm, setMyMotm] = useState({});       // { matchId: playerName I voted for }
   const [myLikes, setMyLikes] = useState([]);
   const [likeCounts, setLikeCounts] = useState({});
   const [requests, setRequests] = useState([]); // match change requests
@@ -277,10 +275,8 @@ export default function App() {
 
   const refreshAll = async (meObj = me) => {
     if (!meObj) return;
-    const [{ data: ms }, { data: w }, { data: bs }, { data: us }] = await Promise.all([
+    const [{ data: ms }, { data: us }] = await Promise.all([
       supabase.from("matches").select("*").order("created_at", { ascending: false }),
-      supabase.from("wallets").select("*").eq("user_id", meObj.id).single().then((r) => ({ data: r.data ? [r.data] : [] })),
-      supabase.from("bets").select("*").eq("user_id", meObj.id),
       supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email"),
     ]);
     const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(12);
@@ -291,6 +287,18 @@ export default function App() {
       const lc = {}; lk.forEach((x) => { lc[x.match_id] = (lc[x.match_id] || 0) + 1; });
       setLikeCounts(lc);
     }
+    try {
+      const { data: mv } = await supabase.from("motm_votes").select("match_id, player_name, user_id");
+      if (mv) {
+        const agg = {}; const mineV = {};
+        mv.forEach((v) => {
+          agg[v.match_id] = agg[v.match_id] || {};
+          agg[v.match_id][v.player_name] = (agg[v.match_id][v.player_name] || 0) + 1;
+          if (v.user_id === meObj.id) mineV[v.match_id] = v.player_name;
+        });
+        setMotmVotes(agg); setMyMotm(mineV);
+      }
+    } catch (_) { /* motm_votes table not created yet — run SQL Update 9 */ }
     const { data: rq } = await supabase.from("match_requests").select("*").order("created_at", { ascending: false });
     if (rq) setRequests(rq);
     const { data: an } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
@@ -308,8 +316,6 @@ export default function App() {
     const { data: ps } = await supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(20);
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
-    if (w && w[0]) setWallets({ [meObj.id]: Number(w[0].balance) });
-    if (bs) setBets(bs.map((b) => ({ id: b.id, userId: b.user_id, matchId: b.match_id, pick: b.pick, stake: Number(b.stake), odds: Number(b.odds), settled: b.settled, won: b.won })));
     if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
@@ -511,29 +517,29 @@ export default function App() {
     }
   };
 
-  const verifyOtp = async () => {
+  /* Verify the 6-digit password-reset code, then open the new-password screen */
+  const verifyResetCode = async () => {
     if (Date.now() < lockedUntil) {
       return notify(`Too many wrong codes. Try again in ${Math.ceil((lockedUntil - Date.now()) / 1000)}s`);
     }
     if (!/^\d{6}$/.test(form.otp)) return notify("The code is 6 digits");
-    const { error } = await supabase.auth.verifyOtp({ email: form.contact, token: form.otp, type: "signup" });
+    recoveryPending.current = true; // route the sign-in straight to the new-password screen
+    const { error } = await supabase.auth.verifyOtp({ email: form.contact.trim().toLowerCase(), token: form.otp, type: "recovery" });
     if (error) {
-      // some projects issue 'email' type codes instead of 'signup'
-      const retry = await supabase.auth.verifyOtp({ email: form.contact, token: form.otp, type: "email" });
-      if (retry.error) {
-        const tries = otpAttempts + 1;
-        setOtpAttempts(tries);
-        if (tries >= MAX_OTP_ATTEMPTS) {
-          setLockedUntil(Date.now() + LOCKOUT_SECONDS * 1000);
-          setOtpAttempts(0);
-          return notify(`Too many wrong codes — locked for ${LOCKOUT_SECONDS} seconds`);
-        }
-        return notify(`Wrong or expired code (${MAX_OTP_ATTEMPTS - tries} attempts left)`);
+      recoveryPending.current = false;
+      const tries = otpAttempts + 1;
+      setOtpAttempts(tries);
+      if (tries >= MAX_OTP_ATTEMPTS) {
+        setLockedUntil(Date.now() + LOCKOUT_SECONDS * 1000);
+        setOtpAttempts(0);
+        return notify(`Too many wrong codes — locked for ${LOCKOUT_SECONDS} seconds`);
       }
+      return notify(`Wrong or expired code (${MAX_OTP_ATTEMPTS - tries} attempts left)`);
     }
-    loginClicked.current = true;
-    setForm({ contact: "", name: "", role: "Fan", otp: "", password: "", password2: "", state: "" });
+    setOtpAttempts(0);
+    setForm((f) => ({ ...f, otp: "" }));
     setAuthStep("form");
+    setScreen("recovery");
   };
 
   const forgotPassword = async () => {
@@ -543,7 +549,8 @@ export default function App() {
     if (!exists) return notify("No Match Era account uses this email address. Check the spelling, or create a new account.");
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
     if (error) return notify(error.message);
-    notify(`📧 Password reset link sent to ${email} — open it on this device`);
+    setAuthStep("resetcode");
+    notify(`📧 6-digit code sent to ${email} — enter it below`);
   };
 
   const logout = async () => { await supabase.auth.signOut(); setMe(null); setScreen("auth"); setOpenMatch(null); };
@@ -589,7 +596,7 @@ export default function App() {
     logEvent(m.id, `🟢 Kick off: ${m.teamA.name} vs ${m.teamB.name}`);
   };
 
-  /* Captain submits final score → result published to feed → bets settle */
+  /* Captain submits final score → result published to feed + Highlights */
   const submitFinalScore = async (m, a, b, shootout = false, pa = 0, pb = 0, scorersA = "", scorersB = "") => {
     const { error } = await supabase.rpc("submit_result", {
       p_match_id: m.id, p_final_a: a, p_final_b: b,
@@ -646,24 +653,24 @@ export default function App() {
     setMe((m) => ({ ...m, ...patch }));
   };
 
-  const cancelBet = async (bet) => {
-    const { error } = await supabase.rpc("cancel_bet", { p_bet_id: bet.id });
-    if (error) return notify(error.message);
-    notify(`Bet cancelled — ₦${bet.stake.toLocaleString()} refunded to your wallet`);
-    refreshAll();
-  };
-
-  const placeBet = async (match, pick, stake) => {
-    const { error } = await supabase.rpc("place_bet", { p_match_id: match.id, p_pick: pick, p_stake: stake });
-    if (error) return notify(error.message);
-    notify(`Bet placed: ₦${stake.toLocaleString()} on ${pick === "Draw" ? "Draw" : pick === "A" ? match.teamA.name : match.teamB.name}`);
-    refreshAll();
+  /* ---------- MAN OF THE MATCH ---------- */
+  const parsePlayers = (str, team) => (str || "").split(",").map((s) => s.trim()).filter(Boolean)
+    .map((s) => ({ name: s.replace(/\s*\(GK\)\s*$/i, ""), gk: /\(GK\)\s*$/i.test(s), team }));
+  const motmCandidates = (m) => [...parsePlayers(m.playersA, m.teamA.name), ...parsePlayers(m.playersB, m.teamB.name)];
+  const motmOpen = (m) => m.status === "ResultPublished" && motmCandidates(m).length > 0 &&
+    (Date.now() - new Date(m.publishedAt || m.date).getTime()) < 24 * 3600000;
+  const voteMotm = async (m, playerName) => {
+    if (myMotm[m.id]) return;
+    const { error } = await supabase.from("motm_votes").insert({ match_id: m.id, user_id: me.id, player_name: playerName });
+    if (error) return notify(error.message.includes("does not exist") ? "MOTM voting is being set up — check back soon!" : error.message);
+    setMyMotm((v) => ({ ...v, [m.id]: playerName }));
+    setMotmVotes((v) => ({ ...v, [m.id]: { ...(v[m.id] || {}), [playerName]: ((v[m.id] || {})[playerName] || 0) + 1 } }));
+    notify("🏆 Vote counted!");
   };
 
   const minute = (m) => Math.min(m.duration || 90, Math.floor(liveElapsed(m) / 60));
   /* Past results older than 30 days are retired from view (and purged nightly by the database) */
   const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
-  const myBal = me ? wallets[me.id] || 0 : 0;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
 
   /* ============================================================ STYLES */
@@ -677,13 +684,13 @@ export default function App() {
     .btn:active { transform: scale(.97); }
     .btn-gold { background: ${T.floodlight}; color: ${T.night}; }
     .btn-turf { background: ${T.turf}; color: ${T.chalk}; }
-    .btn-ghost { background: transparent; color: ${T.chalk}; border: 1.5px solid #2c352f; }
+    .btn-ghost { background: transparent; color: ${T.chalk}; border: 1.5px solid #2A3A2E; }
     .btn-live { background: ${T.live}; color: #fff; }
-    .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #2c352f; background: #171c22; color: ${T.chalk}; font-size: 15px; font-family: 'Space Grotesk', sans-serif; outline: none; }
+    .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #2A3A2E; background: #121814; color: ${T.chalk}; font-size: 15px; font-family: 'Space Grotesk', sans-serif; outline: none; }
     .input:focus { border-color: ${T.floodlight}; }
-    .card { background: #161b17; border: 1px solid #232b25; border-radius: 16px; padding: 18px; }
+    .card { background: #161E19; border: 1px solid #243128; border-radius: 16px; padding: 18px; }
     .chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-    .scoreboard { background: ${T.turfDeep}; border: 2px solid ${T.turf}; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .scoreboard { background: radial-gradient(circle at 50% -20%, rgba(245,240,225,.10), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.05) 46px 48px), ${T.turfDeep}; border: 2px solid ${T.turf}; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .pulse { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
     .topnav { display: flex; gap: 4px; }
@@ -691,14 +698,14 @@ export default function App() {
     .topnav button.on { color: ${T.night}; background: ${T.floodlight}; }
     .topnav button:hover:not(.on) { color: ${T.chalk}; }
     .feedgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-    .hero { background: linear-gradient(160deg, ${T.turfDeep}, ${T.night}); border: 1px solid #232b25; border-radius: 20px; padding: 36px; margin-bottom: 24px; }
+    .hero { background: radial-gradient(circle at 50% -30%, rgba(245,240,225,.08), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.04) 46px 48px), linear-gradient(160deg, ${T.turfDeep}, ${T.night}); border: 1px solid #243128; border-radius: 20px; padding: 36px; margin-bottom: 24px; }
     .hero-title { font-size: 38px; line-height: 1.1; color: ${T.chalk}; }
     .banner { background: ${T.live}; color: #fff; border-radius: 12px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     @media (prefers-reduced-motion: reduce) { .pulse { animation: none } }
     .md-root { overflow-x: hidden; }
     @keyframes spin { to { transform: rotate(360deg) } }
     .adm-wrap { display: flex; min-height: 100vh; }
-    .adm-side { width: 216px; flex-shrink: 0; background: linear-gradient(180deg, #0c1512, #0d1014); border-right: 1px solid #232b25; padding: 18px 12px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    .adm-side { width: 216px; flex-shrink: 0; background: linear-gradient(180deg, #0c1512, #0d1014); border-right: 1px solid #243128; padding: 18px 12px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
     .adm-brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px; }
     .adm-menu { display: flex; flex-direction: column; gap: 3px; }
     .adm-item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: none; border: 0; border-left: 3px solid transparent; border-radius: 0 10px 10px 0; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; transition: background .15s; }
@@ -706,12 +713,12 @@ export default function App() {
     .adm-item.on { background: rgba(255, 212, 71, .1); border-left-color: ${T.floodlight}; color: ${T.floodlight}; font-weight: 700; }
     .adm-badge { margin-left: auto; background: ${T.live}; color: #fff; font-size: 10px; font-weight: 700; border-radius: 999px; padding: 2px 7px; }
     .adm-online { display: flex; align-items: center; gap: 8px; font-size: 12px; color: ${T.muted}; padding: 0 6px; }
-    .adm-user { display: flex; align-items: center; gap: 10px; background: #12181420; border: 1px solid #232b25; border-radius: 12px; padding: 10px; }
+    .adm-user { display: flex; align-items: center; gap: 10px; background: #12181420; border: 1px solid #243128; border-radius: 12px; padding: 10px; }
     .adm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .adm-topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 22px 24px 14px; border-bottom: 1px solid #1a211c; position: sticky; top: 0; background: ${T.night}; z-index: 30; }
-    .adm-pill { display: flex; align-items: center; gap: 6px; background: #131a15; border: 1px solid #232b25; border-radius: 999px; padding: 7px 12px; font-size: 12px; }
+    .adm-pill { display: flex; align-items: center; gap: 6px; background: #131a15; border: 1px solid #243128; border-radius: 999px; padding: 7px 12px; font-size: 12px; }
     .adm-body { padding: 20px 24px 60px; max-width: 980px; }
-    .adm-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #232b25; background: #12161c; cursor: pointer; font-family: inherit; width: 100%; }
+    .adm-row { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #243128; background: #12161c; cursor: pointer; font-family: inherit; width: 100%; }
     .adm-row:hover { border-color: ${T.floodlight}; }
     @media (max-width: 760px) {
       .adm-side { width: 62px; padding: 14px 8px; }
@@ -724,11 +731,11 @@ export default function App() {
       .adm-topbar, .adm-body { padding-left: 14px; padding-right: 14px; }
     }
     .user-pill { display: flex; align-items: center; gap: 9px; }
-    .user-pill-clickable { cursor: pointer; padding: 4px 8px; border-radius: 999px; border: 1px solid #2c352f; transition: all .12s; }
-    .user-pill-clickable:hover { border-color: ${T.floodlight}; background: #161b17; }
+    .user-pill-clickable { cursor: pointer; padding: 4px 8px; border-radius: 999px; border: 1px solid #2A3A2E; transition: all .12s; }
+    .user-pill-clickable:hover { border-color: ${T.floodlight}; background: #161E19; }
     .user-pill-clickable:active { transform: scale(.97); }
     .user-avatar-simple { width: 36px; height: 36px; border-radius: 50%; background: ${T.turf}; display: flex; align-items: center; justify-content: center; font-family: 'Anton', sans-serif; font-size: 15px; color: ${T.floodlight}; flex-shrink: 0; border: 1.5px solid rgba(255, 212, 71, .4); }
-    .user-logout { width: 30px; height: 30px; border-radius: 50%; border: 1px solid #2c352f; background: transparent; color: ${T.muted}; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .12s; }
+    .user-logout { width: 30px; height: 30px; border-radius: 50%; border: 1px solid #2A3A2E; background: transparent; color: ${T.muted}; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .12s; }
     .user-logout:hover { color: ${T.live}; border-color: ${T.live}; }
     .card { max-width: 100%; min-width: 0; }
     .scoreboard { min-width: 0; }
@@ -762,7 +769,7 @@ export default function App() {
   if (booting) {
     return (
       <div className="md-root" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
-        <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 46px; height: 46px; border: 4px solid #232b25; border-top-color: #FFD447; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
+        <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 46px; height: 46px; border: 4px solid #243128; border-top-color: #E6B31E; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
         <div className="display" style={{ fontSize: 34, color: T.floodlight }}>Match Era</div>
         <div className="loader" />
         <BootSlowNotice />
@@ -794,6 +801,9 @@ export default function App() {
               const { data: { session } } = await supabase.auth.getSession();
               if (session) loadMe(session.user.id); else setScreen("auth");
             }}>Save new password</button>
+              <a href="https://wa.me/12704929553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
+                Can't access your email? <b style={{ color: "#25D366" }}>💬 Contact support on WhatsApp</b>
+              </a>
           </div>
         </div>
         {toast && <Toast msg={toast} />}
@@ -843,7 +853,7 @@ export default function App() {
                     </select>
                   </div>
                   <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
-                    ⚽ <b>Captains</b> host matches, run the timer, and publish the official scores — so captain accounts cannot place bets. 📣 <b>Fans</b> follow matches and bet from their wallet.
+                    ⚽ <b>Captains</b> host matches, run the timer, and publish the official scores. 📣 <b>Fans</b> follow matches, like the big moments, and vote Man of the Match.
                   </div>
                 </>
               )}
@@ -857,22 +867,26 @@ export default function App() {
                 </div>
               )}
               <button className="btn btn-gold" disabled={authBusy} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, opacity: authBusy ? .8 : 1 }} onClick={submitAuth}>
-                {authBusy && <span style={{ width: 16, height: 16, border: "2.5px solid rgba(16,19,26,.3)", borderTopColor: "#10131A", borderRadius: "50%", animation: "spin .8s linear infinite", display: "inline-block" }} />}
+                {authBusy && <span style={{ width: 16, height: 16, border: "2.5px solid rgba(16,19,26,.3)", borderTopColor: "#0C120E", borderRadius: "50%", animation: "spin .8s linear infinite", display: "inline-block" }} />}
                 {authBusy ? (authMode === "signup" ? "Creating account…" : "Logging in…") : (authMode === "signup" ? "Create account" : "Log in")}
               </button>
+              <a href="https://wa.me/12704929553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
+                Can't access your email? <b style={{ color: "#25D366" }}>💬 Contact support on WhatsApp</b>
+              </a>
               <div style={{ fontSize: 12, color: T.muted }}>
                 🔒 {authMode === "signup"
-                  ? "We'll email you a one-time code to verify your account. Your password is stored encrypted — we can never read it."
+                  ? "No email verification needed — you're in immediately. Your password is stored encrypted; we can never read it."
                   : "Protected by attempt lockouts and encrypted passwords."}
               </div>
             </div>
           ) : (
             <div className="card" style={{ display: "grid", gap: 12 }}>
-              <div style={{ fontWeight: 700 }}>Verify your account — enter the code sent to {form.contact}</div>
-              <div style={{ fontSize: 13, color: T.floodlight }}>Check your inbox (and spam folder) for the code.</div>
-              <input className="input" type="password" inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" maxLength={6} value={form.otp} onChange={(e) => setForm({ ...form, otp: e.target.value.replace(/\D/g, "") })} />
+              <div style={{ fontWeight: 700 }}>Reset password — enter the 6-digit code sent to {form.contact}</div>
+              <div style={{ fontSize: 13, color: T.floodlight }}>Check your inbox (and spam folder). The code expires shortly, so use it now.</div>
+              <input className="input" inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" maxLength={6} value={form.otp} onChange={(e) => setForm({ ...form, otp: e.target.value.replace(/\D/g, "") })} />
               <div style={{ fontSize: 11, color: T.muted }}>🔒 Codes are single-use and entry locks after {MAX_OTP_ATTEMPTS} wrong attempts.</div>
-              <button className="btn btn-gold" onClick={verifyOtp}>Verify & create account</button>
+              <button className="btn btn-gold" onClick={verifyResetCode}>Verify code →</button>
+              <button className="btn btn-ghost" onClick={() => forgotPassword()}>Resend code</button>
               <button className="btn btn-ghost" onClick={() => setAuthStep("form")}>Back</button>
             </div>
           )}
@@ -900,7 +914,6 @@ export default function App() {
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const results = published.filter((m) => m.status === "ResultPublished");
   const mine = matches.filter((m) => m.createdBy === me.id);
-  const myBets = bets.filter((b) => b.userId === me.id);
 
   return (
     <div className="md-root">
@@ -972,7 +985,7 @@ export default function App() {
               {adminSection === "newsfeed" && (
                 <>
                   {adminPosts.map((p) => (
-                    <div key={p.id} className="card" style={{ marginBottom: 10, borderColor: "#FFD447" }}>
+                    <div key={p.id} className="card" style={{ marginBottom: 10, borderColor: "#E6B31E" }}>
                       <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Match Era</span>
                       <div style={{ fontSize: 14, marginTop: 8 }}>{p.message}</div>
                     </div>
@@ -984,7 +997,7 @@ export default function App() {
                     </div>
                   ))}
                   <div className="feedgrid" style={{ marginTop: 12 }}>
-                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} myBetCount={0} />)}
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               )}
@@ -998,7 +1011,7 @@ export default function App() {
                       <button key={u.id} className="card adm-row" onClick={() => setAdminViewUser(u.id)}>
                         <div style={{ width: 40, height: 40, borderRadius: 12, background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", color: T.floodlight, position: "relative", flexShrink: 0 }}>
                           {u.name.slice(0, 1).toUpperCase()}
-                          {online && <span style={{ position: "absolute", bottom: -2, right: -2, width: 11, height: 11, borderRadius: "50%", background: "#1DB954", border: "2px solid #161b17" }} />}
+                          {online && <span style={{ position: "absolute", bottom: -2, right: -2, width: 11, height: 11, borderRadius: "50%", background: "#1DB954", border: "2px solid #161E19" }} />}
                         </div>
                         <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                           <div style={{ fontWeight: 700, fontSize: 14, color: T.chalk }}>{u.name} {u.blocked && <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span>}</div>
@@ -1042,7 +1055,7 @@ export default function App() {
                       <div key={m.id} className="card" style={{ marginBottom: 10, fontSize: 14, display: "grid", gap: 8 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span style={{ fontWeight: 700 }}>{m.teamA.name} vs {m.teamB.name}</span>
-                          <span className="chip" style={{ background: mins >= 25 ? "#3a1f1a" : "#232b25", color: mins >= 25 ? T.live : T.chalk }}>waiting {mins} min{mins === 1 ? "" : "s"}</span>
+                          <span className="chip" style={{ background: mins >= 25 ? "#3a1f1a" : "#243128", color: mins >= 25 ? T.live : T.chalk }}>waiting {mins} min{mins === 1 ? "" : "s"}</span>
                         </div>
                         <div style={{ fontSize: 12, color: T.muted }}>Waiting on the captain's official result. Send them a nudge:</div>
                         <button className="btn btn-gold" style={{ fontSize: 13 }} onClick={async () => {
@@ -1095,7 +1108,7 @@ export default function App() {
                   {feedbacks.map((f) => (
                     <div key={f.id} className="card" style={{ marginBottom: 8, fontSize: 13 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>{f.feature}</span>
+                        <span className="chip" style={{ background: "#243128", color: T.floodlight }}>{f.feature}</span>
                         <span style={{ color: T.muted, fontSize: 11 }}>{users.find((u) => u.id === f.userId)?.name || "User"}</span>
                       </div>
                       <div style={{ color: T.chalk }}>{f.msg}</div>
@@ -1201,7 +1214,7 @@ export default function App() {
         </div>
       ) : (
       <>
-      <header style={{ borderBottom: "1px solid #232b25", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
+      <header style={{ borderBottom: "1px solid #243128", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
             <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Match Era</div>
@@ -1209,7 +1222,6 @@ export default function App() {
               <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>{me.name}{me.role !== "Admin" && <span style={{ color: T.muted, fontWeight: 400 }}> ›</span>}</div>
-                {me.role !== "Admin" && <div style={{ fontSize: 11, color: T.floodlight, fontWeight: 700, lineHeight: 1.2 }}>₦{myBal.toLocaleString()}</div>}
               </div>
               <button className="user-logout" title="Log out" onClick={(e) => { e.stopPropagation(); logout(); }}>⏻</button>
             </div>
@@ -1217,9 +1229,8 @@ export default function App() {
           <nav className="topnav">
             <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
             {me.role !== "Admin" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
-            {me.role === "Fan" && <button className={page === "bets" ? "on" : ""} onClick={() => setPage("bets")}>Bets{myBets.length > 0 ? ` (${myBets.length})` : ""}</button>}
+            <button className={page === "highlights" ? "on" : ""} onClick={() => setPage("highlights")}>⭐ Highlights</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
-            {me.role !== "Admin" && <button className={page === "wallet" ? "on" : ""} onClick={() => setPage("wallet")}>Wallet</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
@@ -1229,7 +1240,7 @@ export default function App() {
 
         {/* KICK-OFF PERMISSION BANNER — scheduled time is due, captain decides */}
         {me.role === "Captain" && matches.filter((m) => m.status === "Scheduled" && m.createdBy === me.id && isDue(m)).map((m) => (
-          <div key={"ko-" + m.id} className="banner" style={{ marginBottom: 16, background: "#0E4D3A" }}>
+          <div key={"ko-" + m.id} className="banner" style={{ marginBottom: 16, background: "#14532D" }}>
             <span>⚽ Kick-off time reached: {m.teamA.name} vs {m.teamB.name} ({m.time}). The match starts only when you say so.</span>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => startMatch(m)}>▶ Start match</button>
@@ -1257,7 +1268,7 @@ export default function App() {
           <>
             {/* LIVE TICKER */}
             {events.length > 0 && (
-              <div style={{ background: "#131a15", border: "1px solid #232b25", borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "grid", gap: 6 }}>
+              <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "grid", gap: 6 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: T.live, letterSpacing: ".1em" }}>⚡ LIVE UPDATES</div>
                 {events.slice(0, 3).map((e) => (
                   <div key={e.id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -1285,13 +1296,13 @@ export default function App() {
                 Your community.<br /><span style={{ color: T.floodlight }}>Your matches. Live.</span>
               </div>
               <div style={{ color: T.muted, marginTop: 10, maxWidth: 520 }}>
-                Follow published matches from local captains, watch scores update in real time, and back your team from your wallet. Results go live the moment the captain submits the final score.
+                Follow published matches from local captains, watch scores update in real time, and relive the big moments in ⭐ Highlights. Results go live the moment the captain submits the final score.
               </div>
             </div>
 
             {/* Admin announcements */}
             {adminPosts.length > 0 && adminPosts.slice(0, 3).map((p) => (
-              <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#FFD447", borderWidth: 1.5 }}>
+              <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#E6B31E", borderWidth: 1.5 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                   <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Match Era</span>
                   <span style={{ fontSize: 11, color: T.muted }}>{(p.created_at || "").slice(0, 10)}</span>
@@ -1307,7 +1318,7 @@ export default function App() {
                 <>
                   <SectionTitle color={T.floodlight}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               ) : null;
@@ -1317,7 +1328,7 @@ export default function App() {
               <>
                 <SectionTitle color={T.live}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -1334,7 +1345,7 @@ export default function App() {
               <>
                 <SectionTitle color={T.floodlight}>📍 Matches in {me.state}</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
+                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
                 <SeeMoreBtn k="mystate" list={inMyState} />
               </>
@@ -1343,7 +1354,7 @@ export default function App() {
             <SectionTitle color={T.floodlight}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: T.muted, marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
 
             <SeeMoreBtn k="upcoming" list={upcoming} />
@@ -1351,7 +1362,7 @@ export default function App() {
             <SectionTitle color={T.chalk}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: T.muted }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
           </>
@@ -1366,7 +1377,7 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {mine.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView myBetCount={0} />)}
+              {mine.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
             </div>
           </>
         )}
@@ -1420,7 +1431,7 @@ export default function App() {
                 <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>🇳🇬 Built for the Community</div>
                 From Lagos to Kano, Enugu to Ibadan — if there's a pitch and two teams, there's a story worth telling. Match Era is built to tell it.
               </div>
-              <div style={{ borderTop: "1px solid #232b25", paddingTop: 12, fontSize: 12, color: T.muted, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <div style={{ borderTop: "1px solid #243128", paddingTop: 12, fontSize: 12, color: T.muted, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                 <span>Match Era — The community football website</span>
                 <span style={{ color: T.floodlight, fontWeight: 700 }}>App Version 1.0</span>
               </div>
@@ -1464,10 +1475,9 @@ export default function App() {
         {page === "profile" && me.role !== "Admin" && (
           <ProfilePage
             me={me}
-            wallet={myBal}
             stats={me.role === "Captain"
               ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["🔔 Followers", followerCounts[me.id] || 0], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
-              : { a: ["Bets placed", myBets.length], b: ["Bets won", myBets.filter((x) => x.won).length], c: ["Total winnings", `₦${myBets.filter((x) => x.won).reduce((t, x) => t + Math.round(x.stake * x.odds), 0).toLocaleString()}`] }}
+              : { a: ["🔔 Captains followed", follows.length], b: ["💛 Likes given", myLikes.length], c: ["🏆 MOTM votes cast", Object.keys(myMotm).length] }}
             onSave={updateProfile}
             notify={notify}
           />
@@ -1506,10 +1516,10 @@ export default function App() {
                           {c.id === me.id && <span className="chip" style={{ background: T.floodlight, color: T.night, marginLeft: liveToday > 0 ? 0 : "auto" }}>You</span>}
                         </div>
                         <div style={{ display: "flex", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
-                          <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>{publishedToday} match{publishedToday === 1 ? "" : "es"} today</span>
-                          <span className="chip" style={{ background: "#232b25", color: T.chalk }}>{theirs.length} all-time</span>
-                          {c.state && <span className="chip" style={{ background: "#232b25", color: T.chalk }}>📍 {c.state}</span>}
-                          <span className="chip" style={{ background: "#232b25", color: T.floodlight }}>🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</span>
+                          <span className="chip" style={{ background: "#243128", color: T.floodlight }}>{publishedToday} match{publishedToday === 1 ? "" : "es"} today</span>
+                          <span className="chip" style={{ background: "#243128", color: T.chalk }}>{theirs.length} all-time</span>
+                          {c.state && <span className="chip" style={{ background: "#243128", color: T.chalk }}>📍 {c.state}</span>}
+                          <span className="chip" style={{ background: "#243128", color: T.floodlight }}>🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</span>
                         </div>
                         {c.contactInfo && <div style={{ fontSize: 12, color: T.muted }}>📞 Join the team: <span style={{ color: T.chalk }}>{c.contactInfo}</span></div>}
                         {me.role === "Fan" && c.id !== me.id && (
@@ -1539,7 +1549,7 @@ export default function App() {
                         <div style={{ fontSize: 13, color: T.muted }}>{theirs.length} published match{theirs.length === 1 ? "" : "es"} · 🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</div>
                         {c.contactInfo && <div style={{ fontSize: 13, color: T.floodlight, marginTop: 4 }}>📞 Want to join the team? Contact: {c.contactInfo}</div>}
                         {(() => { const a = annes.find((x) => x.captain_id === c.id); return a ? (
-                          <div style={{ fontSize: 13, background: "#1c1509", border: "1px solid #FFD447", borderRadius: 10, padding: "8px 12px", marginTop: 8 }}>
+                          <div style={{ fontSize: 13, background: "#1c1509", border: "1px solid #E6B31E", borderRadius: 10, padding: "8px 12px", marginTop: 8 }}>
                             📣 <b style={{ color: T.floodlight }}>Announcement:</b> {a.message}
                           </div>
                         ) : null; })()}
@@ -1553,11 +1563,11 @@ export default function App() {
                     {theirs.length === 0 && <div className="card" style={{ color: T.muted }}>This captain hasn't published any matches yet.</div>}
                     {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <SectionTitle color={T.floodlight}>Current & Upcoming</SectionTitle>}
                     <div className="feedgrid" style={{ marginBottom: 20 }}>
-                      {theirs.filter((x) => x.status !== "ResultPublished").map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={0} />)}
+                      {theirs.filter((x) => x.status !== "ResultPublished").map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                     </div>
                     {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <SectionTitle color={T.chalk}>Past Games Record</SectionTitle>}
                     <div className="feedgrid">
-                      {theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1)).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} onPlaceBet={() => setComingSoon("Betting")} canBetHint={me.role === "Fan" && (m.status === "Scheduled" || m.status === "Live")} myBetCount={bets.filter((b) => b.userId === me.id && b.matchId === m.id).length} />)}
+                      {theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1)).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                     </div>
                   </>
                 );
@@ -1566,48 +1576,86 @@ export default function App() {
           </>
         )}
 
-        {page === "bets" && me.role === "Fan" && (
-          <div style={{ maxWidth: 560 }}>
-            <div className="display" style={{ fontSize: 24, marginBottom: 16 }}>Bets</div>
-            <ComingSoonCard
-              feature="Betting"
-              detail="Back your team with your wallet — pick a winner or draw at the captain's odds, manage your bet slip, and get paid out the moment results are published."
-              onFeedback={async (msg) => { await supabase.from("feedback").insert({ user_id: me.id, feature: "Betting", message: msg }); notify("🙏 Thank you! Your feedback pushes this feature up our launch list."); }}
-            />
-          </div>
-        )}
+        {/* ---------- HIGHLIGHTS ---------- */}
+        {page === "highlights" && (
+          <div>
+            <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>⭐ Highlights</div>
+            <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>Final scores, big moments and Man of the Match votes — straight from the pitch.</div>
 
-        {page === "wallet" && me.role !== "Admin" && (
-          <div style={{ maxWidth: 560 }}>
-            <div className="display" style={{ fontSize: 24, marginBottom: 16 }}>Wallet</div>
-            <div className="card" style={{ textAlign: "center", padding: 30, marginBottom: 16 }}>
-              <div style={{ color: T.muted, fontSize: 13 }}>Balance</div>
-              <div className="display" style={{ fontSize: 44, color: T.floodlight }}>₦{myBal.toLocaleString()}</div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12, flexWrap: "wrap" }}>
-                <button className="btn btn-turf" onClick={() => setComingSoon("Wallet funding")}>+ Top up</button>
-                <button className="btn btn-ghost" onClick={() => setComingSoon("Withdrawals")}>↓ Withdraw</button>
-              </div>
-              <div style={{ fontSize: 11, color: T.muted, marginTop: 10 }}>Funding & withdrawals launch soon 🔜</div>
-            </div>
+            {results.length === 0 && liveNow.length === 0 && (
+              <div className="card" style={{ color: T.muted }}>No highlights yet — they appear here the moment matches finish. ⚽</div>
+            )}
 
-            <div className="display" style={{ fontSize: 18, marginBottom: 10 }}>My Bets</div>
-            {myBets.length === 0 && <div className="card" style={{ color: T.muted }}>No bets yet. Open a published match on the News Feed to place one.</div>}
-            <div style={{ display: "grid", gap: 10 }}>
-              {myBets.map((b) => {
-                const m = matches.find((x) => x.id === b.matchId);
-                const pickName = b.pick === "Draw" ? "Draw" : b.pick === "A" ? m.teamA.name : m.teamB.name;
+            <div style={{ display: "grid", gap: 16, maxWidth: 640 }}>
+              {/* MOTM VOTES — open on fresh results */}
+              {results.filter((m) => motmOpen(m)).map((m) => {
+                const cands = motmCandidates(m);
+                const votes = motmVotes[m.id] || {};
+                const total = Object.values(votes).reduce((t, n) => t + n, 0);
+                const mine = myMotm[m.id];
                 return (
-                  <div key={b.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 700 }}>{m.teamA.name} vs {m.teamB.name}</div>
-                      <div style={{ fontSize: 13, color: T.muted }}>₦{b.stake.toLocaleString()} on {pickName} @ {b.odds}x</div>
+                  <div key={"motm" + m.id} className="card" style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span className="chip" style={{ background: "#3a2f10", color: T.floodlight }}>🏆 {mine ? "Voted" : "Vote open"}</span>
+                      <span style={{ fontSize: 11, color: T.muted }}>{total} vote{total === 1 ? "" : "s"}</span>
                     </div>
-                    <span className="chip" style={{ background: b.settled ? (b.won ? T.turf : "#3a1f1a") : "#232b25", color: b.settled ? (b.won ? T.floodlight : T.live) : T.chalk }}>
-                      {b.settled ? (b.won ? `Won ₦${Math.round(b.stake * b.odds).toLocaleString()}` : "Lost") : "Open"}
-                    </span>
+                    <div className="display" style={{ fontSize: 18 }}>Man of the Match</div>
+                    <div style={{ fontSize: 13, color: T.muted }}>{m.teamA.name} {m.finalA}–{m.finalB} {m.teamB.name}{mine ? "" : " · tap a player to vote"}</div>
+                    {cands.map((p) => {
+                      const n = votes[p.name] || 0;
+                      const pct = total ? Math.round((n / total) * 100) : 0;
+                      return (
+                        <div key={p.name} onClick={() => !mine && voteMotm(m, p.name)} style={{ cursor: mine ? "default" : "pointer", display: "grid", gap: 5 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontWeight: 700, fontSize: 14 }}>{p.name}{p.gk ? " 🧤" : ""}{mine === p.name ? " ✓" : ""}</span>
+                            {mine && <span className="display" style={{ fontSize: 15, color: T.floodlight }}>{pct}%</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: T.muted }}>{p.team}</div>
+                          {mine && <div style={{ height: 6, background: "#243128", borderRadius: 99, overflow: "hidden" }}><div style={{ height: "100%", width: pct + "%", background: T.floodlight, borderRadius: 99, transition: "width .6s" }} /></div>}
+                        </div>
+                      );
+                    })}
+                    <div style={{ fontSize: 11, color: T.muted, borderTop: "1px solid #243128", paddingTop: 8 }}>🏆 Voting stays open for 24 hours after full time.</div>
                   </div>
                 );
               })}
+
+              {/* FULL-TIME SCORE CARDS */}
+              {results.slice(0, 12).map((m) => (
+                <div key={"hl" + m.id} className="card" style={{ padding: 0, overflow: "hidden" }}>
+                  <div className="scoreboard" style={{ borderRadius: 0, border: 0, borderBottom: "1px solid #243128", flexDirection: "column", gap: 6, padding: "16px 16px 12px" }}>
+                    <div style={{ fontSize: 10, letterSpacing: ".2em", color: "rgba(245,240,225,.7)", fontWeight: 700 }}>FULL TIME · {m.date}</div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, width: "100%" }}>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+                        <MiniLogo team={m.teamA} badge={m.badgeA} />
+                        <span style={{ fontSize: 12, fontWeight: 700, textAlign: "center" }}>{m.teamA.name}</span>
+                      </div>
+                      <div className="display" style={{ fontSize: 38, color: T.chalk, whiteSpace: "nowrap" }}>{m.finalA} <span style={{ color: T.floodlight }}>–</span> {m.finalB}</div>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+                        <MiniLogo team={m.teamB} badge={m.badgeB} />
+                        <span style={{ fontSize: 12, fontWeight: 700, textAlign: "center" }}>{m.teamB.name}</span>
+                      </div>
+                    </div>
+                    {m.shootout && m.pensWinner && <div style={{ fontSize: 11, color: "rgba(245,240,225,.85)" }}>🥅 {m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win {m.pensA}–{m.pensB} on penalties</div>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px" }}>
+                    <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13, border: 0, color: myLikes.includes(m.id) ? T.floodlight : T.muted }} onClick={() => toggleLike(m)}>
+                      {myLikes.includes(m.id) ? "💛" : "🤍"} {likeCounts[m.id] || 0}
+                    </button>
+                    <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13, border: 0, color: T.muted, marginLeft: "auto" }} onClick={() => setPosterFor(m.id)}>↗ Share card</button>
+                  </div>
+                </div>
+              ))}
+
+              {/* RECENT MOMENTS from the live ticker */}
+              {events.length > 0 && (
+                <div className="card" style={{ display: "grid", gap: 10 }}>
+                  <div className="display" style={{ fontSize: 15, color: T.floodlight }}>Recent moments</div>
+                  {events.slice(0, 6).map((e) => (
+                    <div key={e.id} style={{ fontSize: 13, color: T.chalk, borderBottom: "1px solid #1d251f", paddingBottom: 8 }}>{e.message}</div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1623,7 +1671,6 @@ export default function App() {
           minute={minute}
           breakLeft={breakLeft}
           captainName={(users.find((u) => u.id === (matches.find((x) => x.id === openMatch) || {}).createdBy) || {}).name || ""}
-          myMatchBets={bets.filter((b) => b.userId === me.id && b.matchId === openMatch)}
           isDue={isDue}
           untilKickoff={untilKickoff}
           onClose={() => setOpenMatch(null)}
@@ -1687,17 +1734,15 @@ export default function App() {
               notify("▶ Second half under way!");
             }
           }}
-          onSetOdds={(m, odds) => patchMatch(m.id, { odds })}
           onPostpone={postponeMatch}
           onPublish={(m) => { patchMatch(m.id, { published: !m.published }); notify(m.published ? "Match unpublished — now private" : "Published to News Feed 📣"); }}
-          onOpenSlip={() => { setOpenMatch(null); setComingSoon("Betting"); }}
           onSubmitScore={submitFinalScore}
           onPoster={() => setPosterFor(openMatch)}
         />
       )}
 
       {/* ---------- FOOTER ---------- */}
-      <footer style={{ borderTop: "1px solid #232b25", marginTop: 40, background: "#0d1014" }}>
+      <footer style={{ borderTop: "1px solid #243128", marginTop: 40, background: "#0d1014" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 20px", display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ maxWidth: 300 }}>
             <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Match Era</div>
@@ -1708,7 +1753,7 @@ export default function App() {
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 }}>Play fair</div>
             <div style={{ fontSize: 13, color: T.muted, maxWidth: 260, lineHeight: 1.5 }}>
-              Captains publish official scores and cannot bet. Betting & wallet funding are coming soon — tell us if you want them fast!
+              Captains publish official scores. After every final whistle, vote Man of the Match in ⭐ Highlights!
             </div>
           </div>
         </div>
@@ -1733,7 +1778,7 @@ export default function App() {
 
       {notifPromptOpen && me && me.role === "Captain" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 85, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }}>
+          <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }}>
             <div style={{ fontSize: 40 }}>🔔</div>
             <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Turn on notifications</div>
             <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
@@ -1750,7 +1795,7 @@ export default function App() {
 
       {pwaPromptOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setPwaPromptOpen(false)}>
-          <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 40 }}>📲</div>
             <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Install Match Era</div>
             <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, textAlign: "left" }}>
@@ -1768,12 +1813,10 @@ export default function App() {
 
       {comingSoon && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setComingSoon(null)}>
-          <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <ComingSoonCard
               feature={comingSoon}
-              detail={comingSoon === "Betting"
-                ? "Back your team with your wallet — pick a winner or draw at the captain's odds, and get paid out when results are published."
-                : "Securely add money to your wallet and withdraw winnings straight to your bank, protected by your security PIN."}
+              detail="This feature is on our launch list — tell us you want it and we'll move faster."
               onFeedback={async (msg) => { await supabase.from("feedback").insert({ user_id: me.id, feature: comingSoon, message: msg }); setComingSoon(null); notify("🙏 Thank you! Your feedback pushes this feature up our launch list."); }}
               onClose={() => setComingSoon(null)}
             />
@@ -1789,7 +1832,7 @@ export default function App() {
         const mins = u.lastSeen ? Math.floor((now - new Date(u.lastSeen).getTime()) / 60000) : null;
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setAdminViewUser(null)}>
-            <div style={{ background: "#12161c", border: "1px solid #232b25", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, display: "grid", gap: 14 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ background: "#12161c", border: "1px solid #243128", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, display: "grid", gap: 14 }} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{ width: 54, height: 54, borderRadius: 16, background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 22, color: T.floodlight, position: "relative" }}>
                   {u.name.slice(0, 1).toUpperCase()}
@@ -1881,7 +1924,7 @@ export default function App() {
 
       {offline && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(13,16,20,.88)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
-          <div style={{ width: 46, height: 46, border: "4px solid #232b25", borderTopColor: "#FFD447", borderRadius: "50%", animation: "spin .9s linear infinite" }} />
+          <div style={{ width: 46, height: 46, border: "4px solid #243128", borderTopColor: "#E6B31E", borderRadius: "50%", animation: "spin .9s linear infinite" }} />
           <div className="display" style={{ fontSize: 18, color: T.floodlight }}>No connection</div>
           <div style={{ fontSize: 13, color: T.muted }}>Reconnecting to Match Era…</div>
         </div>
@@ -1905,7 +1948,7 @@ function BootSlowNotice() {
   }, []);
   if (!slow) return null;
   return (
-    <div style={{ fontSize: 13, color: "#7A8B83", textAlign: "center", maxWidth: 280, lineHeight: 1.5 }}>
+    <div style={{ fontSize: 13, color: "#8FA396", textAlign: "center", maxWidth: 280, lineHeight: 1.5 }}>
       This is taking longer than usual — your network may be slow. Hang tight, we're still loading…
     </div>
   );
@@ -1918,7 +1961,7 @@ function PwInput({ value, onChange, placeholder, autoComplete }) {
       <input className="input" type={show ? "text" : "password"} autoComplete={autoComplete} placeholder={placeholder} maxLength={64}
         style={{ paddingRight: 46 }} value={value} onChange={onChange} />
       <button type="button" onClick={() => setShow(!show)} aria-label={show ? "Hide password" : "Show password"} title={show ? "Hide password" : "Show password"}
-        style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#7A8B83", cursor: "pointer", padding: 8, display: "flex", alignItems: "center" }}>
+        style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#8FA396", cursor: "pointer", padding: 8, display: "flex", alignItems: "center" }}>
         {show ? (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
@@ -1939,7 +1982,7 @@ function PwInput({ value, onChange, placeholder, autoComplete }) {
 
 function Toast({ msg }) {
   return (
-    <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", background: "#FFD447", color: "#10131A", padding: "10px 18px", borderRadius: 12, fontWeight: 700, fontSize: 14, zIndex: 100, boxShadow: "0 8px 30px rgba(0,0,0,.5)", maxWidth: "90%" }}>
+    <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", background: "#E6B31E", color: "#0C120E", padding: "10px 18px", borderRadius: 12, fontWeight: 700, fontSize: 14, zIndex: 100, boxShadow: "0 8px 30px rgba(0,0,0,.5)", maxWidth: "90%" }}>
       {msg}
     </div>
   );
@@ -1947,14 +1990,14 @@ function Toast({ msg }) {
 
 function StatusChip({ m }) {
   const map = {
-    Scheduled: { bg: "#232b25", c: "#FAF7EF", t: "Scheduled" },
-    Live: { bg: "#E4572E", c: "#fff", t: "● LIVE" },
-    AwaitingScore: { bg: "#3a3320", c: "#FFD447", t: "Result Awaiting" },
-    ResultPublished: { bg: "#0E4D3A", c: "#FFD447", t: "Result" },
-    Cancelled: { bg: "#3a1f1a", c: "#E4572E", t: "❌ Cancelled" },
+    Scheduled: { bg: "#243128", c: "#F5F0E1", t: "Scheduled" },
+    Live: { bg: "#E8442E", c: "#fff", t: "● LIVE" },
+    AwaitingScore: { bg: "#3a3320", c: "#E6B31E", t: "Result Awaiting" },
+    ResultPublished: { bg: "#14532D", c: "#E6B31E", t: "Result" },
+    Cancelled: { bg: "#3a1f1a", c: "#E8442E", t: "❌ Cancelled" },
   };
   const ht = m.status === "Live" && (m.halfPrompt || m.onBreak);
-  const s = ht ? { bg: "#3a3320", c: "#FFD447", t: "⏸ Half Time" } : map[m.status];
+  const s = ht ? { bg: "#3a3320", c: "#E6B31E", t: "⏸ Half Time" } : map[m.status];
   return <span className={`chip ${m.status === "Live" && !ht ? "pulse" : ""}`} style={{ background: s.bg, color: s.c }}>{s.t}</span>;
 }
 
@@ -1966,13 +2009,13 @@ function MiniLogo({ team, badge, size = 42 }) {
   );
 }
 
-function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineView, canBetHint, myBetCount }) {
+function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
   const showScore = m.status === "ResultPublished";
   return (
     <div className="card" style={{ display: "grid", gap: 12, cursor: "pointer", alignContent: "start" }} onClick={onOpen}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <StatusChip m={m} />
-        {m.postponed && m.status === "Scheduled" && <span className="chip" style={{ background: "#3a3320", color: "#FFD447" }}>📅 Rescheduled</span>}
+        {m.postponed && m.status === "Scheduled" && <span className="chip" style={{ background: "#3a3320", color: "#E6B31E" }}>📅 Rescheduled</span>}
       </div>
       <div className="scoreboard">
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
@@ -1981,32 +2024,32 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineVie
         </div>
         <div className="sb-center">
           {showScore ? (
-            <div className="display" style={{ fontSize: 26, color: "#FFD447" }}>{m.finalA} – {m.finalB}</div>
+            <div className="display" style={{ fontSize: 26, color: "#E6B31E" }}>{m.finalA} – {m.finalB}</div>
           ) : m.status === "Live" && (m.halfPrompt || m.onBreak) ? (
             <>
-              <div className="display" style={{ fontSize: 22, color: "#FFD447" }}>HT</div>
-              <div style={{ fontSize: 11, color: "#FFD447", fontWeight: 700 }}>
+              <div className="display" style={{ fontSize: 22, color: "#E6B31E" }}>HT</div>
+              <div style={{ fontSize: 11, color: "#E6B31E", fontWeight: 700 }}>
                 {m.onBreak ? `Break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")}` : "Half-time break"}
               </div>
             </>
           ) : m.status === "Live" && !m.running ? (
             <>
-              <div className="display" style={{ fontSize: 24, color: "#FAF7EF" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
-              <div style={{ fontSize: 11, color: "#FFD447", fontWeight: 700 }}>⏸ {m.pauseReason || "Paused"}</div>
+              <div className="display" style={{ fontSize: 24, color: "#F5F0E1" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
+              <div style={{ fontSize: 11, color: "#E6B31E", fontWeight: 700 }}>⏸ {m.pauseReason || "Paused"}</div>
             </>
           ) : m.status === "Live" ? (
             <>
-              <div className="display" style={{ fontSize: 24, color: "#E4572E" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
-              <div className="pulse" style={{ fontSize: 12, color: "#E4572E", fontWeight: 700 }}>LIVE {minute(m)}'</div>
-              {m.streamUrl && <div className="chip pulse" style={{ background: "#E4572E", color: "#fff", fontSize: 9, marginTop: 2 }}>🔴 LIVE STREAM</div>}
+              <div className="display" style={{ fontSize: 24, color: "#E8442E" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
+              <div className="pulse" style={{ fontSize: 12, color: "#E8442E", fontWeight: 700 }}>LIVE {minute(m)}'</div>
+              {m.streamUrl && <div className="chip pulse" style={{ background: "#E8442E", color: "#fff", fontSize: 9, marginTop: 2 }}>🔴 LIVE STREAM</div>}
             </>
           ) : m.status === "AwaitingScore" ? (
             <>
-              <div className="display" style={{ fontSize: 20, color: "#FFD447" }}>FT</div>
-              <div style={{ fontSize: 11, color: "#7A8B83", fontWeight: 700 }}>Result awaiting</div>
+              <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>FT</div>
+              <div style={{ fontSize: 11, color: "#8FA396", fontWeight: 700 }}>Result awaiting</div>
             </>
           ) : (
-            <div className="display" style={{ fontSize: 18, color: "#FFD447" }}>{m.time}</div>
+            <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>{m.time}</div>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, justifyContent: "flex-end" }}>
@@ -2014,19 +2057,17 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, onPlaceBet, mineVie
           <MiniLogo team={m.teamB} badge={m.badgeB} />
         </div>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#7A8B83", flexWrap: "wrap", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#8FA396", flexWrap: "wrap", gap: 8 }}>
         <span>📍 {m.location} · {m.date} · ⏱ {m.duration || 90}'</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          {myBetCount > 0 && <span className="chip" style={{ background: "#0E4D3A", color: "#FFD447" }}>{myBetCount} bet{myBetCount > 1 ? "s" : ""}</span>}
           <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onPoster(); }}>🎨 Artwork</button>
-          {canBetHint && <button className="btn btn-gold" style={{ padding: "6px 12px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onPlaceBet && onPlaceBet(); }}>Place Bet</button>}
         </div>
       </div>
     </div>
   );
 }
 
-function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onSetOdds, onPostpone, onPublish, onOpenSlip, onSubmitScore, onPoster }) {
+function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -2051,7 +2092,6 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
   useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(0); setPb(0); }, [m && m.id]);
   if (!m) return null;
   const isOwner = m.createdBy === me.id;
-  const canBet = me.role === "Fan" && m.published && (m.status === "Scheduled" || m.status === "Live");
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
@@ -2067,18 +2107,18 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
             <div style={{ fontWeight: 700, marginTop: 6, fontSize: 13 }}>{m.teamA.name}</div>
           </div>
           <div className="sb-center">
-            <div className="display" style={{ fontSize: 38, color: m.status === "Live" ? (m.halfPrompt || m.onBreak ? "#FFD447" : "#E4572E") : "#FFD447" }}>
+            <div className="display" style={{ fontSize: 38, color: m.status === "Live" ? (m.halfPrompt || m.onBreak ? "#E6B31E" : "#E8442E") : "#E6B31E" }}>
               {m.status === "ResultPublished" ? `${m.finalA} – ${m.finalB}` : m.status === "Live" ? (m.halfPrompt || m.onBreak ? `HT ${m.liveA ?? 0}–${m.liveB ?? 0}` : `${m.liveA ?? 0} – ${m.liveB ?? 0}`) : m.status === "AwaitingScore" ? "FT" : m.status === "Cancelled" ? "❌" : "VS"}
             </div>
             {m.status === "Live" && (m.halfPrompt || m.onBreak) && (
-              <div style={{ color: "#FFD447", fontWeight: 700, fontSize: 13 }}>
+              <div style={{ color: "#E6B31E", fontWeight: 700, fontSize: 13 }}>
                 {m.onBreak ? `Half-time break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")} left` : "Half-time break"}
               </div>
             )}
             {m.status === "Live" && !m.halfPrompt && !m.onBreak && (m.running
-              ? <div className="pulse" style={{ color: "#E4572E", fontWeight: 700 }}>LIVE · {minute(m)}'</div>
-              : <div style={{ color: "#FFD447", fontWeight: 700, fontSize: 13 }}>⏸ Paused{m.pauseReason ? ` — ${m.pauseReason}` : ""}</div>)}
-            {m.status === "AwaitingScore" && <div style={{ color: "#7A8B83", fontWeight: 700, fontSize: 12 }}>Result awaiting</div>}
+              ? <div className="pulse" style={{ color: "#E8442E", fontWeight: 700 }}>LIVE · {minute(m)}'</div>
+              : <div style={{ color: "#E6B31E", fontWeight: 700, fontSize: 13 }}>⏸ Paused{m.pauseReason ? ` — ${m.pauseReason}` : ""}</div>)}
+            {m.status === "AwaitingScore" && <div style={{ color: "#8FA396", fontWeight: 700, fontSize: 12 }}>Result awaiting</div>}
           </div>
           <div style={{ textAlign: "center", flex: 1 }}>
             <MiniLogo team={m.teamB} badge={m.badgeB} size={54} />
@@ -2086,12 +2126,12 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
           </div>
         </div>
 
-        <div style={{ fontSize: 13, color: "#7A8B83" }}>📍 {m.location} · {m.date} at {m.time}</div>
-        {captainName && <div style={{ fontSize: 13, color: "#7A8B83" }}>🧢 Hosted by Captain <span style={{ color: "#FFD447", fontWeight: 700 }}>{captainName}</span></div>}
+        <div style={{ fontSize: 13, color: "#8FA396" }}>📍 {m.location} · {m.date} at {m.time}</div>
+        {captainName && <div style={{ fontSize: 13, color: "#8FA396" }}>🧢 Hosted by Captain <span style={{ color: "#E6B31E", fontWeight: 700 }}>{captainName}</span></div>}
 
         {/* TEAM SHEETS */}
         <div className="card" style={{ fontSize: 13, padding: 14, display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7A8B83", letterSpacing: ".08em", textTransform: "uppercase" }}>Team Sheets</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#8FA396", letterSpacing: ".08em", textTransform: "uppercase" }}>Team Sheets</div>
           {[[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => (
             <div key={i}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -2101,9 +2141,9 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {(players || "").split(",").map((p) => p.trim()).filter(Boolean).length > 0
                   ? (players || "").split(",").map((p) => p.trim()).filter(Boolean).map((p, j) => (
-                      <span key={j} className="chip" style={{ background: "#232b25", color: "#FAF7EF", fontWeight: 500 }}>{p}</span>
+                      <span key={j} className="chip" style={{ background: "#243128", color: "#F5F0E1", fontWeight: 500 }}>{p}</span>
                     ))
-                  : <span style={{ color: "#7A8B83" }}>Squad to be announced</span>}
+                  : <span style={{ color: "#8FA396" }}>Squad to be announced</span>}
               </div>
             </div>
           ))}
@@ -2113,14 +2153,14 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
         {isOwner && me.role === "Captain" && (m.status === "Scheduled" || m.status === "Live") && (
           <div className="card" style={{ display: "grid", gap: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD447", letterSpacing: ".12em", textTransform: "uppercase" }}>🔴 Live Stream</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>🔴 Live Stream</div>
               <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => setStreamHelpOpen(true)}>📖 How to go live — step by step</button>
             </div>
             <input className="input" maxLength={300} placeholder="Paste your Facebook live video link here"
               value={streamInput} onChange={(e) => setStreamInput(e.target.value.slice(0, 300))} />
             <div style={{ display: "flex", gap: 8 }}>
               {m.streamUrl && (
-                <button className="btn btn-ghost" style={{ flex: 1, color: "#E4572E", borderColor: "#3a1f1a", fontSize: 13 }}
+                <button className="btn btn-ghost" style={{ flex: 1, color: "#E8442E", borderColor: "#3a1f1a", fontSize: 13 }}
                   onClick={() => { onSetStream(m, null); setStreamInput(""); }}>Remove</button>
               )}
               <button className="btn btn-gold" style={{ flex: 2, fontSize: 13, opacity: streamInput.trim() ? 1 : .5 }} disabled={!streamInput.trim()}
@@ -2132,15 +2172,15 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
         {/* STREAM INSTRUCTIONS MODAL */}
         {streamHelpOpen && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setStreamHelpOpen(false)}>
-            <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
-              <div className="display" style={{ fontSize: 18, color: "#FFD447" }}>📖 How to go live</div>
+            <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+              <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>📖 How to go live</div>
               <div style={{ fontSize: 13, lineHeight: 1.7, display: "grid", gap: 10 }}>
-                <div><b style={{ color: "#FFD447" }}>1.</b> Open <b>Facebook</b> and tap <b>Live</b> (where you'd normally write a post).</div>
-                <div><b style={{ color: "#FFD447" }}>2.</b> <b style={{ color: "#E4572E" }}>Important:</b> set the audience to <b>Public 🌍</b> — not Friends — or fans won't be able to watch.</div>
-                <div><b style={{ color: "#FFD447" }}>3.</b> Start your broadcast.</div>
-                <div><b style={{ color: "#FFD447" }}>4.</b> On your live video, tap <b>Share → Copy Link</b>.</div>
-                <div><b style={{ color: "#FFD447" }}>5.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
-                <div style={{ borderTop: "1px solid #232b25", paddingTop: 10, color: "#7A8B83", fontSize: 12 }}>
+                <div><b style={{ color: "#E6B31E" }}>1.</b> Open <b>Facebook</b> and tap <b>Live</b> (where you'd normally write a post).</div>
+                <div><b style={{ color: "#E6B31E" }}>2.</b> <b style={{ color: "#E8442E" }}>Important:</b> set the audience to <b>Public 🌍</b> — not Friends — or fans won't be able to watch.</div>
+                <div><b style={{ color: "#E6B31E" }}>3.</b> Start your broadcast.</div>
+                <div><b style={{ color: "#E6B31E" }}>4.</b> On your live video, tap <b>Share → Copy Link</b>.</div>
+                <div><b style={{ color: "#E6B31E" }}>5.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
+                <div style={{ borderTop: "1px solid #243128", paddingTop: 10, color: "#8FA396", fontSize: 12 }}>
                   💡 Tips: streaming ~90 minutes uses around 1.5–2GB of data. Prop your phone steady or let a teammate film — you're also running the match! YouTube links work too if you have a channel.
                 </div>
               </div>
@@ -2162,7 +2202,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
                     allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
                 </div>
                 <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setWatchOpen(false)}>✕ Close stream</button>
-                <div style={{ fontSize: 11, color: "#7A8B83", textAlign: "center" }}>Streaming uses mobile data</div>
+                <div style={{ fontSize: 11, color: "#8FA396", textAlign: "center" }}>Streaming uses mobile data</div>
               </div>
             )
           ) : (
@@ -2172,12 +2212,12 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
           )
         )}
         {m.streamUrl && m.status === "Live" && !isOwner && !watchOpen && (
-          <div style={{ fontSize: 11, color: "#7A8B83", marginTop: -8, textAlign: "center" }}>Streaming uses mobile data</div>
+          <div style={{ fontSize: 11, color: "#8FA396", marginTop: -8, textAlign: "center" }}>Streaming uses mobile data</div>
         )}
 
         {/* ADMIN — strip a bad stream link */}
         {me.role === "Admin" && m.streamUrl && (
-          <button className="btn btn-ghost" style={{ color: "#E4572E", borderColor: "#3a1f1a", fontSize: 12 }}
+          <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a", fontSize: 12 }}
             onClick={() => onSetStream(m, null)}>🛡 Remove stream link (admin)</button>
         )}
 
@@ -2187,17 +2227,17 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
             {liked ? "★ Starred" : "☆ Star this match"} · {likeCount}
           </button>
         )}
-        {m.status === "Live" && <div style={{ fontSize: 11, color: "#7A8B83", marginTop: -6 }}>Starred matches appear at the top of your News Feed for quick access.</div>}
+        {m.status === "Live" && <div style={{ fontSize: 11, color: "#8FA396", marginTop: -6 }}>Starred matches appear at the top of your News Feed for quick access.</div>}
 
         {/* SCORE CORRECTION — captain, once per match, admin approval */}
         {isOwner && me.role === "Captain" && m.status === "ResultPublished" && (
           alreadyRequested ? (
-            <div style={{ fontSize: 12, color: "#7A8B83" }}>✔ You've already requested a score correction for this match — each match can only be corrected once.</div>
+            <div style={{ fontSize: 12, color: "#8FA396" }}>✔ You've already requested a score correction for this match — each match can only be corrected once.</div>
           ) : !reqOpen ? (
             <button className="btn btn-ghost" onClick={() => setReqOpen(true)}>✏️ Request score correction</button>
           ) : (
             <div className="card" style={{ display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>Request a score correction (needs admin approval — one request per match)</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#E6B31E" }}>Request a score correction (needs admin approval — one request per match)</div>
               <textarea className="input" rows={2} maxLength={200} placeholder="Reason (required)" value={reqReason}
                 onChange={(e) => setReqReason(e.target.value)} style={{ resize: "none", fontFamily: "'Space Grotesk', sans-serif" }} />
               <div style={{ display: "flex", gap: 8 }}>
@@ -2211,59 +2251,41 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
 
         {/* DELETE — captain's own match, or any match for the admin */}
         {((isOwner && me.role === "Captain") || me.role === "Admin") && m.status !== "Live" && (
-          <button className="btn btn-ghost" style={{ color: "#E4572E", borderColor: "#3a1f1a" }}
+          <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a" }}
             onClick={() => { if (window.confirm("Delete this match permanently? This can't be undone.")) onDeleteMatch(m); }}>🗑 Delete this match</button>
         )}
 
         {/* ARTWORK — visible to everyone, downloadable from the poster view */}
         <button className="btn btn-turf" onClick={onPoster}>🎨 View match artwork (download inside)</button>
 
-        {/* MY BETS ON THIS MATCH */}
-        {myMatchBets.length > 0 && (
-          <div className="card" style={{ display: "grid", gap: 8, padding: 14 }}>
-            <div className="display" style={{ fontSize: 13, color: "#FFD447" }}>Your bets on this match</div>
-            {myMatchBets.map((b) => {
-              const pickName = b.pick === "Draw" ? "Draw" : b.pick === "A" ? m.teamA.name : m.teamB.name;
-              return (
-                <div key={b.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                  <span>₦{b.stake.toLocaleString()} on {pickName} @ {b.odds}x</span>
-                  <span className="chip" style={{ background: b.settled ? (b.won ? "#0E4D3A" : "#3a1f1a") : "#232b25", color: b.settled ? (b.won ? "#FFD447" : "#E4572E") : "#FAF7EF" }}>
-                    {b.settled ? (b.won ? `Won ₦${Math.round(b.stake * b.odds).toLocaleString()}` : "Lost") : "Open"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         {/* CAPTAIN CONTROLS */}
         {isOwner && me.role === "Captain" && (
           <div className="card" style={{ display: "grid", gap: 10 }}>
-            <div className="display" style={{ fontSize: 14, color: "#FFD447" }}>Captain Controls</div>
+            <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>Captain Controls</div>
             {m.status === "Scheduled" && (isDue(m) ? (
               <>
                 <button className="btn btn-live" onClick={() => onStart(m)}>▶ Start Match (90-min timer)</button>
-                <div style={{ fontSize: 12, color: "#7A8B83" }}>Kick-off time has been reached, but nothing starts without your consent — start when the teams are ready, or postpone below.</div>
+                <div style={{ fontSize: 12, color: "#8FA396" }}>Kick-off time has been reached, but nothing starts without your consent — start when the teams are ready, or postpone below.</div>
               </>
             ) : (
-              <div style={{ background: "#131a15", border: "1px solid #232b25", borderRadius: 12, padding: 12, textAlign: "center" }}>
-                <div style={{ fontSize: 13, color: "#7A8B83" }}>🔒 Kick-off unlocks at <b style={{ color: "#FAF7EF" }}>{m.time}</b> on {m.date}</div>
-                <div className="display" style={{ fontSize: 20, color: "#FFD447", marginTop: 4 }}>{untilKickoff(m)} to go</div>
+              <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 13, color: "#8FA396" }}>🔒 Kick-off unlocks at <b style={{ color: "#F5F0E1" }}>{m.time}</b> on {m.date}</div>
+                <div className="display" style={{ fontSize: 20, color: "#E6B31E", marginTop: 4 }}>{untilKickoff(m)} to go</div>
               </div>
             ))}
             {m.status === "Scheduled" && (
               !postponing ? (
                 <button className="btn btn-ghost" onClick={() => { setPostponing(true); setNewDate(m.date); setNewTime(m.time); }}>📅 Postpone this match</button>
               ) : (
-                <div style={{ display: "grid", gap: 10, background: "#131a15", border: "1px solid #232b25", borderRadius: 12, padding: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>📅 Postpone — pick the new kick-off</div>
+                <div style={{ display: "grid", gap: 10, background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#E6B31E" }}>📅 Postpone — pick the new kick-off</div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4, fontWeight: 700 }}>📅 New date</div>
+                      <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>📅 New date</div>
                       <input className="input" type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4, fontWeight: 700 }}>🕐 New time</div>
+                      <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>🕐 New time</div>
                       <input className="input" type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} />
                     </div>
                   </div>
@@ -2271,13 +2293,13 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
                     <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setPostponing(false)}>Cancel</button>
                     <button className="btn btn-gold" style={{ flex: 2 }} onClick={() => { onPostpone(m, newDate, newTime); setPostponing(false); }}>Confirm postponement</button>
                   </div>
-                  <div style={{ fontSize: 11, color: "#7A8B83" }}>Fans see the updated schedule on the News Feed immediately.</div>
+                  <div style={{ fontSize: 11, color: "#8FA396" }}>Fans see the updated schedule on the News Feed immediately.</div>
                 </div>
               )
             )}
             {m.status === "Live" && m.halfPrompt && (
-              <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 14 }}>
-                <div style={{ fontWeight: 700, color: "#FFD447" }}>⏱ HALF TIME — the second half only starts when you say so.</div>
+              <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14 }}>
+                <div style={{ fontWeight: 700, color: "#E6B31E" }}>⏱ HALF TIME — the second half only starts when you say so.</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => onHalfTime(m, true)}>☕ 10-min break</button>
                   <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => onHalfTime(m, false)}>▶ Start second half</button>
@@ -2285,9 +2307,9 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
               </div>
             )}
             {m.status === "Live" && m.onBreak && (
-              <div style={{ background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 14, textAlign: "center" }}>
-                <div style={{ fontWeight: 700, color: "#FFD447" }}>☕ Half-time break</div>
-                <div className="display" style={{ fontSize: 30, color: "#FAF7EF" }}>
+              <div style={{ background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14, textAlign: "center" }}>
+                <div style={{ fontWeight: 700, color: "#E6B31E" }}>☕ Half-time break</div>
+                <div className="display" style={{ fontSize: 30, color: "#F5F0E1" }}>
                   {Math.floor(breakLeft(m) / 60)}:{String(breakLeft(m) % 60).padStart(2, "0")}
                 </div>
                 <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }} onClick={() => onHalfTime(m, false)}>Skip break — start second half now</button>
@@ -2303,17 +2325,17 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
                     ))}
                   </div>
                   {/* LIVE SCORE — single-digit inputs, clearable */}
-                  <div style={{ background: "#131a15", border: "1px solid #232b25", borderRadius: 12, padding: 12, display: "grid", gap: 8 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD447", letterSpacing: ".12em", textTransform: "uppercase" }}>⚽ Live Score</div>
+                  <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: 12, display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>⚽ Live Score</div>
                     <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
                       <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 11, color: "#7A8B83", marginBottom: 4 }}>{m.teamA.name.split(" ")[0]}</div>
+                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 4 }}>{m.teamA.name.split(" ")[0]}</div>
                         <input className="input" inputMode="numeric" maxLength={1} style={{ width: 64, textAlign: "center", fontSize: 24, fontWeight: 700 }}
                           value={la} onChange={(e) => setLa(e.target.value.replace(/[^0-9]/g, "").slice(0, 1))} />
                       </div>
-                      <div className="display" style={{ fontSize: 22, color: "#FFD447", marginTop: 16 }}>–</div>
+                      <div className="display" style={{ fontSize: 22, color: "#E6B31E", marginTop: 16 }}>–</div>
                       <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 11, color: "#7A8B83", marginBottom: 4 }}>{m.teamB.name.split(" ")[0]}</div>
+                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 4 }}>{m.teamB.name.split(" ")[0]}</div>
                         <input className="input" inputMode="numeric" maxLength={1} style={{ width: 64, textAlign: "center", fontSize: 24, fontWeight: 700 }}
                           value={lb} onChange={(e) => setLb(e.target.value.replace(/[^0-9]/g, "").slice(0, 1))} />
                       </div>
@@ -2321,12 +2343,12 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
                         onClick={() => la !== "" && lb !== "" && onLiveScore(m, +la, +lb)}>Update</button>
                     </div>
                   </div>
-                  <button className="btn btn-ghost" style={{ color: "#E4572E", borderColor: "#3a1f1a" }}
+                  <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a" }}
                     onClick={() => { if (window.confirm("Cancel this match? Fans will be told and it's removed after 7 days.")) onCancelMatch(m); }}>❌ Cancel match</button>
                 </>
               ) : (
                 <>
-                  <div style={{ fontSize: 13, color: "#FFD447", fontWeight: 700 }}>⏸ Match paused{m.pauseReason ? ` — ${m.pauseReason}` : ""}</div>
+                  <div style={{ fontSize: 13, color: "#E6B31E", fontWeight: 700 }}>⏸ Match paused{m.pauseReason ? ` — ${m.pauseReason}` : ""}</div>
                   <button className="btn btn-live" onClick={() => onPauseResume(m)}>▶ Resume match</button>
                 </>
               )
@@ -2334,16 +2356,16 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
 
             {/* SCORE SUBMISSION REQUEST — appears at full time */}
             {m.status === "AwaitingScore" && (
-              <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 14 }}>
-                <div style={{ fontWeight: 700, color: "#FFD447" }}>🏁 Full time. Submit the final score to publish this result to the News Feed.</div>
+              <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14 }}>
+                <div style={{ fontWeight: 700, color: "#E6B31E" }}>🏁 Full time. Submit the final score to publish this result to the News Feed.</div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4 }}>{m.teamA.name}</div>
+                    <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4 }}>{m.teamA.name}</div>
                     <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={fa} onChange={(e) => setFa(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                   </div>
-                  <div className="display" style={{ fontSize: 22, color: "#FFD447", marginTop: 18 }}>–</div>
+                  <div className="display" style={{ fontSize: 22, color: "#E6B31E", marginTop: 18 }}>–</div>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4 }}>{m.teamB.name}</div>
+                    <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4 }}>{m.teamB.name}</div>
                     <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={fb} onChange={(e) => setFb(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                   </div>
                 </div>
@@ -2356,12 +2378,12 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
                 {shootout && (
                   <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4 }}>{m.teamA.name} pens</div>
+                      <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4 }}>{m.teamA.name} pens</div>
                       <input className="input" style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 700 }} type="number" min="0" value={pa} onChange={(e) => setPa(Math.max(0, +e.target.value))} />
                     </div>
-                    <div className="display" style={{ fontSize: 18, color: "#FFD447", marginTop: 18 }}>–</div>
+                    <div className="display" style={{ fontSize: 18, color: "#E6B31E", marginTop: 18 }}>–</div>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4 }}>{m.teamB.name} pens</div>
+                      <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4 }}>{m.teamB.name} pens</div>
                       <input className="input" style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 700 }} type="number" min="0" value={pb} onChange={(e) => setPb(Math.max(0, +e.target.value))} />
                     </div>
                   </div>
@@ -2391,59 +2413,36 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
                   setUnknowns([]);
                 }}>Upload match result</button>
                 {unknowns.filter((u) => !u.tag).length > 0 && (
-                  <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #FFD447", borderRadius: 12, padding: 12 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#FFD447" }}>Some scorers aren't in the starting squads — who are they?</div>
+                  <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#E6B31E" }}>Some scorers aren't in the starting squads — who are they?</div>
                     {unknowns.map((u, i) => (
                       <div key={u.team + u.name} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{u.name} <span style={{ color: "#7A8B83", fontWeight: 400 }}>({u.team === "A" ? m.teamA.name : m.teamB.name})</span></span>
+                        <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{u.name} <span style={{ color: "#8FA396", fontWeight: 400 }}>({u.team === "A" ? m.teamA.name : m.teamB.name})</span></span>
                         <button className={`btn ${u.tag === "sub" ? "btn-gold" : "btn-ghost"}`} style={{ padding: "6px 12px", fontSize: 12 }}
                           onClick={() => setUnknowns(unknowns.map((x, j) => (j === i ? { ...x, tag: "sub" } : x)))}>🔁 Substitute</button>
                         <button className={`btn ${u.tag === "pen" ? "btn-gold" : "btn-ghost"}`} style={{ padding: "6px 12px", fontSize: 12 }}
                           onClick={() => setUnknowns(unknowns.map((x, j) => (j === i ? { ...x, tag: "pen" } : x)))}>🎯 Penalty taker</button>
                       </div>
                     ))}
-                    <div style={{ fontSize: 11, color: "#7A8B83" }}>Choose for each name, then tap Upload match result again.</div>
+                    <div style={{ fontSize: 11, color: "#8FA396" }}>Choose for each name, then tap Upload match result again.</div>
                   </div>
                 )}
-                <div style={{ fontSize: 12, color: "#7A8B83" }}>Your uploaded score is the official result. It publishes to the News Feed and settles all bets on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
+                <div style={{ fontSize: 12, color: "#8FA396" }}>Your uploaded score is the official result. It publishes to the News Feed and ⭐ Highlights on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
               </div>
             )}
 
             {m.status !== "ResultPublished" && (
               <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 13, color: "#7A8B83" }}>📣 All matches are public — this match is live on the News Feed for everyone to see.</div>
-                {(m.status === "Scheduled" || m.status === "Live") && (
-                  <div style={{ background: "#131a15", border: "1px solid #232b25", borderRadius: 12, padding: 12, display: "grid", gap: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#FFD447", letterSpacing: ".12em", textTransform: "uppercase" }}>💰 Betting Odds</div>
-                    {[["A", `${m.teamA.name.split(" ")[0]} wins`], ["Draw", "Draw"], ["B", `${m.teamB.name.split(" ")[0]} wins`]].map(([k, label]) => (
-                      <div key={k} style={{ display: "grid", gap: 6 }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <button className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 16 }} onClick={() => onSetOdds(m, { ...m.odds, [k]: Math.max(1.05, Math.round((m.odds[k] - 0.05) * 100) / 100) })}>−</button>
-                            <span className="display" style={{ fontSize: 20, color: "#FFD447", minWidth: 58, textAlign: "center" }}>{Number(m.odds[k]).toFixed(2)}</span>
-                            <button className="btn btn-ghost" style={{ padding: "6px 14px", fontSize: 16 }} onClick={() => onSetOdds(m, { ...m.odds, [k]: Math.min(50, Math.round((m.odds[k] + 0.05) * 100) / 100) })}>+</button>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          {[1.50, 2.00, 2.50, 3.00].map((q) => (
-                            <button key={q} className="btn btn-ghost" style={{ flex: 1, padding: "5px 4px", fontSize: 11 }} onClick={() => onSetOdds(m, { ...m.odds, [k]: q })}>{q.toFixed(2)}</button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    <div style={{ fontSize: 11, color: "#7A8B83" }}>Tap − / + to fine-tune in 0.05 steps, or tap a quick value. These odds apply when betting launches.</div>
-                  </div>
-                )}
+                <div style={{ fontSize: 13, color: "#8FA396" }}>📣 All matches are public — this match is live on the News Feed for everyone to see.</div>
               </div>
             )}
-            <div style={{ borderTop: "1px solid #232b25", paddingTop: 12, display: "grid", gap: 8 }}>
+            <div style={{ borderTop: "1px solid #243128", paddingTop: 12, display: "grid", gap: 8 }}>
               <button className="btn btn-ghost" style={{ fontSize: 12, letterSpacing: ".06em" }} onClick={() => setMoreOpen(!moreOpen)}>
                 {moreOpen ? "▴ Hide options" : "⋯ More options"}
               </button>
               {moreOpen && (
                 <>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#7A8B83", letterSpacing: ".12em", textTransform: "uppercase" }}>Share & Promote</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#8FA396", letterSpacing: ".12em", textTransform: "uppercase" }}>Share & Promote</div>
                   <button className="btn btn-ghost" onClick={onPoster}>🎨 Generate match poster</button>
             <button className="btn btn-turf" onClick={() => {
               const lines = m.status === "ResultPublished"
@@ -2464,17 +2463,13 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, myMatchBets = [], 
           </div>
         )}
 
-        {/* BETTING — handled in the Bet Slip window */}
-        {canBet && (
-          <button className="btn btn-gold" onClick={() => onOpenSlip(m.id)}>🎟 Place a bet — coming soon</button>
-        )}
         {m.status === "AwaitingScore" && !isOwner && (
-          <div className="card" style={{ fontSize: 13, color: "#7A8B83" }}>Full time — result awaiting. The score will appear here as soon as the captain uploads the match result.</div>
+          <div className="card" style={{ fontSize: 13, color: "#8FA396" }}>Full time — result awaiting. The score will appear here as soon as the captain uploads the match result.</div>
         )}
         {m.status === "ResultPublished" && (
-          <div className="card" style={{ fontSize: 13, color: "#FFD447" }}>
+          <div className="card" style={{ fontSize: 13, color: "#E6B31E" }}>
             📰 Official result: {m.teamA.name} {m.finalA} – {m.finalB} {m.teamB.name}
-            {m.shootout && m.pensWinner ? ` — ${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}–${m.pensB} on penalties.` : m.result === "Draw" ? " — Draw." : ` — ${m.result === "A" ? m.teamA.name : m.teamB.name} win.`} All bets settled on the 90-minute score.
+            {m.shootout && m.pensWinner ? ` — ${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}–${m.pensB} on penalties.` : m.result === "Draw" ? " — Draw." : ` — ${m.result === "A" ? m.teamA.name : m.teamB.name} win.`}
           </div>
         )}
       </div>
@@ -2488,9 +2483,9 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
   return (
     <div style={{ display: "grid", gap: 12, textAlign: "center" }}>
       <div style={{ fontSize: 40 }}>🔜</div>
-      <div className="display" style={{ fontSize: 20, color: "#FFD447" }}>{feature} is coming soon</div>
-      <div style={{ fontSize: 13, color: "#7A8B83", lineHeight: 1.6 }}>{detail}</div>
-      <div style={{ fontSize: 13, color: "#FAF7EF", fontWeight: 700 }}>Want it out very soon? Tell us 👇</div>
+      <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>{feature} is coming soon</div>
+      <div style={{ fontSize: 13, color: "#8FA396", lineHeight: 1.6 }}>{detail}</div>
+      <div style={{ fontSize: 13, color: "#F5F0E1", fontWeight: 700 }}>Want it out very soon? Tell us 👇</div>
       <textarea className="input" rows={3} maxLength={300} placeholder="e.g. Yes! I want to bet on my community matches..."
         value={msg} onChange={(e) => setMsg(sanitizeText(e.target.value, 300))} style={{ resize: "none", fontFamily: "'Space Grotesk', sans-serif" }} />
       <button className="btn btn-gold" disabled={!msg.trim()} style={{ opacity: msg.trim() ? 1 : .5 }}
@@ -2502,100 +2497,8 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
   );
 }
 
-/* ---------- BET SLIP — the single window for all bet actions ---------- */
-function BetSlip({ m, me, balance, myMatchBets, onPlace, onCancel, onClose }) {
-  const [pick, setPick] = useState(null);
-  const [stake, setStake] = useState(500);
-  if (!m) return null;
-  const bettable = (m.status === "Scheduled" || m.status === "Live") && m.published && me.role === "Fan";
-  const pickName = (k) => (k === "Draw" ? "Draw" : k === "A" ? m.teamA.name : m.teamB.name);
-  const canCancel = m.status === "Scheduled";
-
-  return (
-    <div>
-      <div style={{ background: "#12161c", border: "1.5px solid #FFD447", borderRadius: 20, padding: 22, width: "100%", display: "grid", gap: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div className="display" style={{ fontSize: 18, color: "#FFD447" }}>🎟 Bet Slip</div>
-          <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={onClose}>✕ Close</button>
-        </div>
-
-        {/* Match info */}
-        <div className="scoreboard" style={{ padding: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-            <MiniLogo team={m.teamA} badge={m.badgeA} size={34} />
-            <div className="sb-name" style={{ fontSize: 13 }}>{m.teamA.name}</div>
-          </div>
-          <div className="display" style={{ fontSize: 15, color: "#FFD447" }}>{m.status === "Live" ? "LIVE" : m.time}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0, justifyContent: "flex-end" }}>
-            <div className="sb-name" style={{ fontSize: 13, textAlign: "right" }}>{m.teamB.name}</div>
-            <MiniLogo team={m.teamB} badge={m.badgeB} size={34} />
-          </div>
-        </div>
-        <div style={{ fontSize: 12, color: "#7A8B83", display: "flex", justifyContent: "space-between" }}>
-          <span>📍 {m.location} · {m.date} · ⏱ {m.duration || 90}'</span>
-          <span style={{ color: "#FFD447", fontWeight: 700 }}>Balance: ₦{balance.toLocaleString()}</span>
-        </div>
-
-        {/* Place a bet */}
-        {bettable ? (
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>1 · Choose your pick</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[["A", `${m.teamA.name.split(" ")[0]} Win`, m.odds.A], ["Draw", "Draw", m.odds.Draw], ["B", `${m.teamB.name.split(" ")[0]} Win`, m.odds.B]].map(([k, label, odd]) => (
-                <button key={k} className={`btn ${pick === k ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1, fontSize: 12, padding: "10px 6px" }} onClick={() => setPick(k)}>
-                  {label}<br /><span style={{ opacity: .7 }}>@{odd}x</span>
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>2 · Set your stake</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {[200, 500, 1000, 2000].map((v) => (
-                <button key={v} className={`btn ${stake === v ? "btn-turf" : "btn-ghost"}`} style={{ flex: 1, padding: "8px 4px", fontSize: 12 }} onClick={() => setStake(v)}>₦{v.toLocaleString()}</button>
-              ))}
-            </div>
-            <input className="input" type="number" min="50" max="1000000" step="50" value={stake} onChange={(e) => setStake(Math.min(1000000, Math.max(0, Math.floor(+e.target.value || 0))))} placeholder="Custom stake" />
-            <div style={{ fontSize: 13, fontWeight: 700 }}>3 · Confirm</div>
-            <button className="btn btn-gold" disabled={!pick || !stake} style={{ opacity: pick && stake ? 1 : .5 }}
-              onClick={() => { if (pick && stake) { onPlace(m, pick, stake); setPick(null); } }}>
-              {pick ? `Place ₦${(stake || 0).toLocaleString()} on ${pickName(pick)} → returns ₦${Math.round((stake || 0) * m.odds[pick]).toLocaleString()}` : "Choose a pick to place your bet"}
-            </button>
-          </div>
-        ) : (
-          <div className="card" style={{ fontSize: 13, color: "#7A8B83" }}>
-            {me.role === "Captain" ? "Captains publish official scores, so captain accounts can't place bets." : "Betting is closed for this match."}
-          </div>
-        )}
-
-        {/* Your bets on this match + cancel */}
-        <div style={{ display: "grid", gap: 8 }}>
-          <div className="display" style={{ fontSize: 13, color: "#FFD447" }}>Your bets on this match</div>
-          {myMatchBets.length === 0 && <div style={{ fontSize: 13, color: "#7A8B83" }}>No bets placed yet.</div>}
-          {myMatchBets.map((b) => (
-            <div key={b.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12 }}>
-              <div style={{ fontSize: 13 }}>
-                <div style={{ fontWeight: 700 }}>₦{b.stake.toLocaleString()} on {pickName(b.pick)} @ {b.odds}x</div>
-                <div style={{ color: "#7A8B83", fontSize: 12 }}>Returns ₦{Math.round(b.stake * b.odds).toLocaleString()} if it wins</div>
-              </div>
-              {!b.settled && canCancel ? (
-                <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12, color: "#E4572E", borderColor: "#3a1f1a" }} onClick={() => onCancel(b)}>Cancel & refund</button>
-              ) : (
-                <span className="chip" style={{ background: b.settled ? (b.won ? "#0E4D3A" : "#3a1f1a") : "#232b25", color: b.settled ? (b.won ? "#FFD447" : "#E4572E") : "#FAF7EF" }}>
-                  {b.settled ? (b.won ? "Won" : "Lost") : "Locked (live)"}
-                </span>
-              )}
-            </div>
-          ))}
-          {canCancel && myMatchBets.some((b) => !b.settled) && (
-            <div style={{ fontSize: 11, color: "#7A8B83" }}>Bets can be cancelled for a full refund any time before kick-off. Once the match goes live, they lock.</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, wallet, stats, onSave, notify }) {
+function ProfilePage({ me, stats, onSave, notify }) {
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
   const [curPin, setCurPin] = useState("");
@@ -2616,7 +2519,7 @@ function ProfilePage({ me, wallet, stats, onSave, notify }) {
     if (newPin !== confirmPin) return notify("New PIN entries don't match");
     onSave({ pin: newPin });
     setCurPin(""); setNewPin(""); setConfirmPin("");
-    notify("Security PIN " + (me.pin ? "changed" : "set") + " ✔ It now protects your withdrawals.");
+    notify("Security PIN " + (me.pin ? "changed" : "set") + " ✔ Keep it private — it verifies you with support.");
   };
 
   return (
@@ -2625,16 +2528,15 @@ function ProfilePage({ me, wallet, stats, onSave, notify }) {
 
       {/* Identity card */}
       <div className="card" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
-        <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#0E4D3A", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 28, color: "#FFD447", border: "2px solid rgba(255,212,71,.4)", flexShrink: 0 }}>
+        <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#14532D", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 28, color: "#E6B31E", border: "2px solid rgba(255,212,71,.4)", flexShrink: 0 }}>
           {me.name.slice(0, 1).toUpperCase()}
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 18 }}>{me.name}</div>
-          <div style={{ fontSize: 13, color: "#7A8B83" }}>{me.contact}</div>
+          <div style={{ fontSize: 13, color: "#8FA396" }}>{me.contact}</div>
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-            <span className="chip" style={{ background: "#0E4D3A", color: "#FFD447" }}>{me.role}</span>
-            <span className="chip" style={{ background: "#232b25", color: "#FAF7EF" }}>Joined {me.joined}</span>
-            <span className="chip" style={{ background: "#232b25", color: "#FFD447" }}>₦{wallet.toLocaleString()}</span>
+            <span className="chip" style={{ background: "#14532D", color: "#E6B31E" }}>{me.role}</span>
+            <span className="chip" style={{ background: "#243128", color: "#F5F0E1" }}>Joined {me.joined}</span>
           </div>
         </div>
       </div>
@@ -2643,8 +2545,8 @@ function ProfilePage({ me, wallet, stats, onSave, notify }) {
       <div className="feedgrid" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 14 }}>
         {[stats.a, stats.b, stats.c].map(([label, val]) => (
           <div key={label} className="card" style={{ textAlign: "center", padding: 12 }}>
-            <div style={{ fontSize: 10, color: "#7A8B83", letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
-            <div className="display" style={{ fontSize: 20, color: "#FFD447" }}>{val}</div>
+            <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
+            <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>{val}</div>
           </div>
         ))}
       </div>
@@ -2652,8 +2554,8 @@ function ProfilePage({ me, wallet, stats, onSave, notify }) {
       {/* Captain team-join contact */}
       {me.role === "Captain" && (
         <div className="card" style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-          <div className="display" style={{ fontSize: 14, color: "#FFD447" }}>📞 Team Contact (shown to fans)</div>
-          <div style={{ fontSize: 12, color: "#7A8B83" }}>Drop your phone/WhatsApp number so fans who want to join your team can reach you. Shown on your captain profile.</div>
+          <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>📞 Team Contact (shown to fans)</div>
+          <div style={{ fontSize: 12, color: "#8FA396" }}>Drop your phone/WhatsApp number so fans who want to join your team can reach you. Shown on your captain profile.</div>
           <input className="input" maxLength={60} placeholder="e.g. WhatsApp 0803 123 4567" value={contactInfo} onChange={(e) => setContactInfo(sanitizeText(e.target.value, 60))} />
           <button className="btn btn-gold" onClick={() => { onSave({ contactInfo }); notify("Team contact updated ✔ Fans can now see it on your profile."); }}>Save contact</button>
         </div>
@@ -2661,29 +2563,29 @@ function ProfilePage({ me, wallet, stats, onSave, notify }) {
 
       {/* Edit name */}
       <div className="card" style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-        <div className="display" style={{ fontSize: 14, color: "#FFD447" }}>Display Name</div>
+        <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>Display Name</div>
         <input className="input" maxLength={30} value={name} onChange={(e) => setName(sanitizeText(e.target.value, 30))} />
         <button className="btn btn-gold" onClick={saveName}>Save name</button>
       </div>
 
       {/* Account details */}
       <div className="card" style={{ display: "grid", gap: 8, marginBottom: 14 }}>
-        <div className="display" style={{ fontSize: 14, color: "#FFD447" }}>Account</div>
+        <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>Account</div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-          <span style={{ color: "#7A8B83" }}>Email (login)</span><span>{me.contact}</span>
+          <span style={{ color: "#8FA396" }}>Email (login)</span><span>{me.contact}</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-          <span style={{ color: "#7A8B83" }}>Account type</span><span>{me.role}</span>
+          <span style={{ color: "#8FA396" }}>Account type</span><span>{me.role}</span>
         </div>
-        <div style={{ fontSize: 11, color: "#7A8B83" }}>Your email is your secure login identity — changing it requires re-verification and arrives with the full launch. Roles are fixed at signup to keep betting fair.</div>
+        <div style={{ fontSize: 11, color: "#8FA396" }}>Your email is your secure login identity — changing it requires re-verification and arrives with the full launch. Roles are fixed at signup to keep betting fair.</div>
       </div>
 
       {/* Security PIN */}
       <div className="card" style={{ display: "grid", gap: 10 }}>
-        <div className="display" style={{ fontSize: 14, color: "#FFD447" }}>🔒 Security PIN</div>
-        <div style={{ fontSize: 12, color: "#7A8B83", lineHeight: 1.5 }}>
-          Your login is passwordless (one-time email codes — nothing for hackers to steal). This 4-digit PIN is your second lock: it's required to withdraw funds from your wallet, so even someone holding your phone can't move your money.
-          {me.pin ? " A PIN is currently active on your account." : " No PIN set yet — you'll need one before your first withdrawal."}
+        <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>🔒 Security PIN</div>
+        <div style={{ fontSize: 12, color: "#8FA396", lineHeight: 1.5 }}>
+          This 4-digit PIN is your identity check. If you ever lose access to your email and contact support to recover your account, quoting this PIN proves the account is really yours.
+          {me.pin ? " A PIN is currently active on your account." : " No PIN set yet — we recommend setting one."}
         </div>
         {me.pin && <input className="input" type="password" inputMode="numeric" placeholder="Current PIN" maxLength={4} value={curPin} onChange={(e) => setCurPin(digits(e.target.value))} />}
         <input className="input" type="password" inputMode="numeric" placeholder="New 4-digit PIN" maxLength={4} value={newPin} onChange={(e) => setNewPin(digits(e.target.value))} />
@@ -2696,47 +2598,75 @@ function ProfilePage({ me, wallet, stats, onSave, notify }) {
 
 function CreateMatch({ onSave, onCancel }) {
   const [f, setF] = useState({
-    teamAName: "", teamAColor: "#FFD447", teamBName: "", teamBColor: "#1DB954",
+    teamAName: "", teamAColor: "#E6B31E", teamBName: "", teamBColor: "#1DB954",
     badgeA: "⚽", badgeB: "🦁",
-    playersA: "", playersB: "", location: "", date: "", time: "", duration: 90,
+    location: "", date: "", time: "", duration: 90,
   });
+  const [rosterA, setRosterA] = useState(Array(11).fill(""));
+  const [rosterB, setRosterB] = useState(Array(11).fill(""));
+  const [gkA, setGkA] = useState(null); // index of Team A goalkeeper
+  const [gkB, setGkB] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const valid = f.teamAName && f.teamBName && f.location && f.date && f.time;
+  const filledA = rosterA.filter((p) => p.trim()).length;
+  const filledB = rosterB.filter((p) => p.trim()).length;
+  const rosterOk = filledA === 11 && filledB === 11 &&
+    gkA !== null && rosterA[gkA].trim() && gkB !== null && rosterB[gkB].trim();
+  const valid = f.teamAName && f.teamBName && f.location && f.date && f.time && rosterOk;
+  /* joined as "Name, Name (GK), Name…" — the (GK) tag marks the keeper */
+  const joinRoster = (roster, gk) => roster.map((p, i) => (i === gk ? p.trim() + " (GK)" : p.trim())).join(", ");
+  const RosterBox = ({ label, roster, setRoster, gk, setGk, filled }) => (
+    <div style={{ background: "#121814", border: "1px solid #243128", borderRadius: 12, padding: 12, display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>{label} — starting XI</span>
+        <span className="display" style={{ fontSize: 13, color: filled === 11 ? "#3FA35B" : "#E8442E" }}>{filled} / 11</span>
+      </div>
+      {roster.map((p, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span className="display" style={{ fontSize: 11, color: "#8FA396", width: 18, textAlign: "right" }}>{i + 1}</span>
+          <input className="input" style={{ padding: "9px 11px", fontSize: 13 }} placeholder="Player name" maxLength={30}
+            value={p} onChange={(e) => { const r = [...roster]; r[i] = sanitizeText(e.target.value, 30).replace(/,/g, ""); setRoster(r); }} />
+          <button type="button" title="Mark as goalkeeper" onClick={() => setGk(i)}
+            className={`btn ${gk === i ? "btn-gold" : "btn-ghost"}`} style={{ padding: "7px 10px", fontSize: 14 }}>🧤</button>
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: "#8FA396" }}>🧤 Goalkeeper: <b style={{ color: "#E6B31E" }}>{gk !== null && roster[gk].trim() ? roster[gk].trim() : "tap 🧤 next to your keeper"}</b></div>
+    </div>
+  );
 
   return (
     <div className="card" style={{ display: "grid", gap: 12 }}>
-      <div className="display" style={{ fontSize: 18, color: "#FFD447" }}>Create Match</div>
+      <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>Create Match</div>
       <div style={{ display: "flex", gap: 8 }}>
         <input className="input" placeholder="Team A name" maxLength={24} value={f.teamAName} onChange={(e) => setF({ ...f, teamAName: sanitizeText(e.target.value, 24) })} />
         <input type="color" value={f.teamAColor} onChange={set("teamAColor")} style={{ width: 52, height: 48, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} title="Team A colour" />
       </div>
-      <input className="input" placeholder="Team A players (comma separated)" maxLength={150} value={f.playersA} onChange={(e) => setF({ ...f, playersA: sanitizeText(e.target.value, 150) })} />
+      {RosterBox({ label: f.teamAName || "Team A", roster: rosterA, setRoster: setRosterA, gk: gkA, setGk: setGkA, filled: filledA })}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 11, color: "#7A8B83", marginRight: 4 }}>Badge:</span>
+        <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
         {BADGES.map((b) => <button key={"a" + b} className={`btn ${f.badgeA === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 9px", fontSize: 15 }} onClick={() => setF({ ...f, badgeA: b })}>{b}</button>)}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <input className="input" placeholder="Team B name" maxLength={24} value={f.teamBName} onChange={(e) => setF({ ...f, teamBName: sanitizeText(e.target.value, 24) })} />
         <input type="color" value={f.teamBColor} onChange={set("teamBColor")} style={{ width: 52, height: 48, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} title="Team B colour" />
       </div>
-      <input className="input" placeholder="Team B players (comma separated)" maxLength={150} value={f.playersB} onChange={(e) => setF({ ...f, playersB: sanitizeText(e.target.value, 150) })} />
+      {RosterBox({ label: f.teamBName || "Team B", roster: rosterB, setRoster: setRosterB, gk: gkB, setGk: setGkB, filled: filledB })}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 11, color: "#7A8B83", marginRight: 4 }}>Badge:</span>
+        <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
         {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 9px", fontSize: 15 }} onClick={() => setF({ ...f, badgeB: b })}>{b}</button>)}
       </div>
       <input className="input" placeholder="Location (e.g. Campos Mini Stadium)" maxLength={60} value={f.location} onChange={(e) => setF({ ...f, location: sanitizeText(e.target.value, 60) })} />
       <div style={{ display: "flex", gap: 8 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4, fontWeight: 700 }}>📅 Match date</div>
+          <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>📅 Match date</div>
           <input className="input" type="date" value={f.date} onChange={set("date")} />
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 4, fontWeight: 700 }}>🕐 Kick-off time</div>
+          <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>🕐 Kick-off time</div>
           <input className="input" type="time" value={f.time} onChange={set("time")} />
         </div>
       </div>
       <div>
-        <div style={{ fontSize: 12, color: "#7A8B83", marginBottom: 6, fontWeight: 700 }}>⏱ Match duration</div>
+        <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 6, fontWeight: 700 }}>⏱ Match duration</div>
         <div style={{ display: "flex", gap: 8 }}>
           {[90, 60, 40].map((d) => (
             <button key={d} className={`btn ${f.duration === d ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1 }} onClick={() => setF({ ...f, duration: d })}>
@@ -2744,14 +2674,21 @@ function CreateMatch({ onSave, onCancel }) {
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: "#7A8B83", marginTop: 4 }}>Half time comes at {f.duration / 2} minutes.</div>
+        <div style={{ fontSize: 11, color: "#8FA396", marginTop: 4 }}>Half time comes at {f.duration / 2} minutes.</div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
         <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
-          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: f.playersA, playersB: f.playersB, location: f.location, date: f.date, time: f.time, duration: f.duration })}>
+          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: joinRoster(rosterA, gkA), playersB: joinRoster(rosterB, gkB), location: f.location, date: f.date, time: f.time, duration: f.duration })}>
           Save as Scheduled
         </button>
+      </div>
+      {!rosterOk && (
+        <div style={{ fontSize: 12, color: "#E8442E", fontWeight: 700 }}>
+          ⚠️ Every match needs exactly 11 named players per team and one 🧤 goalkeeper each — {filledA}/11 and {filledB}/11 entered so far.
+        </div>
+      )}
+      <div style={{ display: "none" }}>
       </div>
     </div>
   );
@@ -2796,46 +2733,46 @@ function PosterModal({ m, onClose, notify }) {
         <svg ref={svgRef} viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
           <defs>
             <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#08301F" />
-              <stop offset="100%" stopColor="#10131A" />
+              <stop offset="0%" stopColor="#0D3A1F" />
+              <stop offset="100%" stopColor="#0C120E" />
             </linearGradient>
           </defs>
           <rect width="400" height="500" fill="url(#bg)" />
-          <circle cx="200" cy="250" r="90" fill="none" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
-          <line x1="0" y1="250" x2="400" y2="250" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
-          <rect x="130" y="0" width="140" height="55" fill="none" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
-          <rect x="130" y="445" width="140" height="55" fill="none" stroke="#FAF7EF" strokeOpacity="0.08" strokeWidth="2" />
-          <text x="200" y="60" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">MATCH ERA</text>
-          <text x="200" y="82" textAnchor="middle" fill="#FAF7EF" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
-          <circle cx="110" cy="185" r="46" fill={m.teamA.color} stroke="#FAF7EF" strokeOpacity="0.3" strokeWidth="3" />
+          <circle cx="200" cy="250" r="90" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
+          <line x1="0" y1="250" x2="400" y2="250" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
+          <rect x="130" y="0" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
+          <rect x="130" y="445" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
+          <text x="200" y="60" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">MATCH ERA</text>
+          <text x="200" y="82" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
+          <circle cx="110" cy="185" r="46" fill={m.teamA.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
           <text x="110" y="197" textAnchor="middle" fill="#fff" fontFamily="Anton, sans-serif" fontSize="32">{m.badgeA || initials(m.teamA)}</text>
-          <circle cx="290" cy="185" r="46" fill={m.teamB.color} stroke="#FAF7EF" strokeOpacity="0.3" strokeWidth="3" />
+          <circle cx="290" cy="185" r="46" fill={m.teamB.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
           <text x="290" y="197" textAnchor="middle" fill="#fff" fontFamily="Anton, sans-serif" fontSize="32">{m.badgeB || initials(m.teamB)}</text>
-          {!isResult && <text x="200" y="197" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="26">VS</text>}
-          <text x="110" y="257" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamA.name}</text>
-          <text x="290" y="257" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamB.name}</text>
+          {!isResult && <text x="200" y="197" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="26">VS</text>}
+          <text x="110" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamA.name}</text>
+          <text x="290" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamB.name}</text>
 
           {isResult ? (
             <>
               {/* Final score — the centrepiece of a result poster */}
-              <text x="200" y="352" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="72" letterSpacing="4">{m.finalA} – {m.finalB}</text>
-              <text x="200" y="386" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="16">
+              <text x="200" y="352" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="72" letterSpacing="4">{m.finalA} – {m.finalB}</text>
+              <text x="200" y="386" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="16">
                 {m.shootout && m.pensWinner ? `${(m.pensWinner === "A" ? m.teamA.name : m.teamB.name).toUpperCase()} WIN ${m.pensA}–${m.pensB} ON PENS` : m.result === "Draw" ? "MATCH DRAWN" : `${(m.result === "A" ? m.teamA.name : m.teamB.name).toUpperCase()} WIN`}
               </text>
-              <rect x="60" y="400" width="280" height="2" fill="#FFD447" opacity="0.5" />
+              <rect x="60" y="400" width="280" height="2" fill="#E6B31E" opacity="0.5" />
               {(m.scorersA || m.scorersB) && (
                 <>
-                  <text x="110" y="420" textAnchor="middle" fill="#FAF7EF" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersA || "—").slice(0, 34)}</text>
-                  <text x="290" y="420" textAnchor="middle" fill="#FAF7EF" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersB || "—").slice(0, 34)}</text>
+                  <text x="110" y="420" textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersA || "—").slice(0, 34)}</text>
+                  <text x="290" y="420" textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersB || "—").slice(0, 34)}</text>
                 </>
               )}
-              <text x="200" y="440" textAnchor="middle" fill="#FAF7EF" opacity="0.75" fontFamily="Space Grotesk, sans-serif" fontSize="11">📍 {m.location} · {fmtDate(m.date)}</text>
+              <text x="200" y="440" textAnchor="middle" fill="#F5F0E1" opacity="0.75" fontFamily="Space Grotesk, sans-serif" fontSize="11">📍 {m.location} · {fmtDate(m.date)}</text>
             </>
           ) : (
             <>
-              <rect x="60" y="315" width="280" height="2" fill="#FFD447" opacity="0.5" />
-              <text x="200" y="345" textAnchor="middle" fill="#FFD447" fontFamily="Anton, sans-serif" fontSize="15">{fmtDate(m.date)}  ·  {m.time}</text>
-              <text x="200" y="368" textAnchor="middle" fill="#FAF7EF" fontFamily="Space Grotesk, sans-serif" fontSize="13">📍 {m.location}</text>
+              <rect x="60" y="315" width="280" height="2" fill="#E6B31E" opacity="0.5" />
+              <text x="200" y="345" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="15">{fmtDate(m.date)}  ·  {m.time}</text>
+              <text x="200" y="368" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="13">📍 {m.location}</text>
               {/* LINE-UPS — for fans sharing before kick-off */}
               {(() => {
                 const names = (str) => (str || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 6);
@@ -2845,22 +2782,22 @@ function PosterModal({ m, onClose, notify }) {
                 if (nA.length === 0 && nB.length === 0) return null;
                 return (
                   <>
-                    <text x="110" y="392" textAnchor="middle" fill="#FFD447" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
-                    <text x="290" y="392" textAnchor="middle" fill="#FFD447" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
+                    <text x="110" y="392" textAnchor="middle" fill="#E6B31E" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
+                    <text x="290" y="392" textAnchor="middle" fill="#E6B31E" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
                     {nA.map((p, i) => (
-                      <text key={"a" + i} x="110" y={404 + i * 11} textAnchor="middle" fill="#FAF7EF" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
+                      <text key={"a" + i} x="110" y={404 + i * 11} textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
                     ))}
-                    {extraA > 0 && <text x="110" y={404 + nA.length * 11} textAnchor="middle" fill="#7A8B83" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraA} more</text>}
+                    {extraA > 0 && <text x="110" y={404 + nA.length * 11} textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraA} more</text>}
                     {nB.map((p, i) => (
-                      <text key={"b" + i} x="290" y={404 + i * 11} textAnchor="middle" fill="#FAF7EF" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
+                      <text key={"b" + i} x="290" y={404 + i * 11} textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
                     ))}
-                    {extraB > 0 && <text x="290" y={404 + nB.length * 11} textAnchor="middle" fill="#7A8B83" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraB} more</text>}
+                    {extraB > 0 && <text x="290" y={404 + nB.length * 11} textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraB} more</text>}
                   </>
                 );
               })()}
             </>
           )}
-          <text x="200" y="470" textAnchor="middle" fill="#FAF7EF" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON MATCH ERA" : "HOSTED ON MATCH ERA · COME SUPPORT YOUR TEAM"}</text>
+          <text x="200" y="470" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON MATCH ERA" : "HOSTED ON MATCH ERA · COME SUPPORT YOUR TEAM"}</text>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
@@ -2875,7 +2812,7 @@ function PosterModal({ m, onClose, notify }) {
           })}>📤 Share</button>
           <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
         </div>
-        {(m.shares || 0) > 0 && <div style={{ fontSize: 11, color: "#7A8B83", textAlign: "center" }}>🎨 Shared {m.shares} time{m.shares === 1 ? "" : "s"}</div>}
+        {(m.shares || 0) > 0 && <div style={{ fontSize: 11, color: "#8FA396", textAlign: "center" }}>🎨 Shared {m.shares} time{m.shares === 1 ? "" : "s"}</div>}
       </div>
     </div>
   );
