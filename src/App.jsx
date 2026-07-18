@@ -434,7 +434,7 @@ export default function App() {
         alertsFired.current[m.id].half = true;
         notify(`⏱ HALF TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain: take a 10-minute break?`);
         patchMatch(m.id, { elapsed: HALF, running: false, timerStartedAt: null });
-        logEvent(m.id, `⏱ Half time: ${m.teamA.name} vs ${m.teamB.name}`);
+        logEvent(m.id, `⏱ Half time: ${m.teamA.name} vs ${m.teamB.name}`, minute(m));
         return;
       }
       /* Second-half nag: break over / half passed but captain hasn't restarted */
@@ -601,7 +601,7 @@ export default function App() {
     if (!isDue(m)) return notify(`Kick-off unlocks at ${m.time} on ${m.date}`);
     patchMatch(m.id, { status: "Live", running: true, elapsed: 0, liveA: 0, liveB: 0, timerStartedAt: new Date().toISOString() });
     notify(`🟢 KICK OFF — ${m.teamA.name} vs ${m.teamB.name}`);
-    logEvent(m.id, `🟢 Kick off: ${m.teamA.name} vs ${m.teamB.name}`);
+    logEvent(m.id, `🟢 Kick off: ${m.teamA.name} vs ${m.teamB.name}`, 0);
   };
 
   /* Captain submits final score → result published to feed */
@@ -618,12 +618,14 @@ export default function App() {
       ? `${pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${pa}–${pb} on penalties`
       : result === "Draw" ? "It ended in a draw" : `${result === "A" ? m.teamA.name : m.teamB.name} win`;
     notify(`📰 RESULT PUBLISHED: ${m.teamA.name} ${a}–${b} ${m.teamB.name}. ${winnerText}.`);
-    logEvent(m.id, `📰 Match Over: ${m.teamA.name} ${a}-${b} ${m.teamB.name} — ${winnerText}`);
+    logEvent(m.id, `📰 Match Over: ${m.teamA.name} ${a}-${b} ${m.teamB.name} — ${winnerText}`, minute(m));
     refreshAll();
   };
 
-  const logEvent = (matchId, message) => {
-    supabase.from("match_events").insert({ match_id: matchId, message: message.slice(0, 120) }).then(() => {});
+  /* min: the match minute this happened at, tagged as a "NN' " prefix so the Live view can show a time badge */
+  const logEvent = (matchId, message, min) => {
+    const tag = min !== undefined && min !== null ? `${min}' ` : "";
+    supabase.from("match_events").insert({ match_id: matchId, message: (tag + message).slice(0, 120) }).then(() => {});
   };
 
   const toggleLike = async (m) => {
@@ -1615,18 +1617,18 @@ export default function App() {
           onPauseResume={(m, reason) => {
             if (m.running) {
               patchMatch(m.id, { running: false, elapsed: liveElapsed(m), timerStartedAt: null, pauseReason: reason || "Paused by captain" });
-              logEvent(m.id, `⏸ Match Paused: ${(reason || "by captain")} — ${m.teamA.name} vs ${m.teamB.name}`);
+              logEvent(m.id, `⏸ Match Paused: ${(reason || "by captain")} — ${m.teamA.name} vs ${m.teamB.name}`, minute(m));
             } else {
               patchMatch(m.id, { running: true, timerStartedAt: new Date().toISOString(), pauseReason: null });
-              logEvent(m.id, `▶ Match resumed: ${m.teamA.name} vs ${m.teamB.name}`);
+              logEvent(m.id, `▶ Match resumed: ${m.teamA.name} vs ${m.teamB.name}`, minute(m));
             }
           }}
           onLiveScore={(m, a, b, scorerA, scorerB) => {
             const wasA = m.liveA ?? 0, wasB = m.liveB ?? 0;
             patchMatch(m.id, { liveA: a, liveB: b });
-            if (a > wasA) logEvent(m.id, `⚽ GOAL — ${m.teamA.name}! ${scorerA || "A player"} scores. ${a}-${b}`);
-            if (b > wasB) logEvent(m.id, `⚽ GOAL — ${m.teamB.name}! ${scorerB || "A player"} scores. ${a}-${b}`);
-            if (a <= wasA && b <= wasB) logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`);
+            if (a > wasA) logEvent(m.id, `⚽ GOAL — ${m.teamA.name}! ${scorerA || "A player"} scores. ${a}-${b}`, minute(m));
+            if (b > wasB) logEvent(m.id, `⚽ GOAL — ${m.teamB.name}! ${scorerB || "A player"} scores. ${a}-${b}`, minute(m));
+            if (a <= wasA && b <= wasB) logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`, minute(m));
           }}
           onSetStream={(m, url) => {
             if (url === null) {
@@ -1637,12 +1639,12 @@ export default function App() {
             if (!isValidStreamUrl(url)) return notify("That doesn't look like a Facebook or YouTube link. Paste the link from your live video.");
             const clean = normalizeStreamUrl(url);
             patchMatch(m.id, { streamUrl: clean });
-            if (m.status === "Live") logEvent(m.id, `🔴 Live stream started: ${m.teamA.name} vs ${m.teamB.name} — watch now!`);
+            if (m.status === "Live") logEvent(m.id, `🔴 Live stream started: ${m.teamA.name} vs ${m.teamB.name} — watch now!`, minute(m));
             notify("🔴 Stream link saved — fans can now watch live!");
           }}
           onCancelMatch={(m) => {
             patchMatch(m.id, { status: "Cancelled", running: false, timerStartedAt: null, cancelledAt: new Date().toISOString() });
-            logEvent(m.id, `❌ Match Cancelled: ${m.teamA.name} vs ${m.teamB.name}`);
+            logEvent(m.id, `❌ Match Cancelled: ${m.teamA.name} vs ${m.teamB.name}`, minute(m));
             notify("❌ Match cancelled. It will be removed automatically after 7 days.");
           }}
           onLike={() => toggleLike(matches.find((x) => x.id === openMatch))}
@@ -1765,9 +1767,9 @@ export default function App() {
       {liveDetailMatch && (
         <LiveMatchView
           m={liveDetailMatch}
+          me={me}
           minute={minute}
           timeline={liveTimeline}
-          likeCount={likeCounts[liveDetailMatch.id] || 0}
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
           onShare={() => { setLiveDetailFor(null); setPosterFor(liveDetailMatch.id); }}
@@ -2482,25 +2484,46 @@ const genCommentary = (m, rosterNames) => {
   return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
 };
 
-function LiveMatchView({ m, minute, timeline, likeCount, alertsOn, onToggleAlerts, onShare, onClose }) {
+function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onShare, onClose }) {
   const [commentary, setCommentary] = useState([]);
+  const [watching, setWatching] = useState(1);
   const rosterNames = (str) => {
     const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
     return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
   };
+
+  /* Real "Watching" count — presence channel scoped to this exact match.
+     Counts only people who genuinely have this match's Live view open right now. */
+  useEffect(() => {
+    if (!me) return;
+    const ch = supabase.channel(`watch-${m.id}`, { config: { presence: { key: me.id } } });
+    ch.on("presence", { event: "sync" }, () => {
+      setWatching(Math.max(1, Object.keys(ch.presenceState()).length));
+    }).subscribe(async (status) => {
+      if (status === "SUBSCRIBED") await ch.track({ at: Date.now() });
+    });
+    return () => { supabase.removeChannel(ch); };
+  }, [m.id, me && me.id]);
+
   useEffect(() => {
     setCommentary([]);
     if (m.status !== "Live" || m.onBreak) return;
-    const fire = () => setCommentary((c) => [{ id: "c" + Date.now(), text: genCommentary(m, rosterNames), ts: Date.now() }, ...c].slice(0, 12));
+    const fire = () => setCommentary((c) => [{ id: "c" + Date.now(), text: genCommentary(m, rosterNames), min: minute(m), ts: Date.now() }, ...c].slice(0, 12));
     const t = setInterval(fire, 22000 + Math.random() * 14000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.id, m.status, m.onBreak, m.playersA, m.playersB]);
 
-  /* Interleave real events (fact) with generated commentary (flavor), newest first */
+  /* Real events are stored as "NN' message" — split that leading tag off to show as its own badge */
+  const splitMinute = (msg) => {
+    const mm = /^(\d+)'\s+(.*)$/.exec(msg || "");
+    return mm ? { min: mm[1], text: mm[2] } : { min: null, text: msg };
+  };
+
+  /* Interleave real events (fact) with generated commentary (flavor), newest first, same visual treatment */
   const feed = [
-    ...timeline.map((e) => ({ id: e.id, text: e.message, ts: new Date(e.created_at).getTime(), kind: "event" })),
-    ...commentary.map((c) => ({ ...c, kind: "commentary" })),
+    ...timeline.map((e) => { const s = splitMinute(e.message); return { id: e.id, text: s.text, min: s.min, ts: new Date(e.created_at).getTime(), kind: "event" }; }),
+    ...commentary.map((c) => ({ id: c.id, text: c.text, min: c.min, ts: c.ts, kind: "commentary" })),
   ].sort((a, b) => b.ts - a.ts);
 
   return (
@@ -2536,30 +2559,38 @@ function LiveMatchView({ m, minute, timeline, likeCount, alertsOn, onToggleAlert
           </div>
         </div>
 
+        {m.streamUrl && (
+          <a href={m.streamUrl} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #243128", textDecoration: "none", background: "rgba(232,68,46,.08)" }}>
+            <span className="chip pulse" style={{ background: T.live, color: "#fff", flexShrink: 0 }}>🔴 LIVE</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.chalk }}>
+                {/facebook\.com|fb\.watch/.test(m.streamUrl) ? "Watching live on Facebook" : "Watching live"}
+              </div>
+              <div style={{ fontSize: 11, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>The captain is streaming this match — tap to watch →</div>
+            </div>
+          </a>
+        )}
+
         <div style={{ display: "flex", borderBottom: "1px solid #243128" }}>
           <div style={{ flex: 1, textAlign: "center", padding: "12px 4px", borderRight: "1px solid #243128" }}>
+            <div className="display" style={{ fontSize: 18, color: T.floodlight }}>👀 {watching}</div>
+            <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Watching</div>
+          </div>
+          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px" }}>
             <div className="display" style={{ fontSize: 18, color: T.floodlight }}>{(m.liveA ?? 0) + (m.liveB ?? 0)}</div>
             <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Goals</div>
           </div>
-          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px" }}>
-            <div className="display" style={{ fontSize: 18, color: T.floodlight }}>💛 {likeCount}</div>
-            <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Likes</div>
-          </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "14px 16px 6px" }}>
-          <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase" }}>Match timeline</div>
-          <div style={{ fontSize: 10, color: T.muted }}>🎙 commentary is just for fun — not official</div>
-        </div>
+        <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
         <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
           {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
-          {feed.map((e) => e.kind === "commentary" ? (
-            <div key={e.id} style={{ background: "transparent", border: "1px dashed #2A3A2E", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, color: T.muted, fontStyle: "italic" }}>
-              🎙 {e.text}
-            </div>
-          ) : (
-            <div key={e.id} style={{ background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px", fontSize: 13, color: T.chalk }}>
-              {e.text}
+          {feed.map((e) => (
+            <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px" }}>
+              {e.min !== null && e.min !== undefined && (
+                <span className="display" style={{ fontSize: 13, color: T.floodlight, background: "rgba(230,179,30,.1)", borderRadius: 8, padding: "3px 7px", flexShrink: 0, minWidth: 32, textAlign: "center" }}>{e.min}'</span>
+              )}
+              <span style={{ fontSize: 13, color: T.chalk, paddingTop: 1 }}>{e.kind === "commentary" ? "🎙 " : ""}{e.text}</span>
             </div>
           ))}
         </div>
