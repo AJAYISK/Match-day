@@ -144,7 +144,49 @@ const fmtDay = (d) => {
   catch { return d; }
 };
 
-const BADGES = ["⚽","🦁","🦅","🛡️","⭐","🔥","🐆","🦂","👑","🚀","⚡","🐘"];
+/* Jersey vector badges — same 12 choices as before, now consistent line-icon crests
+   instead of platform-dependent emoji. Old matches saved with an emoji still resolve fine. */
+const BADGES = ["ball", "lion", "eagle", "shield", "star", "fire", "leopard", "scorpion", "crown", "rocket", "bolt", "elephant"];
+const LEGACY_BADGE_MAP = { "⚽": "ball", "🦁": "lion", "🦅": "eagle", "🛡️": "shield", "⭐": "star", "🔥": "fire", "🐆": "leopard", "🦂": "scorpion", "👑": "crown", "🚀": "rocket", "⚡": "bolt", "🐘": "elephant" };
+const resolveBadgeIcon = (b) => (b && BADGES.includes(b)) ? b : (b && LEGACY_BADGE_MAP[b]) || null;
+const BADGE_ICON_SCALE = { ball: 1.1, lion: 1.15, eagle: 1.3, shield: 1.2, star: 1.25, fire: 1.2, leopard: 1.15, scorpion: 1.2, crown: 1.2, rocket: 1.2, bolt: 1.3, elephant: 1.15 };
+function BadgeIconPaths({ name }) {
+  switch (name) {
+    case "ball": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="0" cy="0" r="8.5" /><path d="M0 -4l3 2-1 3.5h-4l-1-3.5z" fill="#fff" stroke="none" />
+      <path d="M0-8v4M0 4.5v4M-7.2-3.7l3.7 1.3M4.5-1.4l3.7-1.3M-6 5l3-3.5M6 5l-3-3.5" /></g>);
+    case "lion": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M0-8.5c1.8 1.8 2.6 3 2.6 5 0 2-1.1 3-2.6 3s-2.6-1-2.6-3c0-2 .8-3.2 2.6-5Z" transform="translate(0 -0.5)" />
+      <path d="M-6.5 9c.6-4.3 2.2-6.3 6.5-6.3s5.9 2 6.5 6.3" /></g>);
+    case "eagle": return (<g fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M0-9-6-2.5l3 1-2 3.2 4-.9-1 4.2 2-1.6 2 1.6-1-4.2 4 .9-2-3.2 3-1z" /></g>);
+    case "shield": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M0-8.5 6-6v5.5c0 4-2.6 6.7-6 8-3.4-1.3-6-4-6-8V-6z" /><path d="M-2.8 0 -0.8 2 2.8-2" /></g>);
+    case "star": return (<g fill="#fff" stroke="none"><path d="M0-8.8 2.5-2.5 9-2l-5 4 1.6 6.5L0 5l-5.6 3.5L-4-2l-5-4 6.5-.5z" /></g>);
+    case "fire": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M0 9c-3.3 0-5.7-2.2-5.7-5.4 0-2 1-3.3 1-3.3s.3 1.6 1.5 2.2c-.4-2-.1-4.3 2-6.5.3 1.6 1 2.6 2 3.4 1.4 1.1 2.9 2.3 2.9 4.6C3.7 7 3.3 9 0 9Z" /></g>);
+    case "leopard": return (<g fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M-8 1c1-4 4-8 8-8s7 4 8 8" />
+      <circle cx="-5" cy="0" r=".6" fill="#fff" stroke="none" /><circle cx="-1.5" cy="-1.5" r=".6" fill="#fff" stroke="none" />
+      <circle cx="2" cy="-2" r=".6" fill="#fff" stroke="none" /><circle cx="5.5" cy="-0.5" r=".6" fill="#fff" stroke="none" />
+      <path d="M-6 6l2-4M6 6l-2-4" /></g>);
+    case "scorpion": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M-3-6c-2 0-3.5 1.6-3.5 3.6 0 1.6 1 2.4 2 3-1 .3-2 1.2-2 2.6 0 1.6 1.3 2.6 2.8 2.6" />
+      <path d="M3-6c2 0 3.5 1.6 3.5 3.6 0 1.6-1 2.4-2 3 1 .3 2 1.2 2 2.6 0 1.6-1.3 2.6-2.8 2.6" />
+      <path d="M-3.5 5.8-6 11M3.5 5.8 6 11" /><circle cx="0" cy="0" r="2.4" /></g>);
+    case "crown": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M-7-3 -4.5-1 0-6l4.5 5L7-3l-1.5 8h-11z" /><path d="M-5.5 8h11" /></g>);
+    case "rocket": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M0-9c2.5 2 3.5 5 3.5 8.5 0 2-.5 3.6-1 4.8h-5c-.5-1.2-1-2.8-1-4.8C-3.5-4-2.5-7 0-9Z" />
+      <path d="M-3.5 4.5-6.5 7l1.3 1M3.5 4.5l3 2.5-1.3 1" /><path d="M-1.7 7.3-3 12l3-1.5 3 1.5-1.3-4.7" /></g>);
+    case "bolt": return (<g fill="#fff" stroke="none"><path d="M1-9-7 2.5h5.2L-2 10l9-12.5h-5.5z" /></g>);
+    case "elephant": return (<g fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M-2.5-3.5c-1.5-1.8-3.5-1.6-4.5 0-1 1.7.2 3 1.5 3.3" />
+      <path d="M-5.7-.4C-7 .8-7.5 2.6-7 5c.4 2 2 3 4 3h6c2 0 3.6-1 4-3 .5-2.4 0-4.2-1.3-5.4" />
+      <ellipse cx="1.5" cy="0" rx="5" ry="4.3" /></g>);
+    default: return null;
+  }
+}
 
 
 export default function App() {
@@ -550,7 +592,11 @@ export default function App() {
     notify(`📧 6-digit code sent to ${email} — enter it below`);
   };
 
-  const logout = async () => { await supabase.auth.signOut(); setMe(null); setScreen("auth"); setOpenMatch(null); };
+  const logout = async () => {
+    await supabase.auth.signOut();
+    setMe(null); setScreen("auth"); setOpenMatch(null);
+    setSeeMore({}); setFeedState("All"); setFeedFollowedOnly(false); // fresh feed for whoever logs in next
+  };
 
   useEffect(() => {
     if (!liveDetailFor) { setLiveTimeline([]); return; }
@@ -1953,10 +1999,22 @@ function StatusChip({ m }) {
 }
 
 function MiniLogo({ team, badge, size = 42 }) {
+  const icon = resolveBadgeIcon(badge);
+  if (!icon) {
+    return (
+      <div className="mini-logo" style={{ width: size, height: size, borderRadius: "50%", background: team.color, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: size * 0.42, color: "#fff", flexShrink: 0, border: "2px solid rgba(255,255,255,.25)" }}>
+        {team.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+      </div>
+    );
+  }
   return (
-    <div className="mini-logo" style={{ width: size, height: size, borderRadius: "50%", background: team.color, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: badge ? size * 0.5 : size * 0.42, color: "#fff", flexShrink: 0, border: "2px solid rgba(255,255,255,.25)" }}>
-      {badge || team.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
-    </div>
+    <svg width={size} height={size * 1.06} viewBox="0 0 100 106" style={{ flexShrink: 0, filter: "drop-shadow(0 2px 5px rgba(0,0,0,.35))" }}>
+      <path d="M50 9 L39 2 Q30 -1 22 6 L3 23 L15 36 L23 28 L23 99 Q50 106 77 99 L77 28 L85 36 L97 23 L78 6 Q70 -1 61 2 Z" fill={team.color} stroke="rgba(245,240,225,.35)" strokeWidth="2" />
+      <path d="M40 4 Q50 14 60 4" fill="none" stroke="rgba(12,18,14,.5)" strokeWidth="2.4" />
+      <g transform={`translate(50 50) scale(${BADGE_ICON_SCALE[icon] || 1.2})`}>
+        <BadgeIconPaths name={icon} />
+      </g>
+    </svg>
   );
 }
 
@@ -2519,6 +2577,16 @@ function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onSh
     const mm = /^(\d+)'\s+(.*)$/.exec(msg || "");
     return mm ? { min: mm[1], text: mm[2] } : { min: null, text: msg };
   };
+  /* Colors the "GOAL — Team!" / "Kick off:" / "Half time:" style lead-in gold, rest stays plain */
+  const splitLeadIn = (text) => {
+    const bang = text.indexOf("!");
+    const colon = text.indexOf(":");
+    let cut = -1;
+    if (bang !== -1 && (colon === -1 || bang < colon)) cut = bang + 1;
+    else if (colon !== -1) cut = colon + 1;
+    if (cut === -1) return { lead: null, rest: text };
+    return { lead: text.slice(0, cut), rest: text.slice(cut) };
+  };
 
   /* Interleave real events (fact) with generated commentary (flavor), newest first, same visual treatment */
   const feed = [
@@ -2585,14 +2653,23 @@ function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onSh
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
         <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
           {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
-          {feed.map((e) => (
-            <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px" }}>
-              {e.min !== null && e.min !== undefined && (
-                <span className="display" style={{ fontSize: 13, color: T.floodlight, background: "rgba(230,179,30,.1)", borderRadius: 8, padding: "3px 7px", flexShrink: 0, minWidth: 32, textAlign: "center" }}>{e.min}'</span>
-              )}
-              <span style={{ fontSize: 13, color: T.chalk, paddingTop: 1 }}>{e.kind === "commentary" ? "🎙 " : ""}{e.text}</span>
-            </div>
-          ))}
+          {feed.map((e) => {
+            const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
+            return (
+              <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px" }}>
+                {e.min !== null && e.min !== undefined && (
+                  <span className="display" style={{ fontSize: 13, color: T.floodlight, background: "rgba(230,179,30,.1)", borderRadius: 8, padding: "3px 7px", flexShrink: 0, minWidth: 32, textAlign: "center" }}>{e.min}'</span>
+                )}
+                <span style={{ fontSize: 13, color: T.chalk, paddingTop: 1 }}>
+                  {e.kind === "commentary" ? (
+                    <>🎙 {rest}</>
+                  ) : lead ? (
+                    <><b style={{ color: T.floodlight }}>{lead}</b>{rest}</>
+                  ) : rest}
+                </span>
+              </div>
+            );
+          })}
         </div>
 
         <div style={{ display: "flex", gap: 8, padding: "12px 16px 16px", borderTop: "1px solid #243128" }}>
@@ -2744,7 +2821,7 @@ function CreateMatch({ onSave, onCancel }) {
       <input className="input" placeholder="Team A players (comma separated)" maxLength={150} value={f.playersA} onChange={(e) => setF({ ...f, playersA: sanitizeText(e.target.value, 150) })} />
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
-        {BADGES.map((b) => <button key={"a" + b} className={`btn ${f.badgeA === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 9px", fontSize: 15 }} onClick={() => setF({ ...f, badgeA: b })}>{b}</button>)}
+        {BADGES.map((b) => <button key={"a" + b} className={`btn ${f.badgeA === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setF({ ...f, badgeA: b })}><MiniLogo team={{ name: "", color: f.badgeA === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} /></button>)}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <input className="input" placeholder="Team B name" maxLength={24} value={f.teamBName} onChange={(e) => setF({ ...f, teamBName: sanitizeText(e.target.value, 24) })} />
@@ -2753,7 +2830,7 @@ function CreateMatch({ onSave, onCancel }) {
       <input className="input" placeholder="Team B players (comma separated)" maxLength={150} value={f.playersB} onChange={(e) => setF({ ...f, playersB: sanitizeText(e.target.value, 150) })} />
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
-        {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 9px", fontSize: 15 }} onClick={() => setF({ ...f, badgeB: b })}>{b}</button>)}
+        {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setF({ ...f, badgeB: b })}><MiniLogo team={{ name: "", color: f.badgeB === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} /></button>)}
       </div>
       <input className="input" placeholder="Location (e.g. Campos Mini Stadium)" maxLength={60} value={f.location} onChange={(e) => setF({ ...f, location: sanitizeText(e.target.value, 60) })} />
       <div style={{ display: "flex", gap: 8 }}>
@@ -2792,6 +2869,27 @@ function PosterModal({ m, onClose, notify }) {
   const svgRef = useRef(null);
   if (!m) return null;
   const initials = (t) => t.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  /* Draws the same jersey badge used across the app, sized for the 400x500 poster SVG */
+  const PosterBadge = ({ cx, cy, team, badge }) => {
+    const icon = resolveBadgeIcon(badge);
+    if (!icon) {
+      return (
+        <>
+          <circle cx={cx} cy={cy} r="46" fill={team.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
+          <text x={cx} y={cy + 12} textAnchor="middle" fill="#fff" fontFamily="Anton, sans-serif" fontSize="32">{initials(team)}</text>
+        </>
+      );
+    }
+    return (
+      <g transform={`translate(${cx} ${cy})`}>
+        <path d="M0 -50 L-14 -60 Q-27 -63 -37 -55 L-64 -35 L-48 -18 L-36 -28 L-36 55 Q0 63 36 55 L36 -28 L48 -18 L64 -35 L37 -55 Q27 -63 14 -60 Z"
+          transform="scale(0.62)" fill={team.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
+        <g transform={`scale(${(BADGE_ICON_SCALE[icon] || 1.2) * 0.62})`}>
+          <BadgeIconPaths name={icon} />
+        </g>
+      </g>
+    );
+  };
 
   const toPng = (cb) => {
     const svg = svgRef.current;
@@ -2838,10 +2936,8 @@ function PosterModal({ m, onClose, notify }) {
           <rect x="130" y="445" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
           <text x="200" y="60" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">MATCH ERA</text>
           <text x="200" y="82" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
-          <circle cx="110" cy="185" r="46" fill={m.teamA.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
-          <text x="110" y="197" textAnchor="middle" fill="#fff" fontFamily="Anton, sans-serif" fontSize="32">{m.badgeA || initials(m.teamA)}</text>
-          <circle cx="290" cy="185" r="46" fill={m.teamB.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
-          <text x="290" y="197" textAnchor="middle" fill="#fff" fontFamily="Anton, sans-serif" fontSize="32">{m.badgeB || initials(m.teamB)}</text>
+          <PosterBadge cx={110} cy={185} team={m.teamA} badge={m.badgeA} />
+          <PosterBadge cx={290} cy={185} team={m.teamB} badge={m.badgeB} />
           {!isResult && <text x="200" y="197" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="26">VS</text>}
           <text x="110" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamA.name}</text>
           <text x="290" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamB.name}</text>
