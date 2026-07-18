@@ -78,7 +78,7 @@ const matchToRow = (p) => {
    MATCH ERA — Community Football Website
    Flow: Captain creates → starts 90-min timer → at FULL TIME the
    site REQUESTS the final score from the captain → captain submits
-   → result is published to the News Feed and Highlights
+   → result is published to the News Feed
    based on the captain's submitted score.
    Roles: Captain / Fan / Admin.
    Demo OTP is always 1234.
@@ -173,8 +173,13 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [me, setMe] = useState(null);
   const [matches, setMatches] = useState([]);
-  const [page, setPage] = useState("feed"); // feed | mymatches | create | highlights | admin
+  const [page, setPage] = useState("feed"); // feed | mymatches | create | live | admin
   const [openMatch, setOpenMatch] = useState(null);
+  const [liveDetailFor, setLiveDetailFor] = useState(null); // matchId shown in the 🔴 Live pitch view
+  const [liveTimeline, setLiveTimeline] = useState([]);     // fresh per-match events for that view
+  const [goalAlertIds, setGoalAlertIds] = useState([]);     // matchIds the fan opted into goal alerts for
+  const goalAlertIdsRef = useRef([]);
+  useEffect(() => { goalAlertIdsRef.current = goalAlertIds; }, [goalAlertIds]);
   const [viewCaptain, setViewCaptain] = useState(null);
   const [capStateFilter, setCapStateFilter] = useState("All");
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
@@ -185,8 +190,6 @@ export default function App() {
   const [onlineCount, setOnlineCount] = useState(1);
   const [followerCounts, setFollowerCounts] = useState({});
   const [events, setEvents] = useState([]); // live ticker
-  const [motmVotes, setMotmVotes] = useState({}); // { matchId: { playerName: count } }
-  const [myMotm, setMyMotm] = useState({});       // { matchId: playerName I voted for }
   const [myLikes, setMyLikes] = useState([]);
   const [likeCounts, setLikeCounts] = useState({});
   const [requests, setRequests] = useState([]); // match change requests
@@ -287,18 +290,6 @@ export default function App() {
       const lc = {}; lk.forEach((x) => { lc[x.match_id] = (lc[x.match_id] || 0) + 1; });
       setLikeCounts(lc);
     }
-    try {
-      const { data: mv } = await supabase.from("motm_votes").select("match_id, player_name, user_id");
-      if (mv) {
-        const agg = {}; const mineV = {};
-        mv.forEach((v) => {
-          agg[v.match_id] = agg[v.match_id] || {};
-          agg[v.match_id][v.player_name] = (agg[v.match_id][v.player_name] || 0) + 1;
-          if (v.user_id === meObj.id) mineV[v.match_id] = v.player_name;
-        });
-        setMotmVotes(agg); setMyMotm(mineV);
-      }
-    } catch (_) { /* motm_votes table not created yet — run SQL Update 9 */ }
     const { data: rq } = await supabase.from("match_requests").select("*").order("created_at", { ascending: false });
     if (rq) setRequests(rq);
     const { data: an } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
@@ -335,6 +326,12 @@ export default function App() {
           const m = rowToMatch(payload.new);
           setMatches((ms) => {
             const i = ms.findIndex((x) => x.id === m.id);
+            if (i !== -1 && goalAlertIdsRef.current.includes(m.id)) {
+              const prev = ms[i];
+              const prevGoals = (prev.liveA ?? 0) + (prev.liveB ?? 0);
+              const nowGoals = (m.liveA ?? 0) + (m.liveB ?? 0);
+              if (nowGoals > prevGoals) notify(`⚽ GOAL! ${m.teamA.name} ${m.liveA}–${m.liveB} ${m.teamB.name}`);
+            }
             if (i === -1) return [m, ...ms];
             const next = [...ms]; next[i] = m; return next;
           });
@@ -556,6 +553,17 @@ export default function App() {
   const logout = async () => { await supabase.auth.signOut(); setMe(null); setScreen("auth"); setOpenMatch(null); };
 
   useEffect(() => {
+    if (!liveDetailFor) { setLiveTimeline([]); return; }
+    let cancelled = false;
+    const load = () => supabase.from("match_events").select("*").eq("match_id", liveDetailFor)
+      .order("created_at", { ascending: false }).limit(40)
+      .then(({ data }) => { if (!cancelled && data) setLiveTimeline(data); });
+    load();
+    const t = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [liveDetailFor]);
+
+  useEffect(() => {
     if (rememberMe) return;
     const h = () => { supabase.auth.signOut(); };
     window.addEventListener("pagehide", h);
@@ -596,7 +604,7 @@ export default function App() {
     logEvent(m.id, `🟢 Kick off: ${m.teamA.name} vs ${m.teamB.name}`);
   };
 
-  /* Captain submits final score → result published to feed + Highlights */
+  /* Captain submits final score → result published to feed */
   const submitFinalScore = async (m, a, b, shootout = false, pa = 0, pb = 0, scorersA = "", scorersB = "") => {
     const { error } = await supabase.rpc("submit_result", {
       p_match_id: m.id, p_final_a: a, p_final_b: b,
@@ -651,21 +659,6 @@ export default function App() {
     if (error) return notify(error.message);
     setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, ...patch } : u)));
     setMe((m) => ({ ...m, ...patch }));
-  };
-
-  /* ---------- MAN OF THE MATCH ---------- */
-  const parsePlayers = (str, team) => (str || "").split(",").map((s) => s.trim()).filter(Boolean)
-    .map((s) => ({ name: s.replace(/\s*\(GK\)\s*$/i, ""), gk: /\(GK\)\s*$/i.test(s), team }));
-  const motmCandidates = (m) => [...parsePlayers(m.playersA, m.teamA.name), ...parsePlayers(m.playersB, m.teamB.name)];
-  const motmOpen = (m) => m.status === "ResultPublished" && motmCandidates(m).length > 0 &&
-    (Date.now() - new Date(m.publishedAt || m.date).getTime()) < 24 * 3600000;
-  const voteMotm = async (m, playerName) => {
-    if (myMotm[m.id]) return;
-    const { error } = await supabase.from("motm_votes").insert({ match_id: m.id, user_id: me.id, player_name: playerName });
-    if (error) return notify(error.message.includes("does not exist") ? "MOTM voting is being set up — check back soon!" : error.message);
-    setMyMotm((v) => ({ ...v, [m.id]: playerName }));
-    setMotmVotes((v) => ({ ...v, [m.id]: { ...(v[m.id] || {}), [playerName]: ((v[m.id] || {})[playerName] || 0) + 1 } }));
-    notify("🏆 Vote counted!");
   };
 
   const minute = (m) => Math.min(m.duration || 90, Math.floor(liveElapsed(m) / 60));
@@ -801,7 +794,7 @@ export default function App() {
               const { data: { session } } = await supabase.auth.getSession();
               if (session) loadMe(session.user.id); else setScreen("auth");
             }}>Save new password</button>
-              <a href="https://wa.me/12704929553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
+              <a href="https://wa.me/12704939553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
                 Can't access your email? <b style={{ color: "#25D366" }}>💬 Contact support on WhatsApp</b>
               </a>
           </div>
@@ -870,7 +863,7 @@ export default function App() {
                 {authBusy && <span style={{ width: 16, height: 16, border: "2.5px solid rgba(16,19,26,.3)", borderTopColor: "#0C120E", borderRadius: "50%", animation: "spin .8s linear infinite", display: "inline-block" }} />}
                 {authBusy ? (authMode === "signup" ? "Creating account…" : "Logging in…") : (authMode === "signup" ? "Create account" : "Log in")}
               </button>
-              <a href="https://wa.me/12704929553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
+              <a href="https://wa.me/12704939553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
                 Can't access your email? <b style={{ color: "#25D366" }}>💬 Contact support on WhatsApp</b>
               </a>
               <div style={{ fontSize: 12, color: T.muted }}>
@@ -897,6 +890,11 @@ export default function App() {
   }
 
   /* ============================================================ WEBSITE */
+  /* Comma-separated roster → clean name list; empty roster falls back to Player 1, Player 2… */
+  const rosterNames = (str) => {
+    const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
+    return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
+  };
   const captainState = (m) => (users.find((u) => u.id === m.createdBy) || {}).state || "";
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
   const published = publishedAll.filter((m) =>
@@ -914,6 +912,10 @@ export default function App() {
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const results = published.filter((m) => m.status === "ResultPublished");
   const mine = matches.filter((m) => m.createdBy === me.id);
+  /* 🔴 Live tab — every currently-live match in the fan's state or from a followed captain */
+  const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
+    (me.role === "Admin" || captainState(m) === me.state || follows.includes(m.createdBy)));
+  const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
     <div className="md-root">
@@ -1229,7 +1231,7 @@ export default function App() {
           <nav className="topnav">
             <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
             {me.role !== "Admin" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
-            <button className={page === "highlights" ? "on" : ""} onClick={() => setPage("highlights")}>⭐ Highlights</button>
+            <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>🔴 Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
@@ -1296,7 +1298,7 @@ export default function App() {
                 Your community.<br /><span style={{ color: T.floodlight }}>Your matches. Live.</span>
               </div>
               <div style={{ color: T.muted, marginTop: 10, maxWidth: 520 }}>
-                Follow published matches from local captains, watch scores update in real time, and relive the big moments in ⭐ Highlights. Results go live the moment the captain submits the final score.
+                Follow published matches from local captains, and catch every score update the moment it happens on 🔴 Live. Results go live the moment the captain submits the final score.
               </div>
             </div>
 
@@ -1477,7 +1479,7 @@ export default function App() {
             me={me}
             stats={me.role === "Captain"
               ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["🔔 Followers", followerCounts[me.id] || 0], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
-              : { a: ["🔔 Captains followed", follows.length], b: ["💛 Likes given", myLikes.length], c: ["🏆 MOTM votes cast", Object.keys(myMotm).length] }}
+              : { a: ["🔔 Captains followed", follows.length], b: ["💛 Likes given", myLikes.length], c: ["🏁 Results seen", results.length] }}
             onSave={updateProfile}
             notify={notify}
           />
@@ -1577,85 +1579,20 @@ export default function App() {
         )}
 
         {/* ---------- HIGHLIGHTS ---------- */}
-        {page === "highlights" && (
+        {/* ---------- LIVE ---------- */}
+        {page === "live" && (
           <div>
-            <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>⭐ Highlights</div>
-            <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>Final scores, big moments and Man of the Match votes — straight from the pitch.</div>
-
-            {results.length === 0 && liveNow.length === 0 && (
-              <div className="card" style={{ color: T.muted }}>No highlights yet — they appear here the moment matches finish. ⚽</div>
+            <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>🔴 Live</div>
+            <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>
+              {me.role === "Admin" ? "Every match live right now." : "Live matches in your state, and from captains you follow."}
+            </div>
+            {liveForUser.length === 0 && (
+              <div className="card" style={{ color: T.muted }}>Nothing live right now — check back on match day. ⚽</div>
             )}
-
-            <div style={{ display: "grid", gap: 16, maxWidth: 640 }}>
-              {/* MOTM VOTES — open on fresh results */}
-              {results.filter((m) => motmOpen(m)).map((m) => {
-                const cands = motmCandidates(m);
-                const votes = motmVotes[m.id] || {};
-                const total = Object.values(votes).reduce((t, n) => t + n, 0);
-                const mine = myMotm[m.id];
-                return (
-                  <div key={"motm" + m.id} className="card" style={{ display: "grid", gap: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span className="chip" style={{ background: "#3a2f10", color: T.floodlight }}>🏆 {mine ? "Voted" : "Vote open"}</span>
-                      <span style={{ fontSize: 11, color: T.muted }}>{total} vote{total === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="display" style={{ fontSize: 18 }}>Man of the Match</div>
-                    <div style={{ fontSize: 13, color: T.muted }}>{m.teamA.name} {m.finalA}–{m.finalB} {m.teamB.name}{mine ? "" : " · tap a player to vote"}</div>
-                    {cands.map((p) => {
-                      const n = votes[p.name] || 0;
-                      const pct = total ? Math.round((n / total) * 100) : 0;
-                      return (
-                        <div key={p.name} onClick={() => !mine && voteMotm(m, p.name)} style={{ cursor: mine ? "default" : "pointer", display: "grid", gap: 5 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontWeight: 700, fontSize: 14 }}>{p.name}{p.gk ? " 🧤" : ""}{mine === p.name ? " ✓" : ""}</span>
-                            {mine && <span className="display" style={{ fontSize: 15, color: T.floodlight }}>{pct}%</span>}
-                          </div>
-                          <div style={{ fontSize: 11, color: T.muted }}>{p.team}</div>
-                          {mine && <div style={{ height: 6, background: "#243128", borderRadius: 99, overflow: "hidden" }}><div style={{ height: "100%", width: pct + "%", background: T.floodlight, borderRadius: 99, transition: "width .6s" }} /></div>}
-                        </div>
-                      );
-                    })}
-                    <div style={{ fontSize: 11, color: T.muted, borderTop: "1px solid #243128", paddingTop: 8 }}>🏆 Voting stays open for 24 hours after full time.</div>
-                  </div>
-                );
-              })}
-
-              {/* FULL-TIME SCORE CARDS */}
-              {results.slice(0, 12).map((m) => (
-                <div key={"hl" + m.id} className="card" style={{ padding: 0, overflow: "hidden" }}>
-                  <div className="scoreboard" style={{ borderRadius: 0, border: 0, borderBottom: "1px solid #243128", flexDirection: "column", gap: 6, padding: "16px 16px 12px" }}>
-                    <div style={{ fontSize: 10, letterSpacing: ".2em", color: "rgba(245,240,225,.7)", fontWeight: 700 }}>FULL TIME · {m.date}</div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, width: "100%" }}>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                        <MiniLogo team={m.teamA} badge={m.badgeA} />
-                        <span style={{ fontSize: 12, fontWeight: 700, textAlign: "center" }}>{m.teamA.name}</span>
-                      </div>
-                      <div className="display" style={{ fontSize: 38, color: T.chalk, whiteSpace: "nowrap" }}>{m.finalA} <span style={{ color: T.floodlight }}>–</span> {m.finalB}</div>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                        <MiniLogo team={m.teamB} badge={m.badgeB} />
-                        <span style={{ fontSize: 12, fontWeight: 700, textAlign: "center" }}>{m.teamB.name}</span>
-                      </div>
-                    </div>
-                    {m.shootout && m.pensWinner && <div style={{ fontSize: 11, color: "rgba(245,240,225,.85)" }}>🥅 {m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win {m.pensA}–{m.pensB} on penalties</div>}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px" }}>
-                    <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13, border: 0, color: myLikes.includes(m.id) ? T.floodlight : T.muted }} onClick={() => toggleLike(m)}>
-                      {myLikes.includes(m.id) ? "💛" : "🤍"} {likeCounts[m.id] || 0}
-                    </button>
-                    <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13, border: 0, color: T.muted, marginLeft: "auto" }} onClick={() => setPosterFor(m.id)}>↗ Share card</button>
-                  </div>
-                </div>
+            <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
+              {liveForUser.map((m) => (
+                <MatchCard key={"lv" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setLiveDetailFor(m.id)} onPoster={() => setPosterFor(m.id)} />
               ))}
-
-              {/* RECENT MOMENTS from the live ticker */}
-              {events.length > 0 && (
-                <div className="card" style={{ display: "grid", gap: 10 }}>
-                  <div className="display" style={{ fontSize: 15, color: T.floodlight }}>Recent moments</div>
-                  {events.slice(0, 6).map((e) => (
-                    <div key={e.id} style={{ fontSize: 13, color: T.chalk, borderBottom: "1px solid #1d251f", paddingBottom: 8 }}>{e.message}</div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -1684,10 +1621,12 @@ export default function App() {
               logEvent(m.id, `▶ Match resumed: ${m.teamA.name} vs ${m.teamB.name}`);
             }
           }}
-          onLiveScore={(m, a, b) => {
+          onLiveScore={(m, a, b, scorerA, scorerB) => {
+            const wasA = m.liveA ?? 0, wasB = m.liveB ?? 0;
             patchMatch(m.id, { liveA: a, liveB: b });
-            if (a > m.liveA || b > m.liveB) logEvent(m.id, `⚽ Goal! ${m.teamA.name} ${a}-${b} ${m.teamB.name}`);
-            else logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`);
+            if (a > wasA) logEvent(m.id, `⚽ GOAL — ${m.teamA.name}! ${scorerA || "A player"} scores. ${a}-${b}`);
+            if (b > wasB) logEvent(m.id, `⚽ GOAL — ${m.teamB.name}! ${scorerB || "A player"} scores. ${a}-${b}`);
+            if (a <= wasA && b <= wasB) logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`);
           }}
           onSetStream={(m, url) => {
             if (url === null) {
@@ -1753,7 +1692,7 @@ export default function App() {
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, marginBottom: 8 }}>Play fair</div>
             <div style={{ fontSize: 13, color: T.muted, maxWidth: 260, lineHeight: 1.5 }}>
-              Captains publish official scores. After every final whistle, vote Man of the Match in ⭐ Highlights!
+              Captains publish official scores. Catch every match as it happens on 🔴 Live!
             </div>
           </div>
         </div>
@@ -1768,9 +1707,6 @@ export default function App() {
             </a>
           </div>
         )}
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 20px 16px", fontSize: 11, color: "#5a6a62", lineHeight: 1.5 }}>
-          🔞 You must be 18 years or older to participate in betting on Match Era. Betting carries financial risk — play responsibly.
-        </div>
 </footer>
       </>
       )}
@@ -1825,6 +1761,19 @@ export default function App() {
       )}
 
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
+
+      {liveDetailMatch && (
+        <LiveMatchView
+          m={liveDetailMatch}
+          minute={minute}
+          timeline={liveTimeline}
+          likeCount={likeCounts[liveDetailMatch.id] || 0}
+          alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
+          onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
+          onShare={() => { setLiveDetailFor(null); setPosterFor(liveDetailMatch.id); }}
+          onClose={() => setLiveDetailFor(null)}
+        />
+      )}
       {adminViewUser && me && me.role === "Admin" && (() => {
         const u = users.find((x) => x.id === adminViewUser);
         if (!u) return null;
@@ -2073,6 +2022,14 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
   const [postponing, setPostponing] = useState(false);
   const [la, setLa] = useState("");
   const [lb, setLb] = useState("");
+  const [scorerA, setScorerA] = useState("");
+  const [scorerB, setScorerB] = useState("");
+  useEffect(() => { setScorerA(""); setScorerB(""); }, [la, lb]);
+  /* Comma-separated roster → clean name list; empty roster falls back to Player 1, Player 2… */
+  const rosterNames = (str) => {
+    const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
+    return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
+  };
   const [reqOpen, setReqOpen] = useState(false);
   const [streamInput, setStreamInput] = useState("");
   const [streamHelpOpen, setStreamHelpOpen] = useState(false);
@@ -2339,9 +2296,28 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                         <input className="input" inputMode="numeric" maxLength={1} style={{ width: 64, textAlign: "center", fontSize: 24, fontWeight: 700 }}
                           value={lb} onChange={(e) => setLb(e.target.value.replace(/[^0-9]/g, "").slice(0, 1))} />
                       </div>
-                      <button className="btn btn-gold" style={{ marginLeft: 8, marginTop: 16 }} disabled={la === "" || lb === ""}
-                        onClick={() => la !== "" && lb !== "" && onLiveScore(m, +la, +lb)}>Update</button>
                     </div>
+                    {la !== "" && +la > (m.liveA ?? 0) && (
+                      <div>
+                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 4 }}>⚽ Who scored for {m.teamA.name}?</div>
+                        <select className="input" value={scorerA} onChange={(e) => setScorerA(e.target.value)}>
+                          <option value="">Select scorer…</option>
+                          {rosterNames(m.playersA).map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    {lb !== "" && +lb > (m.liveB ?? 0) && (
+                      <div>
+                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 4 }}>⚽ Who scored for {m.teamB.name}?</div>
+                        <select className="input" value={scorerB} onChange={(e) => setScorerB(e.target.value)}>
+                          <option value="">Select scorer…</option>
+                          {rosterNames(m.playersB).map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    <button className="btn btn-gold"
+                      disabled={la === "" || lb === "" || (+la > (m.liveA ?? 0) && !scorerA) || (+lb > (m.liveB ?? 0) && !scorerB)}
+                      onClick={() => { onLiveScore(m, +la, +lb, scorerA, scorerB); setScorerA(""); setScorerB(""); }}>Update</button>
                   </div>
                   <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a" }}
                     onClick={() => { if (window.confirm("Cancel this match? Fans will be told and it's removed after 7 days.")) onCancelMatch(m); }}>❌ Cancel match</button>
@@ -2427,7 +2403,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                     <div style={{ fontSize: 11, color: "#8FA396" }}>Choose for each name, then tap Upload match result again.</div>
                   </div>
                 )}
-                <div style={{ fontSize: 12, color: "#8FA396" }}>Your uploaded score is the official result. It publishes to the News Feed and ⭐ Highlights on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
+                <div style={{ fontSize: 12, color: "#8FA396" }}>Your uploaded score is the official result. It publishes to the News Feed on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
               </div>
             )}
 
@@ -2472,6 +2448,73 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
             {m.shootout && m.pensWinner ? ` — ${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}–${m.pensB} on penalties.` : m.result === "Draw" ? " — Draw." : ` — ${m.result === "A" ? m.teamA.name : m.teamB.name} win.`}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- LIVE MATCH VIEW — read-only pitch-style broadcast page for the 🔴 Live tab ---------- */
+function LiveMatchView({ m, minute, timeline, likeCount, alertsOn, onToggleAlerts, onShare, onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 80, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
+      <div className="card" style={{ maxWidth: 460, width: "100%", padding: 0, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128" }}>
+          <button className="btn btn-ghost" style={{ padding: "6px 10px" }} onClick={onClose}>‹</button>
+          <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+            <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".1em" }}>{(m.location || "").toUpperCase()}</div>
+          </div>
+          <span style={{ width: 30 }} />
+        </div>
+
+        <div className="scoreboard" style={{ borderRadius: 0, border: 0, borderBottom: "1px solid #243128", flexDirection: "column", gap: 10, padding: "18px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", width: "100%", fontSize: 11, letterSpacing: ".15em", color: "rgba(245,240,225,.75)" }}>
+            <span className="chip pulse" style={{ background: T.live, color: "#fff" }}>🔴 LIVE</span>
+            <span>📍 {m.location}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, width: "100%" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+              <MiniLogo team={m.teamA} badge={m.badgeA} size={48} />
+              <span style={{ fontSize: 12, fontWeight: 700, textAlign: "center" }}>{m.teamA.name}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <div className="display" style={{ fontSize: 46, color: T.chalk, whiteSpace: "nowrap" }}>{m.liveA ?? 0} <span style={{ color: T.floodlight }}>–</span> {m.liveB ?? 0}</div>
+              <span className="chip" style={{ background: "rgba(0,0,0,.3)", color: T.floodlight }}>{minute(m)}'</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+              <MiniLogo team={m.teamB} badge={m.badgeB} size={48} />
+              <span style={{ fontSize: 12, fontWeight: 700, textAlign: "center" }}>{m.teamB.name}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", borderBottom: "1px solid #243128" }}>
+          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px", borderRight: "1px solid #243128" }}>
+            <div className="display" style={{ fontSize: 18, color: T.floodlight }}>{(m.liveA ?? 0) + (m.liveB ?? 0)}</div>
+            <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Goals</div>
+          </div>
+          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px" }}>
+            <div className="display" style={{ fontSize: 18, color: T.floodlight }}>💛 {likeCount}</div>
+            <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Likes</div>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
+        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
+          {timeline.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
+          {timeline.map((e) => (
+            <div key={e.id} style={{ background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px", fontSize: 13, color: T.chalk }}>
+              {e.message}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, padding: "12px 16px 16px", borderTop: "1px solid #243128" }}>
+          <button className={`btn ${alertsOn ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1 }} onClick={onToggleAlerts}>
+            {alertsOn ? "✓ Alerts on" : "🔔 Get goal alerts"}
+          </button>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onShare}>↗ Share</button>
+        </div>
       </div>
     </div>
   );
@@ -2600,38 +2643,10 @@ function CreateMatch({ onSave, onCancel }) {
   const [f, setF] = useState({
     teamAName: "", teamAColor: "#E6B31E", teamBName: "", teamBColor: "#1DB954",
     badgeA: "⚽", badgeB: "🦁",
-    location: "", date: "", time: "", duration: 90,
+    playersA: "", playersB: "", location: "", date: "", time: "", duration: 90,
   });
-  const [rosterA, setRosterA] = useState(Array(11).fill(""));
-  const [rosterB, setRosterB] = useState(Array(11).fill(""));
-  const [gkA, setGkA] = useState(null); // index of Team A goalkeeper
-  const [gkB, setGkB] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const filledA = rosterA.filter((p) => p.trim()).length;
-  const filledB = rosterB.filter((p) => p.trim()).length;
-  const rosterOk = filledA === 11 && filledB === 11 &&
-    gkA !== null && rosterA[gkA].trim() && gkB !== null && rosterB[gkB].trim();
-  const valid = f.teamAName && f.teamBName && f.location && f.date && f.time && rosterOk;
-  /* joined as "Name, Name (GK), Name…" — the (GK) tag marks the keeper */
-  const joinRoster = (roster, gk) => roster.map((p, i) => (i === gk ? p.trim() + " (GK)" : p.trim())).join(", ");
-  const RosterBox = ({ label, roster, setRoster, gk, setGk, filled }) => (
-    <div style={{ background: "#121814", border: "1px solid #243128", borderRadius: 12, padding: 12, display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 700 }}>{label} — starting XI</span>
-        <span className="display" style={{ fontSize: 13, color: filled === 11 ? "#3FA35B" : "#E8442E" }}>{filled} / 11</span>
-      </div>
-      {roster.map((p, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span className="display" style={{ fontSize: 11, color: "#8FA396", width: 18, textAlign: "right" }}>{i + 1}</span>
-          <input className="input" style={{ padding: "9px 11px", fontSize: 13 }} placeholder="Player name" maxLength={30}
-            value={p} onChange={(e) => { const r = [...roster]; r[i] = sanitizeText(e.target.value, 30).replace(/,/g, ""); setRoster(r); }} />
-          <button type="button" title="Mark as goalkeeper" onClick={() => setGk(i)}
-            className={`btn ${gk === i ? "btn-gold" : "btn-ghost"}`} style={{ padding: "7px 10px", fontSize: 14 }}>🧤</button>
-        </div>
-      ))}
-      <div style={{ fontSize: 11, color: "#8FA396" }}>🧤 Goalkeeper: <b style={{ color: "#E6B31E" }}>{gk !== null && roster[gk].trim() ? roster[gk].trim() : "tap 🧤 next to your keeper"}</b></div>
-    </div>
-  );
+  const valid = f.teamAName && f.teamBName && f.location && f.date && f.time;
 
   return (
     <div className="card" style={{ display: "grid", gap: 12 }}>
@@ -2640,7 +2655,7 @@ function CreateMatch({ onSave, onCancel }) {
         <input className="input" placeholder="Team A name" maxLength={24} value={f.teamAName} onChange={(e) => setF({ ...f, teamAName: sanitizeText(e.target.value, 24) })} />
         <input type="color" value={f.teamAColor} onChange={set("teamAColor")} style={{ width: 52, height: 48, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} title="Team A colour" />
       </div>
-      {RosterBox({ label: f.teamAName || "Team A", roster: rosterA, setRoster: setRosterA, gk: gkA, setGk: setGkA, filled: filledA })}
+      <input className="input" placeholder="Team A players (comma separated)" maxLength={150} value={f.playersA} onChange={(e) => setF({ ...f, playersA: sanitizeText(e.target.value, 150) })} />
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
         {BADGES.map((b) => <button key={"a" + b} className={`btn ${f.badgeA === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 9px", fontSize: 15 }} onClick={() => setF({ ...f, badgeA: b })}>{b}</button>)}
@@ -2649,7 +2664,7 @@ function CreateMatch({ onSave, onCancel }) {
         <input className="input" placeholder="Team B name" maxLength={24} value={f.teamBName} onChange={(e) => setF({ ...f, teamBName: sanitizeText(e.target.value, 24) })} />
         <input type="color" value={f.teamBColor} onChange={set("teamBColor")} style={{ width: 52, height: 48, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} title="Team B colour" />
       </div>
-      {RosterBox({ label: f.teamBName || "Team B", roster: rosterB, setRoster: setRosterB, gk: gkB, setGk: setGkB, filled: filledB })}
+      <input className="input" placeholder="Team B players (comma separated)" maxLength={150} value={f.playersB} onChange={(e) => setF({ ...f, playersB: sanitizeText(e.target.value, 150) })} />
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
         {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 9px", fontSize: 15 }} onClick={() => setF({ ...f, badgeB: b })}>{b}</button>)}
@@ -2679,16 +2694,9 @@ function CreateMatch({ onSave, onCancel }) {
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
         <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
-          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: joinRoster(rosterA, gkA), playersB: joinRoster(rosterB, gkB), location: f.location, date: f.date, time: f.time, duration: f.duration })}>
+          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: f.playersA, playersB: f.playersB, location: f.location, date: f.date, time: f.time, duration: f.duration })}>
           Save as Scheduled
         </button>
-      </div>
-      {!rosterOk && (
-        <div style={{ fontSize: 12, color: "#E8442E", fontWeight: 700 }}>
-          ⚠️ Every match needs exactly 11 named players per team and one 🧤 goalkeeper each — {filledA}/11 and {filledB}/11 entered so far.
-        </div>
-      )}
-      <div style={{ display: "none" }}>
       </div>
     </div>
   );
