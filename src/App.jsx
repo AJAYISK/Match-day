@@ -1231,7 +1231,7 @@ export default function App() {
           <nav className="topnav">
             <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
             {me.role !== "Admin" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
-            <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>🔴 Live</button>
+            <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
@@ -2454,7 +2454,55 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
 }
 
 /* ---------- LIVE MATCH VIEW — read-only pitch-style broadcast page for the 🔴 Live tab ---------- */
+/* Playful, clearly-fictional color commentary — never a record of what actually happened.
+   Real events (goals, cards, KO/HT) only ever come from the captain's timeline. */
+const COMMENTARY_TEMPLATES = [
+  "{p1} picks it up in midfield and looks for an opening.",
+  "{p1} plays a lovely ball through to {p2}.",
+  "Corner ball — {p1} whips it in, but it's cleared.",
+  "{p1} tries a shot from distance… just over the bar!",
+  "Good tackle from {p1} to break up the attack.",
+  "{p1} shows real pace down the wing — ball goes out for a corner.",
+  "The referee blows for a foul — {p1} felt that one in midfield.",
+  "{p2} covers well to deny {p1} a clean sight of goal.",
+  "Neat one-two between {p1} and {p2}.",
+  "{p1} wins a free-kick in a promising position.",
+  "Chance! {p1}'s effort deflects just wide of the post.",
+  "{p1} holds the ball up well under pressure from {p2}.",
+  "Long ball forward — {p1} chases it down.",
+  "{p1} tries to thread it through, but {p2} reads it well.",
+  "The fans are on their feet as {p1} surges forward.",
+];
+const genCommentary = (m, rosterNames) => {
+  const t = COMMENTARY_TEMPLATES[Math.floor(Math.random() * COMMENTARY_TEMPLATES.length)];
+  const teamNames = Math.random() < 0.5 ? rosterNames(m.playersA) : rosterNames(m.playersB);
+  const p1 = teamNames[Math.floor(Math.random() * teamNames.length)];
+  let p2 = teamNames[Math.floor(Math.random() * teamNames.length)];
+  if (p2 === p1 && teamNames.length > 1) p2 = teamNames[(teamNames.indexOf(p1) + 1) % teamNames.length];
+  return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
+};
+
 function LiveMatchView({ m, minute, timeline, likeCount, alertsOn, onToggleAlerts, onShare, onClose }) {
+  const [commentary, setCommentary] = useState([]);
+  const rosterNames = (str) => {
+    const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
+    return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
+  };
+  useEffect(() => {
+    setCommentary([]);
+    if (m.status !== "Live" || m.onBreak) return;
+    const fire = () => setCommentary((c) => [{ id: "c" + Date.now(), text: genCommentary(m, rosterNames), ts: Date.now() }, ...c].slice(0, 12));
+    const t = setInterval(fire, 22000 + Math.random() * 14000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m.id, m.status, m.onBreak, m.playersA, m.playersB]);
+
+  /* Interleave real events (fact) with generated commentary (flavor), newest first */
+  const feed = [
+    ...timeline.map((e) => ({ id: e.id, text: e.message, ts: new Date(e.created_at).getTime(), kind: "event" })),
+    ...commentary.map((c) => ({ ...c, kind: "commentary" })),
+  ].sort((a, b) => b.ts - a.ts);
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 80, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
       <div className="card" style={{ maxWidth: 460, width: "100%", padding: 0, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
@@ -2499,12 +2547,19 @@ function LiveMatchView({ m, minute, timeline, likeCount, alertsOn, onToggleAlert
           </div>
         </div>
 
-        <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "14px 16px 6px" }}>
+          <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase" }}>Match timeline</div>
+          <div style={{ fontSize: 10, color: T.muted }}>🎙 commentary is just for fun — not official</div>
+        </div>
         <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
-          {timeline.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
-          {timeline.map((e) => (
+          {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
+          {feed.map((e) => e.kind === "commentary" ? (
+            <div key={e.id} style={{ background: "transparent", border: "1px dashed #2A3A2E", borderRadius: 12, padding: "10px 12px", fontSize: 12.5, color: T.muted, fontStyle: "italic" }}>
+              🎙 {e.text}
+            </div>
+          ) : (
             <div key={e.id} style={{ background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px", fontSize: 13, color: T.chalk }}>
-              {e.message}
+              {e.text}
             </div>
           ))}
         </div>
