@@ -882,9 +882,12 @@ export default function App() {
             <svg width="44" height="44" viewBox="0 0 32 32" style={{ flexShrink: 0 }}><circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="2" /><path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} /></svg>
             <div className="display auth-title" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Area Match</div>
           </div>
-          <div style={{ color: T.muted, marginTop: 8, marginBottom: 30, fontSize: 17 }}>
+          <div style={{ color: T.muted, marginTop: 8, marginBottom: 16, fontSize: 17 }}>
             The community football website. Host matches, track them live, publish results for the fans.
           </div>
+          <a href="/area-match.apk" download style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, fontSize: 13, color: T.floodlight, textDecoration: "none", fontWeight: 700 }}>
+            📲 Download the Android app →
+          </a>
           {authStep === "form" ? (
             <div className="card" style={{ display: "grid", gap: 12 }}>
               <div style={{ display: "flex", gap: 8 }}>
@@ -1509,6 +1512,16 @@ export default function App() {
             <div className="hero" style={{ marginBottom: 20 }}>
               <div className="display" style={{ fontSize: 34, lineHeight: 1.05 }}>About <span style={{ color: T.floodlight }}>Area Match</span></div>
             </div>
+            <a href="/area-match.apk" download style={{ textDecoration: "none" }}>
+              <div className="card" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20, background: "linear-gradient(135deg, #14532D, #0D3A1F)", border: "1px solid " + T.floodlight }}>
+                <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(230,179,30,.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📲</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: T.chalk }}>Get the Area Match Android app</div>
+                  <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>Full-screen, no browser bar — tap to download the APK</div>
+                </div>
+                <div className="btn btn-gold" style={{ flexShrink: 0, fontSize: 13, padding: "10px 16px" }}>Download</div>
+              </div>
+            </a>
             <div className="card" style={{ display: "grid", gap: 14, fontSize: 14, lineHeight: 1.7 }}>
               <div>
                 <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>⚽ Our Mission</div>
