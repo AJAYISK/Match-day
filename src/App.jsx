@@ -75,7 +75,7 @@ const matchToRow = (p) => {
 };
 
 /* ============================================================
-   MATCH ERA — Community Football Website
+   AREA MATCH — Community Football Website
    Flow: Captain creates → starts 90-min timer → at FULL TIME the
    site REQUESTS the final score from the captain → captain submits
    → result is published to the News Feed
@@ -292,13 +292,13 @@ export default function App() {
     if (!p) {
       await supabase.auth.signOut();
       setBooting(false);
-      notify("This account no longer exists. Contact the Match Era admin if you think this is a mistake.");
+      notify("This account no longer exists. Contact the Area Match admin if you think this is a mistake.");
       return;
     }
     if (p.blocked) {
       await supabase.auth.signOut();
       setBooting(false);
-      notify("🚫 This account has been blocked. Contact the Match Era admin.");
+      notify("🚫 This account has been blocked. Contact the Area Match admin.");
       return;
     }
     const meObj = { id: p.id, name: p.name, role: p.role, pin: p.pin, state: p.state || "", contactInfo: p.contact_info || "", joined: (p.created_at || "").slice(0, 10), contact: (await supabase.auth.getUser()).data.user?.email || "" };
@@ -393,7 +393,7 @@ export default function App() {
         const msg = payload.new.message;
         notify(`🔔 ${msg}`);
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          try { new Notification("Match Era", { body: msg, icon: "/icon-512.png" }); } catch (e) {}
+          try { new Notification("Area Match", { body: msg, icon: "/icon-512.png" }); } catch (e) {}
         }
       })
       .subscribe();
@@ -585,7 +585,7 @@ export default function App() {
     const email = form.contact.trim().toLowerCase();
     if (!isValidEmail(email)) return notify("Enter your email above first, then tap Forgot password");
     const { data: exists } = await supabase.rpc("email_exists", { p_email: email });
-    if (!exists) return notify("No Match Era account uses this email address. Check the spelling, or create a new account.");
+    if (!exists) return notify("No Area Match account uses this email address. Check the spelling, or create a new account.");
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
     if (error) return notify(error.message);
     setAuthStep("resetcode");
@@ -811,7 +811,7 @@ export default function App() {
     return (
       <div className="md-root" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
         <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 46px; height: 46px; border: 4px solid #243128; border-top-color: #E6B31E; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
-        <div className="display" style={{ fontSize: 34, color: T.floodlight }}>Match Era</div>
+        <div className="display" style={{ fontSize: 34, color: T.floodlight }}>Area Match</div>
         <div className="loader" />
         <BootSlowNotice />
       </div>
@@ -858,7 +858,7 @@ export default function App() {
       <div className="md-root" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px" }}>
         <style>{css}</style>
         <div style={{ maxWidth: 440, width: "100%" }}>
-          <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Match Era</div>
+          <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Area Match</div>
           <div style={{ color: T.muted, marginTop: 8, marginBottom: 30, fontSize: 17 }}>
             The community football website. Host matches, track them live, publish results for the fans.
           </div>
@@ -950,11 +950,18 @@ export default function App() {
     (!feedFollowedOnly || follows.includes(m.createdBy)));
   const inMyState = me && me.state ? publishedAll.filter((m) => captainState(m) === me.state && m.status !== "ResultPublished") : [];
   const capped = (key, list) => (seeMore[key] ? list : list.slice(0, 2));
-  const SeeMoreBtn = ({ k, list }) => (list.length > 2 && !seeMore[k] ? (
-    <button className="btn btn-ghost" style={{ margin: "4px 0 20px", width: "100%" }} onClick={() => setSeeMore((x) => ({ ...x, [k]: true }))}>
-      See more ({list.length - 2} more)
-    </button>
-  ) : null);
+  const SeeMoreBtn = ({ k, list }) => {
+    if (list.length <= 2) return null;
+    return seeMore[k] ? (
+      <button className="btn btn-ghost" style={{ margin: "4px 0 20px", width: "100%" }} onClick={() => setSeeMore((x) => ({ ...x, [k]: false }))}>
+        See less
+      </button>
+    ) : (
+      <button className="btn btn-ghost" style={{ margin: "4px 0 20px", width: "100%" }} onClick={() => setSeeMore((x) => ({ ...x, [k]: true }))}>
+        See more ({list.length - 2} more)
+      </button>
+    );
+  };
   const upcoming = published.filter((m) => m.status === "Scheduled");
   const liveNow = published.filter((m) => m.status === "Live" || m.status === "AwaitingScore")
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
@@ -978,7 +985,7 @@ export default function App() {
             <div className="adm-brand">
               <div style={{ fontSize: 26 }}>⚽</div>
               <div className="adm-label">
-                <div className="display" style={{ fontSize: 16, color: T.floodlight, lineHeight: 1 }}>MATCH ERA</div>
+                <div className="display" style={{ fontSize: 16, color: T.floodlight, lineHeight: 1 }}>AREA MATCH</div>
                 <div style={{ fontSize: 9, color: T.muted, letterSpacing: ".22em", fontWeight: 700 }}>ADMIN CONTROL</div>
               </div>
             </div>
@@ -1036,7 +1043,7 @@ export default function App() {
                 <>
                   {adminPosts.map((p) => (
                     <div key={p.id} className="card" style={{ marginBottom: 10, borderColor: "#E6B31E" }}>
-                      <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Match Era</span>
+                      <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Area Match</span>
                       <div style={{ fontSize: 14, marginTop: 8 }}>{p.message}</div>
                     </div>
                   ))}
@@ -1267,7 +1274,7 @@ export default function App() {
       <header style={{ borderBottom: "1px solid #243128", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
-            <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Match Era</div>
+            <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
             <div className={`user-pill ${me.role !== "Admin" ? "user-pill-clickable" : ""}`} title="View profile" onClick={() => me.role !== "Admin" && setPage("profile")}>
               <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
@@ -1354,7 +1361,7 @@ export default function App() {
             {adminPosts.length > 0 && adminPosts.slice(0, 3).map((p) => (
               <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#E6B31E", borderWidth: 1.5 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                  <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Match Era</span>
+                  <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Area Match</span>
                   <span style={{ fontSize: 11, color: T.muted }}>{(p.created_at || "").slice(0, 10)}</span>
                 </div>
                 <div style={{ fontSize: 14, lineHeight: 1.5 }}>{p.message}</div>
@@ -1427,8 +1434,9 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {mine.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
+              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
             </div>
+            <SeeMoreBtn k="mymatches" list={mine} />
           </>
         )}
 
@@ -1462,16 +1470,16 @@ export default function App() {
         {page === "about" && (
           <div style={{ maxWidth: 640 }}>
             <div className="hero" style={{ marginBottom: 20 }}>
-              <div className="display" style={{ fontSize: 34, lineHeight: 1.05 }}>About <span style={{ color: T.floodlight }}>Match Era</span></div>
+              <div className="display" style={{ fontSize: 34, lineHeight: 1.05 }}>About <span style={{ color: T.floodlight }}>Area Match</span></div>
             </div>
             <div className="card" style={{ display: "grid", gap: 14, fontSize: 14, lineHeight: 1.7 }}>
               <div>
                 <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>⚽ Our Mission</div>
-                Match Era exists to bring local community football to life. Every weekend, on pitches across Nigeria, brilliant football is played — and forgotten by Monday. We believe street and community matches deserve the same treatment as the big leagues: fixtures announced, kick-offs tracked live, results published, and heroes remembered.
+                Area Match exists to bring local community football to life. Every weekend, on pitches across Nigeria, brilliant football is played — and forgotten by Monday. We believe street and community matches deserve the same treatment as the big leagues: fixtures announced, kick-offs tracked live, results published, and heroes remembered.
               </div>
               <div>
                 <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>🧢 For Captains</div>
-                Captains are the heartbeat of Match Era. Host your matches, publish your line-ups, run the official match clock, update live scores as the goals fly in, and upload the full-time result — complete with shareable artwork for your team's socials.
+                Captains are the heartbeat of Area Match. Host your matches, publish your line-ups, run the official match clock, update live scores as the goals fly in, and upload the full-time result — complete with shareable artwork for your team's socials.
               </div>
               <div>
                 <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>📣 For Fans</div>
@@ -1479,10 +1487,10 @@ export default function App() {
               </div>
               <div>
                 <div style={{ fontWeight: 700, color: T.floodlight, marginBottom: 4 }}>🇳🇬 Built for the Community</div>
-                From Lagos to Kano, Enugu to Ibadan — if there's a pitch and two teams, there's a story worth telling. Match Era is built to tell it.
+                From Lagos to Kano, Enugu to Ibadan — if there's a pitch and two teams, there's a story worth telling. Area Match is built to tell it.
               </div>
               <div style={{ borderTop: "1px solid #243128", paddingTop: 12, fontSize: 12, color: T.muted, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                <span>Match Era — The community football website</span>
+                <span>Area Match — The community football website</span>
                 <span style={{ color: T.floodlight, fontWeight: 700 }}>App Version 1.0</span>
               </div>
             </div>
@@ -1547,7 +1555,7 @@ export default function App() {
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 <div className="feedgrid">
-                  {users.filter((u) => u.role === "Captain" && (capStateFilter === "All" || u.state === capStateFilter)).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0)).map((c) => {
+                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (capStateFilter === "All" || u.state === capStateFilter)).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
                     const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                     const today = new Date().toISOString().slice(0, 10);
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
@@ -1582,6 +1590,7 @@ export default function App() {
                     );
                   })}
                 </div>
+                <SeeMoreBtn k="captainsdir" list={users.filter((u) => u.role === "Captain" && (capStateFilter === "All" || u.state === capStateFilter))} />
               </>
             ) : (
               (() => {
@@ -1613,12 +1622,14 @@ export default function App() {
                     {theirs.length === 0 && <div className="card" style={{ color: T.muted }}>This captain hasn't published any matches yet.</div>}
                     {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <SectionTitle color={T.floodlight}>Current & Upcoming</SectionTitle>}
                     <div className="feedgrid" style={{ marginBottom: 20 }}>
-                      {theirs.filter((x) => x.status !== "ResultPublished").map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                      {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                     </div>
+                    <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
                     {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <SectionTitle color={T.chalk}>Past Games Record</SectionTitle>}
                     <div className="feedgrid">
-                      {theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1)).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                      {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                     </div>
+                    <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
                   </>
                 );
               })()
@@ -1638,10 +1649,11 @@ export default function App() {
               <div className="card" style={{ color: T.muted }}>Nothing live right now — check back on match day. ⚽</div>
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
-              {liveForUser.map((m) => (
+              {capped("live", liveForUser).map((m) => (
                 <MatchCard key={"lv" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setLiveDetailFor(m.id)} onPoster={() => setPosterFor(m.id)} />
               ))}
             </div>
+            <SeeMoreBtn k="live" list={liveForUser} />
           </div>
         )}
 
@@ -1732,7 +1744,7 @@ export default function App() {
       <footer style={{ borderTop: "1px solid #243128", marginTop: 40, background: "#0d1014" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 20px", display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ maxWidth: 300 }}>
-            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Match Era</div>
+            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Area Match</div>
             <div style={{ fontSize: 13, color: T.muted, marginTop: 6, lineHeight: 1.5 }}>
               Community football. Host your matches, track them live, and publish results for the fans.
             </div>
@@ -1745,7 +1757,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ borderTop: "1px solid #1a2019", padding: "14px 20px", textAlign: "center", fontSize: 12, color: T.muted }}>
-          © {new Date().getFullYear()} Match Era · Built for the community
+          © {new Date().getFullYear()} Area Match · Built for the community
         </div>
               {supportLink && (
           <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 20px 10px", fontSize: 12 }}>
@@ -1766,7 +1778,7 @@ export default function App() {
             <div style={{ fontSize: 40 }}>🔔</div>
             <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Turn on notifications</div>
             <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
-              Captain, enable notifications so Match Era can remind you — <b style={{ color: T.chalk }}>it's in case you forget to update your match scores</b> after full time. Fans are waiting on your results!
+              Captain, enable notifications so Area Match can remind you — <b style={{ color: T.chalk }}>it's in case you forget to update your match scores</b> after full time. Fans are waiting on your results!
             </div>
             <button className="btn btn-gold" onClick={async () => {
               try { await Notification.requestPermission(); } catch (e) {}
@@ -1781,9 +1793,9 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setPwaPromptOpen(false)}>
           <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 400, display: "grid", gap: 12, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 40 }}>📲</div>
-            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Install Match Era</div>
+            <div className="display" style={{ fontSize: 20, color: T.floodlight }}>Install Area Match</div>
             <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, textAlign: "left" }}>
-              Get the full app experience — Match Era on your home screen, full-screen, one tap away:
+              Get the full app experience — Area Match on your home screen, full-screen, one tap away:
               <br /><br />
               <b style={{ color: T.chalk }}>iPhone (Safari):</b> tap the Share button (□↑) → <b style={{ color: T.chalk }}>Add to Home Screen</b>
               <br />
@@ -1923,7 +1935,7 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(13,16,20,.88)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
           <div style={{ width: 46, height: 46, border: "4px solid #243128", borderTopColor: "#E6B31E", borderRadius: "50%", animation: "spin .9s linear infinite" }} />
           <div className="display" style={{ fontSize: 18, color: T.floodlight }}>No connection</div>
-          <div style={{ fontSize: 13, color: T.muted }}>Reconnecting to Match Era…</div>
+          <div style={{ fontSize: 13, color: T.muted }}>Reconnecting to Area Match…</div>
         </div>
       )}
       {toast && <Toast msg={toast} />}
@@ -2486,11 +2498,11 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                    m.shootout && m.pensWinner ? `(${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}-${m.pensB} on pens)` : "",
                    m.scorersA ? `⚽ ${m.teamA.name}: ${m.scorersA}` : "",
                    m.scorersB ? `⚽ ${m.teamB.name}: ${m.scorersB}` : "",
-                   ``, `📍 ${m.location}`, `Hosted on Match Era ⚽`]
+                   ``, `📍 ${m.location}`, `Hosted on Area Match ⚽`]
                 : [`⚽ *MATCH DAY!* ${m.teamA.name} vs ${m.teamB.name}`,
                    `📅 ${m.date} at ${m.time} (${m.duration || 90} mins)`, `📍 ${m.location}`, ``,
                    `*${m.teamA.name} squad:*`, m.playersA || "TBA", ``,
-                   `*${m.teamB.name} squad:*`, m.playersB || "TBA", ``, `Come support! Hosted on Match Era ⚽`];
+                   `*${m.teamB.name} squad:*`, m.playersB || "TBA", ``, `Come support! Hosted on Area Match ⚽`];
               window.open(`https://wa.me/?text=${encodeURIComponent(lines.filter(Boolean).join("\n"))}`, "_blank");
             }}>💬 Share squad on WhatsApp</button>
                 </>
@@ -2934,7 +2946,7 @@ function PosterModal({ m, onClose, notify }) {
           <line x1="0" y1="250" x2="400" y2="250" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
           <rect x="130" y="0" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
           <rect x="130" y="445" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
-          <text x="200" y="60" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">MATCH ERA</text>
+          <text x="200" y="60" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">AREA MATCH</text>
           <text x="200" y="82" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
           <PosterBadge cx={110} cy={185} team={m.teamA} badge={m.badgeA} />
           <PosterBadge cx={290} cy={185} team={m.teamB} badge={m.badgeB} />
@@ -2987,7 +2999,7 @@ function PosterModal({ m, onClose, notify }) {
               })()}
             </>
           )}
-          <text x="200" y="470" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON MATCH ERA" : "HOSTED ON MATCH ERA · COME SUPPORT YOUR TEAM"}</text>
+          <text x="200" y="470" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON AREA MATCH" : "HOSTED ON AREA MATCH · COME SUPPORT YOUR TEAM"}</text>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
@@ -2995,7 +3007,7 @@ function PosterModal({ m, onClose, notify }) {
             const file = new File([png], "match-era-poster.png", { type: "image/png" });
             bumpShares();
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              navigator.share({ files: [file], title: "Match Era", text: `${m.teamA.name} vs ${m.teamB.name} — hosted on Match Era ⚽` }).catch(() => {});
+              navigator.share({ files: [file], title: "Area Match", text: `${m.teamA.name} vs ${m.teamB.name} — hosted on Area Match ⚽` }).catch(() => {});
             } else {
               notify("Sharing isn't supported on this browser — use Download instead");
             }
