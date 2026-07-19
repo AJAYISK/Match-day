@@ -1287,7 +1287,7 @@ export default function App() {
           </div>
           <nav className="topnav">
             <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
-            {me.role !== "Admin" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
+            {me.role === "Fan" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
@@ -2940,6 +2940,7 @@ function CreateMatch({ onSave, onCancel }) {
         )}
         {wantsStream === "no" && <div style={{ fontSize: 11, color: "#8FA396" }}>No stream for now — you can still add one anytime while the match is live.</div>}
       </div>
+      {streamHelpOpen && <StreamHelpModal onClose={() => setStreamHelpOpen(false)} />}
 
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
