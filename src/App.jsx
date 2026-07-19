@@ -837,7 +837,7 @@ export default function App() {
       <div style={{
         position: "fixed", inset: 0, display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", gap: 14,
-        background: `linear-gradient(160deg, ${T.turf} 0%, ${T.turf} 42%, ${T.turfDeep} 42%, ${T.turfDeep} 100%)`,
+        background: T.night,
         overflow: "hidden",
       }}>
         <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 32px; height: 32px; border: 3px solid rgba(245,240,225,.2); border-top-color: ${T.floodlight}; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
@@ -1333,7 +1333,12 @@ export default function App() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>{me.name}{me.role !== "Admin" && <span style={{ color: T.muted, fontWeight: 400 }}> ›</span>}</div>
               </div>
-              <button className="user-logout" title="Log out" onClick={(e) => { e.stopPropagation(); logout(); }}>⏻</button>
+              <button className="user-logout" title="Log out" onClick={(e) => { e.stopPropagation(); logout(); }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                  <line x1="12" y1="2" x2="12" y2="12" />
+                </svg>
+              </button>
             </div>
           </div>
           <nav className="topnav">
