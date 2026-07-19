@@ -246,6 +246,11 @@ export default function App() {
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
   const [booting, setBooting] = useState(true);
+  const [splashHeld, setSplashHeld] = useState(true); // keeps the full-bleed splash up for a minimum time, even on a fast connection
+  useEffect(() => {
+    const t = setTimeout(() => setSplashHeld(false), 1700);
+    return () => clearTimeout(t);
+  }, []);
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const loginClicked = useRef(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -827,12 +832,22 @@ export default function App() {
   `;
 
   /* ============================================================ BOOT LOADER */
-  if (booting) {
+  if (booting || splashHeld) {
     return (
-      <div className="md-root" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
-        <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 46px; height: 46px; border: 4px solid #243128; border-top-color: #E6B31E; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
-        <div className="display" style={{ fontSize: 34, color: T.floodlight }}>Area Match</div>
-        <div className="loader" />
+      <div style={{
+        position: "fixed", inset: 0, display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center", gap: 14,
+        background: `linear-gradient(160deg, ${T.turf} 0%, ${T.turf} 42%, ${T.turfDeep} 42%, ${T.turfDeep} 100%)`,
+        overflow: "hidden",
+      }}>
+        <style>{css}{`@keyframes spin { to { transform: rotate(360deg) } } .loader { width: 32px; height: 32px; border: 3px solid rgba(245,240,225,.2); border-top-color: ${T.floodlight}; border-radius: 50%; animation: spin .9s linear infinite; }`}</style>
+        <svg width="96" height="96" viewBox="0 0 32 32" style={{ marginTop: -70 }}>
+          <circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="1.8" />
+          <path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} />
+        </svg>
+        <div className="display" style={{ fontSize: 34, color: T.chalk, letterSpacing: ".5px" }}>AREA MATCH</div>
+        <div style={{ fontSize: 11, color: T.floodlight, letterSpacing: ".2em", marginTop: -8 }}>COMMUNITY FOOTBALL</div>
+        <div style={{ marginTop: 18 }}><div className="loader" /></div>
         <BootSlowNotice />
       </div>
     );
@@ -862,7 +877,7 @@ export default function App() {
               const { data: { session } } = await supabase.auth.getSession();
               if (session) loadMe(session.user.id); else setScreen("auth");
             }}>Save new password</button>
-              <a href="https://wa.me/12704939553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
+              <a href="https://wa.me/12704939553?text=Hi%2C%20I%20need%20help%20with%20my%20Area%20Match%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
                 Can't access your email? <b style={{ color: "#25D366" }}>💬 Contact support on WhatsApp</b>
               </a>
           </div>
@@ -937,7 +952,7 @@ export default function App() {
                 {authBusy && <span style={{ width: 16, height: 16, border: "2.5px solid rgba(16,19,26,.3)", borderTopColor: "#0C120E", borderRadius: "50%", animation: "spin .8s linear infinite", display: "inline-block" }} />}
                 {authBusy ? (authMode === "signup" ? "Creating account…" : "Logging in…") : (authMode === "signup" ? "Create account" : "Log in")}
               </button>
-              <a href="https://wa.me/12704939553?text=Hi%2C%20I%20need%20help%20with%20my%20Match%20Era%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
+              <a href="https://wa.me/12704939553?text=Hi%2C%20I%20need%20help%20with%20my%20Area%20Match%20account" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.muted, textAlign: "center", textDecoration: "none" }}>
                 Can't access your email? <b style={{ color: "#25D366" }}>💬 Contact support on WhatsApp</b>
               </a>
               <div style={{ fontSize: 12, color: T.muted }}>
