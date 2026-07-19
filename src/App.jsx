@@ -734,7 +734,7 @@ export default function App() {
     .scoreboard { background: radial-gradient(circle at 50% -20%, rgba(245,240,225,.10), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.05) 46px 48px), ${T.turfDeep}; border: 2px solid ${T.turf}; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .pulse { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
-    .topnav { display: flex; gap: 4px; }
+    .topnav { display: flex; gap: 4px; flex-wrap: wrap; }
     .topnav button { background: none; border: 0; color: ${T.muted}; font-family: 'Space Grotesk'; font-weight: 700; font-size: 14px; padding: 10px 16px; cursor: pointer; border-radius: 8px; }
     .topnav button.on { color: ${T.night}; background: ${T.floodlight}; }
     .topnav button:hover:not(.on) { color: ${T.chalk}; }
@@ -804,6 +804,26 @@ export default function App() {
       .hero-title { font-size: 23px }
       .chip { font-size: 10px; padding: 3px 8px }
     }
+    /* ---------- Fills the gap between the 640px and 400px breakpoints above ---------- */
+    @media (max-width: 480px) {
+      .topnav { gap: 4px; row-gap: 6px }
+      .topnav button { padding: 7px 9px; font-size: 11.5px }
+      header > div { padding: 10px 14px !important }
+      .brand-title { font-size: 21px !important }
+      .auth-title { font-size: 40px !important }
+      .adm-brand .display { font-size: 14px !important }
+    }
+    /* ---------- Titles that were inline (so media queries couldn't reach them) now use these classes ---------- */
+    .brand-title { white-space: nowrap; }
+    .auth-title { white-space: nowrap; }
+    /* ---------- Long unbroken text (emails, long names) never forces horizontal scroll ---------- */
+    body, .card, .card * { overflow-wrap: break-word; }
+    /* ---------- Wider general safety net ---------- */
+    @media (max-width: 340px) {
+      .brand-title { font-size: 18px !important }
+      .btn { padding: 10px 12px; font-size: 13px }
+      .input { padding: 11px 12px; font-size: 13px }
+    }
   `;
 
   /* ============================================================ BOOT LOADER */
@@ -860,7 +880,7 @@ export default function App() {
         <div style={{ maxWidth: 440, width: "100%" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
             <svg width="44" height="44" viewBox="0 0 32 32" style={{ flexShrink: 0 }}><circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="2" /><path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} /></svg>
-            <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Area Match</div>
+            <div className="display auth-title" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Area Match</div>
           </div>
           <div style={{ color: T.muted, marginTop: 8, marginBottom: 30, fontSize: 17 }}>
             The community football website. Host matches, track them live, publish results for the fans.
@@ -1064,7 +1084,7 @@ export default function App() {
 
               {adminSection === "active" && (
                 <div style={{ display: "grid", gap: 8 }}>
-                  {[...users].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || "")).map((u) => {
+                  {capped("admin-active", [...users].sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || ""))).map((u) => {
                     const mins = u.lastSeen ? Math.floor((now - new Date(u.lastSeen).getTime()) / 60000) : null;
                     const online = mins !== null && mins < 3;
                     return (
@@ -1081,6 +1101,7 @@ export default function App() {
                       </button>
                     );
                   })}
+                  <SeeMoreBtn k="admin-active" list={users} />
                 </div>
               )}
 
@@ -1096,13 +1117,14 @@ export default function App() {
                       refreshAll();
                       notify("📢 Posted to the News Feed");
                     }}>Post announcement</button>
-                  {adminPosts.map((p) => (
+                  {capped("admin-posts", adminPosts).map((p) => (
                     <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontSize: 13, background: "#131a15", borderRadius: 10, padding: "8px 12px" }}>
                       <span style={{ flex: 1 }}>{p.message}</span>
                       <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, color: T.live, borderColor: "#3a1f1a" }}
                         onClick={async () => { await supabase.from("posts").delete().eq("id", p.id); refreshAll(); notify("Announcement deleted"); }}>Delete</button>
                     </div>
                   ))}
+                  <SeeMoreBtn k="admin-posts" list={adminPosts} />
                 </div>
               )}
 
@@ -1167,7 +1189,7 @@ export default function App() {
               {adminSection === "feedback" && (
                 <>
                   {feedbacks.length === 0 && <div className="card" style={{ color: T.muted }}>No feedback yet. Requests from the "coming soon" prompts land here.</div>}
-                  {feedbacks.map((f) => (
+                  {capped("admin-feedback", feedbacks).map((f) => (
                     <div key={f.id} className="card" style={{ marginBottom: 8, fontSize: 13 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                         <span className="chip" style={{ background: "#243128", color: T.floodlight }}>{f.feature}</span>
@@ -1176,6 +1198,7 @@ export default function App() {
                       <div style={{ color: T.chalk }}>{f.msg}</div>
                     </div>
                   ))}
+                  <SeeMoreBtn k="admin-feedback" list={feedbacks} />
                 </>
               )}
 
@@ -1195,7 +1218,7 @@ export default function App() {
                       <div key={role} style={{ marginBottom: 16 }}>
                         <SectionTitle color={role === "Admin" ? T.floodlight : T.chalk}>{role}s ({group.length})</SectionTitle>
                         <div style={{ display: "grid", gap: 6 }}>
-                          {group.map((u) => (
+                          {capped("admin-users-" + role, group).map((u) => (
                             <div key={u.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14, padding: 12, gap: 8 }}>
                               <button style={{ background: "none", border: 0, color: T.chalk, cursor: "pointer", textAlign: "left", minWidth: 0, padding: 0, fontFamily: "inherit", fontSize: 14 }} onClick={() => setAdminViewUser(u.id)}>
                                 <span style={{ fontWeight: 700 }}>{u.name}</span>
@@ -1212,6 +1235,7 @@ export default function App() {
                             </div>
                           ))}
                         </div>
+                        <SeeMoreBtn k={"admin-users-" + role} list={group} />
                       </div>
                     );
                   })}
@@ -1222,16 +1246,21 @@ export default function App() {
                   {(() => {
                     const fresh = users.filter((u) => u.joined && (Date.now() - new Date(u.joined).getTime()) <= 3 * 86400000);
                     if (fresh.length === 0) return <div className="card" style={{ color: T.muted }}>No new sign-ups in the last 3 days.</div>;
-                    return fresh.map((u) => (
-                      <button key={u.id} className="card adm-row" onClick={() => setAdminViewUser(u.id)}>
-                        <div style={{ width: 38, height: 38, borderRadius: 12, background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", color: T.floodlight, flexShrink: 0 }}>{u.name.slice(0, 1).toUpperCase()}</div>
-                        <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                          <div style={{ fontWeight: 700, fontSize: 14, color: T.chalk }}>{u.name} <span className="chip" style={{ background: T.floodlight, color: T.night, marginLeft: 4 }}>NEW</span></div>
-                          <div style={{ fontSize: 12, color: T.muted }}>{u.role} · {u.state || "—"} · {u.email || ""} · joined {u.joined}</div>
-                        </div>
-                        <span style={{ color: T.muted }}>›</span>
-                      </button>
-                    ));
+                    return (
+                      <>
+                        {capped("admin-newusers", fresh).map((u) => (
+                          <button key={u.id} className="card adm-row" onClick={() => setAdminViewUser(u.id)}>
+                            <div style={{ width: 38, height: 38, borderRadius: 12, background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", color: T.floodlight, flexShrink: 0 }}>{u.name.slice(0, 1).toUpperCase()}</div>
+                            <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                              <div style={{ fontWeight: 700, fontSize: 14, color: T.chalk }}>{u.name} <span className="chip" style={{ background: T.floodlight, color: T.night, marginLeft: 4 }}>NEW</span></div>
+                              <div style={{ fontSize: 12, color: T.muted }}>{u.role} · {u.state || "—"} · {u.email || ""} · joined {u.joined}</div>
+                            </div>
+                            <span style={{ color: T.muted }}>›</span>
+                          </button>
+                        ))}
+                        <SeeMoreBtn k="admin-newusers" list={fresh} />
+                      </>
+                    );
                   })()}
                 </div>
               )}
@@ -1239,7 +1268,7 @@ export default function App() {
               {adminSection === "blocked" && (
                 <div style={{ display: "grid", gap: 8 }}>
                   {users.filter((u) => u.blocked).length === 0 && <div className="card" style={{ color: T.muted }}>No blocked users. 🎉</div>}
-                  {users.filter((u) => u.blocked).map((u) => (
+                  {capped("admin-blocked", users.filter((u) => u.blocked)).map((u) => (
                     <div key={u.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 12 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 14 }}>{u.name} <span className="chip" style={{ background: "#3a1f1a", color: T.live, marginLeft: 4 }}>Blocked</span></div>
@@ -1254,6 +1283,7 @@ export default function App() {
                         }}>✓ Unblock</button>
                     </div>
                   ))}
+                  <SeeMoreBtn k="admin-blocked" list={users.filter((u) => u.blocked)} />
                 </div>
               )}
 
@@ -1279,10 +1309,7 @@ export default function App() {
       <header style={{ borderBottom: "1px solid #243128", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <svg width="24" height="24" viewBox="0 0 32 32" style={{ flexShrink: 0 }}><circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="1.8" /><path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} /></svg>
-              <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
-            </div>
+            <div className="display brand-title" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
             <div className={`user-pill ${me.role !== "Admin" ? "user-pill-clickable" : ""}`} title="View profile" onClick={() => me.role !== "Admin" && setPage("profile")}>
               <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
@@ -1670,7 +1697,7 @@ export default function App() {
         {/* ---------- FEEDBACK ---------- */}
         {page === "feedbackpage" && me.role !== "Admin" && (
           <FeedbackPage
-            myFeedback={feedbacks.filter((f) => f.user_id === me.id)}
+            myFeedback={feedbacks.filter((f) => f.userId === me.id)}
             onSend={async (msg) => {
               const { error } = await supabase.from("feedback").insert({ user_id: me.id, feature: "General", message: msg });
               if (error) return notify(error.message);
@@ -2743,7 +2770,7 @@ function FeedbackPage({ myFeedback, onSend }) {
           <div style={{ fontSize: 11, letterSpacing: ".15em", color: "#8FA396", textTransform: "uppercase", marginBottom: 10 }}>What you've sent before</div>
           <div style={{ display: "grid", gap: 8 }}>
             {myFeedback.map((f) => (
-              <div key={f.id} className="card" style={{ fontSize: 13, color: "#F5F0E1" }}>{f.message}</div>
+              <div key={f.id} className="card" style={{ fontSize: 13, color: "#F5F0E1" }}>{f.msg}</div>
             ))}
           </div>
         </div>
