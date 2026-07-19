@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.vercel.match_daynow.twa",
+        "sha256_cert_fingerprints": ["25:54:B5:8F:A7:61:B9:EB:FD:A4:96:F3:6C:D7:11:67:20:81:35:AF:B6:48:0C:8C:55:E6:97:90:B8:D7:62:C0"]
+      }
+    }]
