@@ -858,7 +858,10 @@ export default function App() {
       <div className="md-root" style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px" }}>
         <style>{css}</style>
         <div style={{ maxWidth: 440, width: "100%" }}>
-          <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Area Match</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
+            <svg width="44" height="44" viewBox="0 0 32 32" style={{ flexShrink: 0 }}><circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="2" /><path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} /></svg>
+            <div className="display" style={{ fontSize: 52, color: T.floodlight, lineHeight: 1 }}>Area Match</div>
+          </div>
           <div style={{ color: T.muted, marginTop: 8, marginBottom: 30, fontSize: 17 }}>
             The community football website. Host matches, track them live, publish results for the fans.
           </div>
@@ -983,7 +986,7 @@ export default function App() {
           {/* SIDEBAR — the only navigation an admin needs */}
           <aside className="adm-side">
             <div className="adm-brand">
-              <div style={{ fontSize: 26 }}>⚽</div>
+              <svg width="26" height="26" viewBox="0 0 32 32" style={{ flexShrink: 0 }}><circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="1.8" /><path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} /></svg>
               <div className="adm-label">
                 <div className="display" style={{ fontSize: 16, color: T.floodlight, lineHeight: 1 }}>AREA MATCH</div>
                 <div style={{ fontSize: 9, color: T.muted, letterSpacing: ".22em", fontWeight: 700 }}>ADMIN CONTROL</div>
@@ -1276,7 +1279,10 @@ export default function App() {
       <header style={{ borderBottom: "1px solid #243128", position: "sticky", top: 0, background: T.night, zIndex: 40 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
-            <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <svg width="24" height="24" viewBox="0 0 32 32" style={{ flexShrink: 0 }}><circle cx="16" cy="16" r="10" fill="none" stroke={T.floodlight} strokeWidth="1.8" /><path d="M16 9l5 3.6-2 6H13l-2-6z" fill={T.floodlight} /></svg>
+              <div className="display" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
+            </div>
             <div className={`user-pill ${me.role !== "Admin" ? "user-pill-clickable" : ""}`} title="View profile" onClick={() => me.role !== "Admin" && setPage("profile")}>
               <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
