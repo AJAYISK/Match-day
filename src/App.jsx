@@ -718,7 +718,7 @@ export default function App() {
   const css = `
     ${FONT}
     * { box-sizing: border-box; margin: 0; }
-    .md-root { min-height: 100vh; background: ${T.night}; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
+    .md-root { min-height: 100vh; min-height: 100dvh; background: ${T.night}; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
     input, textarea, select { -webkit-user-select: text; user-select: text; }
     .display { font-family: 'Anton', sans-serif; letter-spacing: .02em; text-transform: uppercase; }
     .btn { border: 0; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-weight: 700; border-radius: 10px; padding: 12px 18px; font-size: 15px; transition: transform .08s; }
@@ -928,7 +928,7 @@ export default function App() {
               <div style={{ fontSize: 11, color: T.muted }}>🔒 Codes are single-use and entry locks after {MAX_OTP_ATTEMPTS} wrong attempts.</div>
               <button className="btn btn-gold" onClick={verifyResetCode}>Verify code →</button>
               <button className="btn btn-ghost" onClick={() => forgotPassword()}>Resend code</button>
-              <button className="btn btn-ghost" onClick={() => setAuthStep("form")}>Back</button>
+              <button className="btn btn-ghost" onClick={() => { if (document.activeElement) document.activeElement.blur(); setAuthStep("form"); }}>Back</button>
             </div>
           )}
         </div>
@@ -1106,7 +1106,7 @@ export default function App() {
               {adminSection === "scores" && (
                 <>
                   {matches.filter((m) => m.status === "AwaitingScore").length === 0 && <div className="card" style={{ color: T.muted }}>No matches waiting on a captain's score.</div>}
-                  {matches.filter((m) => m.status === "AwaitingScore").map((m) => {
+                  {capped("admin-scores", matches.filter((m) => m.status === "AwaitingScore")).map((m) => {
                     const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
                     return (
                       <div key={m.id} className="card" style={{ marginBottom: 10, fontSize: 14, display: "grid", gap: 8 }}>
@@ -1127,13 +1127,14 @@ export default function App() {
                       </div>
                     );
                   })}
+                  <SeeMoreBtn k="admin-scores" list={matches.filter((m) => m.status === "AwaitingScore")} />
                 </>
               )}
 
               {adminSection === "requests" && (
                 <>
                   {requests.filter((r) => r.status === "pending").length === 0 && <div className="card" style={{ color: T.muted }}>No pending requests.</div>}
-                  {requests.filter((r) => r.status === "pending").map((r) => {
+                  {capped("admin-requests", requests.filter((r) => r.status === "pending")).map((r) => {
                     const m = matches.find((x) => x.id === r.match_id);
                     const cap = users.find((u) => u.id === r.captain_id);
                     if (!m) return null;
@@ -1156,6 +1157,7 @@ export default function App() {
                       </div>
                     );
                   })}
+                  <SeeMoreBtn k="admin-requests" list={requests.filter((r) => r.status === "pending")} />
                 </>
               )}
 
@@ -1289,6 +1291,7 @@ export default function App() {
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
+            {me.role !== "Admin" && <button className={page === "feedbackpage" ? "on" : ""} onClick={() => setPage("feedbackpage")}>Feedback</button>}
           </nav>
         </div>
       </header>
@@ -1454,11 +1457,12 @@ export default function App() {
                   location: data.location, match_date: data.date, match_time: data.time,
                   badge_a: data.badgeA, badge_b: data.badgeB,
                   duration_minutes: data.duration, published: true,
+                  stream_url: data.streamUrl || null,
                 });
                 if (error) return notify(error.message);
                 setPage("mymatches");
                 refreshAll();
-                notify("Match saved ✔ It's live on the News Feed for everyone to see.");
+                notify(data.streamUrl ? "Match saved ✔ Your live stream is attached — fans will see 🔴 Watch Live." : "Match saved ✔ It's live on the News Feed for everyone to see.");
               }}
             />
           </div>
@@ -1655,6 +1659,19 @@ export default function App() {
             </div>
             <SeeMoreBtn k="live" list={liveForUser} />
           </div>
+        )}
+
+        {/* ---------- FEEDBACK ---------- */}
+        {page === "feedbackpage" && me.role !== "Admin" && (
+          <FeedbackPage
+            myFeedback={feedbacks.filter((f) => f.user_id === me.id)}
+            onSend={async (msg) => {
+              const { error } = await supabase.from("feedback").insert({ user_id: me.id, feature: "General", message: msg });
+              if (error) return notify(error.message);
+              notify("🙏 Thank you! Your note has been sent to the team.");
+              refreshAll();
+            }}
+          />
         )}
 
         {/* ---------- ADMIN ---------- */}
@@ -1973,15 +1990,15 @@ function PwInput({ value, onChange, placeholder, autoComplete }) {
         style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#8FA396", cursor: "pointer", padding: 8, display: "flex", alignItems: "center" }}>
         {show ? (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
             <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
             <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
             <line x1="1" y1="1" x2="23" y2="23" />
-          </svg>
-        ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
           </svg>
         )}
       </button>
@@ -2008,6 +2025,28 @@ function StatusChip({ m }) {
   const ht = m.status === "Live" && (m.halfPrompt || m.onBreak);
   const s = ht ? { bg: "#3a3320", c: "#E6B31E", t: "⏸ Half Time" } : map[m.status];
   return <span className={`chip ${m.status === "Live" && !ht ? "pulse" : ""}`} style={{ background: s.bg, color: s.c }}>{s.t}</span>;
+}
+
+/* ---------- Shared "How to go live" instructions — used at match creation AND during the match ---------- */
+function StreamHelpModal({ onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>📖 How to go live</div>
+        <div style={{ fontSize: 13, lineHeight: 1.7, display: "grid", gap: 10 }}>
+          <div><b style={{ color: "#E6B31E" }}>1.</b> Open <b>Facebook</b> and tap <b>Live</b> (where you'd normally write a post).</div>
+          <div><b style={{ color: "#E6B31E" }}>2.</b> <b style={{ color: "#E8442E" }}>Important:</b> set the audience to <b>Public 🌍</b> — not Friends — or fans won't be able to watch.</div>
+          <div><b style={{ color: "#E6B31E" }}>3.</b> Start your broadcast.</div>
+          <div><b style={{ color: "#E6B31E" }}>4.</b> On your live video, tap <b>Share → Copy Link</b>.</div>
+          <div><b style={{ color: "#E6B31E" }}>5.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
+          <div style={{ borderTop: "1px solid #243128", paddingTop: 10, color: "#8FA396", fontSize: 12 }}>
+            💡 Tips: streaming ~90 minutes uses around 1.5–2GB of data. Prop your phone steady or let a teammate film — you're also running the match! YouTube links work too if you have a channel.
+          </div>
+        </div>
+        <button className="btn btn-gold" onClick={onClose}>Got it</button>
+      </div>
+    </div>
+  );
 }
 
 function MiniLogo({ team, badge, size = 42 }) {
@@ -2116,9 +2155,9 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
   const [scorersA, setScorersA] = useState("");
   const [scorersB, setScorersB] = useState("");
   const [unknowns, setUnknowns] = useState([]); // [{name, team, tag: null|'sub'|'pen'}]
-  const [pa, setPa] = useState(0);
-  const [pb, setPb] = useState(0);
-  useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(0); setPb(0); }, [m && m.id]);
+  const [pa, setPa] = useState("");
+  const [pb, setPb] = useState("");
+  useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(""); setPb(""); }, [m && m.id]);
   if (!m) return null;
   const isOwner = m.createdBy === me.id;
 
@@ -2199,24 +2238,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
         )}
 
         {/* STREAM INSTRUCTIONS MODAL */}
-        {streamHelpOpen && (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setStreamHelpOpen(false)}>
-            <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
-              <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>📖 How to go live</div>
-              <div style={{ fontSize: 13, lineHeight: 1.7, display: "grid", gap: 10 }}>
-                <div><b style={{ color: "#E6B31E" }}>1.</b> Open <b>Facebook</b> and tap <b>Live</b> (where you'd normally write a post).</div>
-                <div><b style={{ color: "#E6B31E" }}>2.</b> <b style={{ color: "#E8442E" }}>Important:</b> set the audience to <b>Public 🌍</b> — not Friends — or fans won't be able to watch.</div>
-                <div><b style={{ color: "#E6B31E" }}>3.</b> Start your broadcast.</div>
-                <div><b style={{ color: "#E6B31E" }}>4.</b> On your live video, tap <b>Share → Copy Link</b>.</div>
-                <div><b style={{ color: "#E6B31E" }}>5.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
-                <div style={{ borderTop: "1px solid #243128", paddingTop: 10, color: "#8FA396", fontSize: 12 }}>
-                  💡 Tips: streaming ~90 minutes uses around 1.5–2GB of data. Prop your phone steady or let a teammate film — you're also running the match! YouTube links work too if you have a channel.
-                </div>
-              </div>
-              <button className="btn btn-gold" onClick={() => setStreamHelpOpen(false)}>Got it</button>
-            </div>
-          </div>
-        )}
+        {streamHelpOpen && <StreamHelpModal onClose={() => setStreamHelpOpen(false)} />}
 
         {/* WATCH LIVE — fans, tap to expand */}
         {m.streamUrl && m.status === "Live" && !isOwner && (
@@ -2427,12 +2449,12 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                   <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4 }}>{m.teamA.name} pens</div>
-                      <input className="input" style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 700 }} type="number" min="0" value={pa} onChange={(e) => setPa(Math.max(0, +e.target.value))} />
+                      <input className="input" style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 700 }} inputMode="numeric" placeholder="0" maxLength={2} value={pa} onChange={(e) => setPa(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                     </div>
                     <div className="display" style={{ fontSize: 18, color: "#E6B31E", marginTop: 18 }}>–</div>
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4 }}>{m.teamB.name} pens</div>
-                      <input className="input" style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 700 }} type="number" min="0" value={pb} onChange={(e) => setPb(Math.max(0, +e.target.value))} />
+                      <input className="input" style={{ width: 80, textAlign: "center", fontSize: 18, fontWeight: 700 }} inputMode="numeric" placeholder="0" maxLength={2} value={pb} onChange={(e) => setPb(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                     </div>
                   </div>
                 )}
@@ -2457,7 +2479,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                     const u = unknowns.find((k) => k.name.toLowerCase() === base.toLowerCase() && k.tag);
                     return u ? `${clean} (${u.tag})` : clean;
                   }).filter(Boolean).join(", ");
-                  onSubmitScore(m, +fa, +fb, shootout, pa, pb, tagUp(scorersA), tagUp(scorersB));
+                  onSubmitScore(m, +fa, +fb, shootout, +pa || 0, +pb || 0, tagUp(scorersA), tagUp(scorersB));
                   setUnknowns([]);
                 }}>Upload match result</button>
                 {unknowns.filter((u) => !u.tag).length > 0 && (
@@ -2495,7 +2517,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
             <button className="btn btn-turf" onClick={() => {
               const lines = m.status === "ResultPublished"
                 ? [`🏁 *FULL TIME* — ${m.teamA.name} ${m.finalA} - ${m.finalB} ${m.teamB.name}`,
-                   m.shootout && m.pensWinner ? `(${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}-${m.pensB} on pens)` : "",
+                   m.shootout && m.pensWinner ? `(${m.pensWinner === "A" ? m.teamA.name : m.teamB.name} win ${m.pensA}-${m.pensB} on penalties)` : "",
                    m.scorersA ? `⚽ ${m.teamA.name}: ${m.scorersA}` : "",
                    m.scorersB ? `⚽ ${m.teamB.name}: ${m.scorersB}` : "",
                    ``, `📍 ${m.location}`, `Hosted on Area Match ⚽`]
@@ -2696,6 +2718,34 @@ function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onSh
 }
 
 /* ---------- COMING SOON — feature gate with feedback ---------- */
+/* ---------- FEEDBACK — open box for feature requests, complaints, anything ---------- */
+function FeedbackPage({ myFeedback, onSend }) {
+  const [msg, setMsg] = useState("");
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>💬 Feedback</div>
+      <div style={{ color: "#8FA396", fontSize: 13, marginBottom: 18 }}>Something not working right? An idea for the next update? Tell us here — we read everything.</div>
+      <div className="card" style={{ display: "grid", gap: 10 }}>
+        <textarea className="input" rows={5} maxLength={500} placeholder="e.g. It would be great if..."
+          value={msg} onChange={(e) => setMsg(e.target.value.slice(0, 500))} />
+        <div style={{ fontSize: 11, color: "#8FA396", textAlign: "right" }}>{msg.length}/500</div>
+        <button className="btn btn-gold" disabled={!msg.trim()} style={{ opacity: msg.trim() ? 1 : .5 }}
+          onClick={() => { if (msg.trim()) { onSend(msg.trim()); setMsg(""); } }}>Send feedback</button>
+      </div>
+      {myFeedback.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 11, letterSpacing: ".15em", color: "#8FA396", textTransform: "uppercase", marginBottom: 10 }}>What you've sent before</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {myFeedback.map((f) => (
+              <div key={f.id} className="card" style={{ fontSize: 13, color: "#F5F0E1" }}>{f.message}</div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
   const [msg, setMsg] = useState("");
   return (
@@ -2822,6 +2872,10 @@ function CreateMatch({ onSave, onCancel }) {
   });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const valid = f.teamAName && f.teamBName && f.location && f.date && f.time;
+  const [wantsStream, setWantsStream] = useState(null); // null | "no" | "yes"
+  const [streamInput, setStreamInput] = useState("");
+  const [streamHelpOpen, setStreamHelpOpen] = useState(false);
+  const streamValid = isValidStreamUrl(streamInput.trim());
 
   return (
     <div className="card" style={{ display: "grid", gap: 12 }}>
@@ -2866,10 +2920,31 @@ function CreateMatch({ onSave, onCancel }) {
         </div>
         <div style={{ fontSize: 11, color: "#8FA396", marginTop: 4 }}>Half time comes at {f.duration / 2} minutes.</div>
       </div>
+
+      {/* LIVE STREAM — optional at creation; captains can always add/change this later too */}
+      <div className="card" style={{ display: "grid", gap: 10, background: "#131a15" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>🔴 Live Stream</div>
+        <div style={{ fontSize: 13 }}>Want to stream this match live?</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className={`btn ${wantsStream === "no" ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1 }} onClick={() => setWantsStream("no")}>No thanks</button>
+          <button className={`btn ${wantsStream === "yes" ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1 }} onClick={() => setWantsStream("yes")}>Yes, add a link</button>
+        </div>
+        {wantsStream === "yes" && (
+          <>
+            <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setStreamHelpOpen(true)}>📖 How to go live — step by step</button>
+            <input className="input" maxLength={300} placeholder="Paste your Facebook live video link here"
+              value={streamInput} onChange={(e) => setStreamInput(e.target.value.slice(0, 300))} />
+            {streamInput.trim() && !streamValid && <div style={{ fontSize: 11, color: "#E8442E" }}>That doesn't look like a Facebook or YouTube link yet — paste it once you're live, or leave blank and add it later.</div>}
+            <div style={{ fontSize: 11, color: "#8FA396" }}>Not live yet? No problem — leave this blank and add your link anytime once the match is under way.</div>
+          </>
+        )}
+        {wantsStream === "no" && <div style={{ fontSize: 11, color: "#8FA396" }}>No stream for now — you can still add one anytime while the match is live.</div>}
+      </div>
+
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
         <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
-          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: f.playersA, playersB: f.playersB, location: f.location, date: f.date, time: f.time, duration: f.duration })}>
+          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: f.playersA, playersB: f.playersB, location: f.location, date: f.date, time: f.time, duration: f.duration, streamUrl: wantsStream === "yes" && streamValid ? normalizeStreamUrl(streamInput.trim()) : "" })}>
           Save as Scheduled
         </button>
       </div>
@@ -2959,7 +3034,7 @@ function PosterModal({ m, onClose, notify }) {
               {/* Final score — the centrepiece of a result poster */}
               <text x="200" y="352" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="72" letterSpacing="4">{m.finalA} – {m.finalB}</text>
               <text x="200" y="386" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="16">
-                {m.shootout && m.pensWinner ? `${(m.pensWinner === "A" ? m.teamA.name : m.teamB.name).toUpperCase()} WIN ${m.pensA}–${m.pensB} ON PENS` : m.result === "Draw" ? "MATCH DRAWN" : `${(m.result === "A" ? m.teamA.name : m.teamB.name).toUpperCase()} WIN`}
+                {m.shootout && m.pensWinner ? `${(m.pensWinner === "A" ? m.teamA.name : m.teamB.name).toUpperCase()} WIN ${m.pensA}–${m.pensB} ON PENALTIES` : m.result === "Draw" ? "MATCH DRAWN" : `${(m.result === "A" ? m.teamA.name : m.teamB.name).toUpperCase()} WIN`}
               </text>
               <rect x="60" y="400" width="280" height="2" fill="#E6B31E" opacity="0.5" />
               {(m.scorersA || m.scorersB) && (
