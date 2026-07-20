@@ -383,8 +383,8 @@ export default function App() {
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
     if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
-    const { data: st } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
-    if (st) setSavedTeams(st.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", createdAt: t.created_at })));
+    const { data: savedTeamsRows } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
+    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", createdAt: t.created_at })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
       if (fb) setFeedbacks(fb.map((f) => ({ id: f.id, userId: f.user_id, feature: f.feature, msg: f.message, at: f.created_at })));
