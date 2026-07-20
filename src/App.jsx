@@ -42,6 +42,17 @@ const rowToMatchBase = (r) => ({
   timerStartedAt: r.timer_started_at,
   breakEndsAt: r.break_ends_at,
   awaitingSince: r.awaiting_since,
+  shotsA: r.shots_a ?? 0,
+  shotsB: r.shots_b ?? 0,
+  shotsOnTargetA: r.shots_on_target_a ?? 0,
+  shotsOnTargetB: r.shots_on_target_b ?? 0,
+  cornersA: r.corners_a ?? 0,
+  cornersB: r.corners_b ?? 0,
+  foulsA: r.fouls_a ?? 0,
+  foulsB: r.fouls_b ?? 0,
+  offsidesA: r.offsides_a ?? 0,
+  offsidesB: r.offsides_b ?? 0,
+  possessionA: r.possession_a ?? 50,
 });
 
 /* Half-time prompt is a derived state, never stored */
@@ -71,6 +82,17 @@ const matchToRow = (p) => {
   if (p.timerStartedAt !== undefined) out.timer_started_at = p.timerStartedAt;
   if (p.breakEndsAt !== undefined) out.break_ends_at = p.breakEndsAt;
   if (p.awaitingSince !== undefined) out.awaiting_since = p.awaitingSince;
+  if (p.shotsA !== undefined) out.shots_a = p.shotsA;
+  if (p.shotsB !== undefined) out.shots_b = p.shotsB;
+  if (p.shotsOnTargetA !== undefined) out.shots_on_target_a = p.shotsOnTargetA;
+  if (p.shotsOnTargetB !== undefined) out.shots_on_target_b = p.shotsOnTargetB;
+  if (p.cornersA !== undefined) out.corners_a = p.cornersA;
+  if (p.cornersB !== undefined) out.corners_b = p.cornersB;
+  if (p.foulsA !== undefined) out.fouls_a = p.foulsA;
+  if (p.foulsB !== undefined) out.fouls_b = p.foulsB;
+  if (p.offsidesA !== undefined) out.offsides_a = p.offsidesA;
+  if (p.offsidesB !== undefined) out.offsides_b = p.offsidesB;
+  if (p.possessionA !== undefined) out.possession_a = p.possessionA;
   return out;
 };
 
@@ -226,6 +248,7 @@ export default function App() {
   const [capStateFilter, setCapStateFilter] = useState("All");
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
   const [feedbacks, setFeedbacks] = useState([]);
+  const [savedTeams, setSavedTeams] = useState([]);
   const [follows, setFollows] = useState([]); // captain ids I follow
   const [adminPosts, setAdminPosts] = useState([]);
   const [adminPostText, setAdminPostText] = useState("");
@@ -243,6 +266,8 @@ export default function App() {
   const [supportDraft, setSupportDraft] = useState("");
   const [feedState, setFeedState] = useState("All");
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
+  const [liveStateFilter, setLiveStateFilter] = useState("All");
+  const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
   const [booting, setBooting] = useState(true);
@@ -256,6 +281,9 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [notifPromptOpen, setNotifPromptOpen] = useState(false);
   const [posterFor, setPosterFor] = useState(null);
+  const [statsPosterFor, setStatsPosterFor] = useState(null);
+  const [teamFormOpen, setTeamFormOpen] = useState(null); // null | "new" | teamId (editing)
+  const [viewTeamId, setViewTeamId] = useState(null); // public team profile viewer
   const [toast, setToast] = useState(null);
   const [now, setNow] = useState(Date.now());
   const alertsFired = useRef({});
@@ -355,6 +383,8 @@ export default function App() {
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
     if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
+    const { data: st } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
+    if (st) setSavedTeams(st.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", createdAt: t.created_at })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
       if (fb) setFeedbacks(fb.map((f) => ({ id: f.id, userId: f.user_id, feature: f.feature, msg: f.message, at: f.created_at })));
@@ -453,11 +483,16 @@ export default function App() {
      pauses, refreshes, and slow connections. */
   const liveElapsed = (m) => {
     if (m.status !== "Live") return m.elapsed;
+    const FULL = (m.duration || 90) * 60, HALF = FULL / 2;
+    let el = m.elapsed;
     if (m.running && m.timerStartedAt) {
-      const FULL = (m.duration || 90) * 60;
-      return Math.min(FULL, m.elapsed + Math.max(0, Math.floor((now - new Date(m.timerStartedAt).getTime()) / 1000)));
+      el = Math.min(FULL, m.elapsed + Math.max(0, Math.floor((now - new Date(m.timerStartedAt).getTime()) / 1000)));
     }
-    return m.elapsed;
+    /* Safety clamp: no viewer (including a captain whose own device missed the
+       transition, e.g. phone locked at exactly 45') ever sees the clock run
+       past half-time until the captain has actually started the second half. */
+    if (!m.secondHalf) el = Math.min(el, HALF);
+    return el;
   };
   const breakLeft = (m) => (m.onBreak && m.breakEndsAt ? Math.max(0, Math.floor((new Date(m.breakEndsAt).getTime() - now) / 1000)) : 0);
 
@@ -718,6 +753,47 @@ export default function App() {
   /* Past results older than 30 days are retired from view (and purged nightly by the database) */
   const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
+  /* A saved team's record is derived from real published results — matched by team name + the
+     same captain, since matches store team names as free text rather than a saved_team id. */
+  const teamRecord = (team) => {
+    const played = matches
+      .filter((m) => m.status === "ResultPublished" && m.createdBy === team.captainId && (m.teamA.name === team.name || m.teamB.name === team.name))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    const results = played.map((m) => {
+      const isA = m.teamA.name === team.name;
+      const us = isA ? m.finalA : m.finalB, them = isA ? m.finalB : m.finalA;
+      const outcome = m.shootout && m.pensWinner ? (m.pensWinner === (isA ? "A" : "B") ? "W" : "L") : us > them ? "W" : us < them ? "L" : "D";
+      const opponent = isA ? m.teamB.name : m.teamA.name;
+      return { match: m, outcome, us, them, opponent };
+    });
+    const wins = results.filter((r) => r.outcome === "W").length;
+    const draws = results.filter((r) => r.outcome === "D").length;
+    const losses = results.filter((r) => r.outcome === "L").length;
+    const total = results.length;
+    /* Weighted points formula: Win=3, Draw=1, Loss=0, scaled to a 5-star rating */
+    const points = wins * 3 + draws * 1;
+    const rating = total > 0 ? Math.round((points / (total * 3)) * 5 * 10) / 10 : 0;
+    return { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
+  };
+  const createSavedTeam = async (data) => {
+    const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players });
+    if (error) return notify(error.message);
+    notify(`✔ ${data.name} saved to your teams.`);
+    refreshAll();
+  };
+  const updateSavedTeam = async (id, data) => {
+    const { error } = await supabase.from("saved_teams").update({ name: data.name, color: data.color, badge: data.badge, players: data.players }).eq("id", id);
+    if (error) return notify(error.message);
+    notify("✔ Team updated.");
+    refreshAll();
+  };
+  const deleteSavedTeam = async (id, name) => {
+    if (!window.confirm(`Delete ${name} from your saved teams? This won't affect any past matches.`)) return;
+    const { error } = await supabase.from("saved_teams").delete().eq("id", id);
+    if (error) return notify(error.message);
+    notify("🗑 Team removed.");
+    refreshAll();
+  };
 
   /* ============================================================ STYLES */
   const css = `
@@ -1010,7 +1086,8 @@ export default function App() {
   const mine = matches.filter((m) => m.createdBy === me.id);
   /* 🔴 Live tab — every currently-live match in the fan's state or from a followed captain */
   const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
-    (me.role === "Admin" || captainState(m) === me.state || follows.includes(m.createdBy)));
+    (liveStateFilter === "All" || captainState(m) === liveStateFilter) &&
+    (!liveFollowedOnly || follows.includes(m.createdBy)));
   const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
@@ -1487,9 +1564,12 @@ export default function App() {
         {/* ---------- MY MATCHES ---------- */}
         {page === "mymatches" && me.role === "Captain" && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 8, flexWrap: "wrap" }}>
               <div className="display" style={{ fontSize: 24 }}>My Matches</div>
-              <button className="btn btn-gold" onClick={() => setPage("create")}>+ Create Match</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => setPage("myteams")}>🏷 My Teams</button>
+                <button className="btn btn-gold" onClick={() => setPage("create")}>+ Create Match</button>
+              </div>
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
@@ -1499,10 +1579,55 @@ export default function App() {
           </>
         )}
 
+        {/* ---------- MY TEAMS ---------- */}
+        {page === "myteams" && me.role === "Captain" && (
+          <div style={{ maxWidth: 560 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div className="display" style={{ fontSize: 24 }}>My Teams</div>
+              <button className="btn btn-gold" onClick={() => setTeamFormOpen("new")}>＋ Create Team</button>
+            </div>
+            <div style={{ color: T.muted, fontSize: 13, marginBottom: 16 }}>Build a squad once, reuse it for every match — no retyping names each time.</div>
+            {savedTeams.filter((t) => t.captainId === me.id).length === 0 && (
+              <div className="card" style={{ color: T.muted }}>You haven't saved any teams yet. Create one to speed up hosting future matches.</div>
+            )}
+            <div style={{ display: "grid", gap: 10 }}>
+              {savedTeams.filter((t) => t.captainId === me.id).map((t) => {
+                const rec = teamRecord(t);
+                return (
+                  <div key={t.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setViewTeamId(t.id)}>
+                    <MiniLogo team={t} badge={t.badge} size={44} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{t.name}</div>
+                        {rec.ratingReady ? <span className="display" style={{ fontSize: 15, color: T.floodlight }}>{rec.rating}</span> : <span style={{ fontSize: 10, color: T.muted }}>Building record</span>}
+                      </div>
+                      {rec.ratingReady ? (
+                        <>
+                          <div style={{ display: "flex", gap: 1, marginTop: 6, borderRadius: 4, overflow: "hidden", height: 4 }}>
+                            <div style={{ width: `${(rec.wins / rec.total) * 100}%`, background: "#3FA35B" }} />
+                            <div style={{ width: `${(rec.draws / rec.total) * 100}%`, background: "#54615a" }} />
+                            <div style={{ width: `${(rec.losses / rec.total) * 100}%`, background: "#C6503F" }} />
+                          </div>
+                          <div style={{ fontSize: 10.5, color: T.muted, marginTop: 4 }}>{rec.total} matches · {rec.wins}W · {rec.draws}D · {rec.losses}L</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 10.5, color: T.muted, marginTop: 4 }}>{rec.total} match{rec.total === 1 ? "" : "es"} played · {3 - rec.total} more for a rating</div>
+                      )}
+                    </div>
+                    <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, flexShrink: 0 }}
+                      onClick={(e) => { e.stopPropagation(); setTeamFormOpen(t.id); }}>Edit</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ---------- CREATE ---------- */}
         {page === "create" && me.role === "Captain" && (
           <div style={{ maxWidth: 560 }}>
             <CreateMatch
+              myTeams={savedTeams.filter((t) => t.captainId === me.id)}
               onCancel={() => setPage("mymatches")}
               onSave={async (data) => {
                 const { error } = await supabase.from("matches").insert({
@@ -1712,11 +1837,23 @@ export default function App() {
         {page === "live" && (
           <div>
             <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>🔴 Live</div>
-            <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>
-              {me.role === "Admin" ? "Every match live right now." : "Live matches in your state, and from captains you follow."}
+            <div style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>
+              Every live match — filter by state, or just the captains you follow.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
+              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13 }} value={liveStateFilter} onChange={(e) => setLiveStateFilter(e.target.value)}>
+                <option value="All">🌍 All states</option>
+                {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
+              </select>
+              {me.role === "Fan" && follows.length > 0 && (
+                <button className={`btn ${liveFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
+                  onClick={() => setLiveFollowedOnly(!liveFollowedOnly)}>🔔 Captains I follow</button>
+              )}
             </div>
             {liveForUser.length === 0 && (
-              <div className="card" style={{ color: T.muted }}>Nothing live right now — check back on match day. ⚽</div>
+              <div className="card" style={{ color: T.muted }}>
+                {liveStateFilter !== "All" ? `No live matches in ${liveStateFilter} right now.` : liveFollowedOnly ? "None of the captains you follow are live right now." : "Nothing live right now — check back on match day. ⚽"}
+              </div>
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
               {capped("live", liveForUser).map((m) => (
@@ -1748,6 +1885,7 @@ export default function App() {
         <MatchDetail
           m={matches.find((x) => x.id === openMatch)}
           me={me}
+          notify={notify}
           minute={minute}
           breakLeft={breakLeft}
           captainName={(users.find((u) => u.id === (matches.find((x) => x.id === openMatch) || {}).createdBy) || {}).name || ""}
@@ -1771,6 +1909,8 @@ export default function App() {
             if (b > wasB) logEvent(m.id, `⚽ GOAL — ${m.teamB.name}! ${scorerB || "A player"} scores. ${a}-${b}`, minute(m));
             if (a <= wasA && b <= wasB) logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`, minute(m));
           }}
+          onUpdateStats={(m, key, value) => patchMatch(m.id, { [key]: value })}
+          onPostCommentary={(m, text) => logEvent(m.id, `🎙 ${text}`, minute(m))}
           onSetStream={(m, url) => {
             if (url === null) {
               patchMatch(m.id, { streamUrl: "" });
@@ -1904,16 +2044,38 @@ export default function App() {
       )}
 
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
+      {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
+      {teamFormOpen && (
+        <TeamFormModal
+          existing={teamFormOpen === "new" ? null : savedTeams.find((t) => t.id === teamFormOpen)}
+          onSave={async (data) => {
+            if (teamFormOpen === "new") await createSavedTeam(data);
+            else await updateSavedTeam(teamFormOpen, data);
+            setTeamFormOpen(null);
+          }}
+          onDelete={async (id, name) => { await deleteSavedTeam(id, name); setTeamFormOpen(null); }}
+          onClose={() => setTeamFormOpen(null)}
+        />
+      )}
+      {viewTeamId && savedTeams.find((t) => t.id === viewTeamId) && (
+        <TeamProfileModal
+          team={savedTeams.find((t) => t.id === viewTeamId)}
+          record={teamRecord(savedTeams.find((t) => t.id === viewTeamId))}
+          onClose={() => setViewTeamId(null)}
+        />
+      )}
 
       {liveDetailMatch && (
         <LiveMatchView
           m={liveDetailMatch}
           me={me}
+          notify={notify}
           minute={minute}
           timeline={liveTimeline}
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
           onShare={() => { setLiveDetailFor(null); setPosterFor(liveDetailMatch.id); }}
+          onShareStats={() => { setLiveDetailFor(null); setStatsPosterFor(liveDetailMatch.id); }}
           onClose={() => setLiveDetailFor(null)}
         />
       )}
@@ -2100,16 +2262,117 @@ function StreamHelpModal({ onClose }) {
       <div style={{ background: "#12161c", border: "1.5px solid #E6B31E", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
         <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>📖 How to go live</div>
         <div style={{ fontSize: 13, lineHeight: 1.7, display: "grid", gap: 10 }}>
-          <div><b style={{ color: "#E6B31E" }}>1.</b> Open <b>Facebook</b> and tap <b>Live</b> (where you'd normally write a post).</div>
-          <div><b style={{ color: "#E6B31E" }}>2.</b> <b style={{ color: "#E8442E" }}>Important:</b> set the audience to <b>Public 🌍</b> — not Friends — or fans won't be able to watch.</div>
-          <div><b style={{ color: "#E6B31E" }}>3.</b> Start your broadcast.</div>
-          <div><b style={{ color: "#E6B31E" }}>4.</b> On your live video, tap <b>Share → Copy Link</b>.</div>
-          <div><b style={{ color: "#E6B31E" }}>5.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
+          <div><b style={{ color: "#E6B31E" }}>1.</b> No Facebook <b>Page</b> for your team yet? Create one free — Facebook → Menu → Pages → Create Page. Takes about 2 minutes.</div>
+          <div><b style={{ color: "#E6B31E" }}>2.</b> <b style={{ color: "#E8442E" }}>Important:</b> go live <b>from your Page</b>, not your personal profile — Pages reliably give you a copyable link; personal profiles often don't.</div>
+          <div><b style={{ color: "#E6B31E" }}>3.</b> On the Page, tap <b>Live</b> and set the audience to <b>Public 🌍</b>.</div>
+          <div><b style={{ color: "#E6B31E" }}>4.</b> Start your broadcast.</div>
+          <div><b style={{ color: "#E6B31E" }}>5.</b> Tap <b>Share → Copy Link</b>.</div>
+          <div><b style={{ color: "#E6B31E" }}>6.</b> Come back here, paste the link and hit <b>Save</b> — fans will see 🔴 Watch Live instantly.</div>
           <div style={{ borderTop: "1px solid #243128", paddingTop: 10, color: "#8FA396", fontSize: 12 }}>
-            💡 Tips: streaming ~90 minutes uses around 1.5–2GB of data. Prop your phone steady or let a teammate film — you're also running the match! YouTube links work too if you have a channel.
+            💡 Tips: streaming ~90 minutes uses around 1.5–2GB of data. Prop your phone steady or let a teammate film — you're also running the match! YouTube also works reliably if you'd rather use that instead of Facebook.
           </div>
         </div>
         <button className="btn btn-gold" onClick={onClose}>Got it</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- MY TEAMS — create/edit form ---------- */
+function TeamFormModal({ existing, onSave, onDelete, onClose }) {
+  const [name, setName] = useState(existing ? existing.name : "");
+  const [color, setColor] = useState(existing ? existing.color : "#E6B31E");
+  const [badge, setBadge] = useState(existing ? existing.badge : "ball");
+  const [players, setPlayers] = useState(existing ? existing.players : "");
+  const valid = name.trim().length > 0;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", border: "1.5px solid #243128", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>{existing ? "Edit Team" : "Create Team"}</div>
+        <input className="input" placeholder="Team name" maxLength={24} value={name} onChange={(e) => setName(sanitizeText(e.target.value, 24))} />
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "#8FA396" }}>Color:</span>
+          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 52, height: 40, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} />
+        </div>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {BADGES.map((b) => (
+            <button key={b} className={`btn ${badge === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px" }} onClick={() => setBadge(b)}>
+              <MiniLogo team={{ name: "", color: badge === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} />
+            </button>
+          ))}
+        </div>
+        <textarea className="input" rows={3} placeholder="Squad — comma separated names (e.g. Tunde, Emeka, Ibrahim)" maxLength={300}
+          value={players} onChange={(e) => setPlayers(e.target.value.slice(0, 300))} />
+        <div style={{ display: "flex", gap: 8 }}>
+          {existing && <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a" }} onClick={() => onDelete(existing.id, existing.name)}>🗑 Delete</button>}
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+          <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
+            onClick={() => valid && onSave({ name: name.trim(), color, badge, players })}>{existing ? "Save changes" : "Create team"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- MY TEAMS — public team profile ---------- */
+function TeamProfileModal({ team, record, onClose }) {
+  const [seeMore, setSeeMore] = useState(false);
+  const shown = seeMore ? record.results : record.results.slice(0, 2);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><MiniLogo team={team} badge={team.badge} size={56} /></div>
+          <div className="display" style={{ fontSize: 24 }}>{team.name}</div>
+          {record.ratingReady ? (
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 6, marginTop: 10 }}>
+              <span className="display" style={{ fontSize: 34, color: "#E6B31E" }}>{record.rating}</span>
+              <span style={{ fontSize: 12, color: "#8FA396" }}>/ 5.0 · {record.total} matches</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#8FA396", marginTop: 10 }}>Building record — {3 - record.total} more match{3 - record.total === 1 ? "" : "es"} needed for a rating</div>
+          )}
+          <div style={{ display: "flex", gap: 1, marginTop: 16, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
+              <div className="display" style={{ fontSize: 19, color: "#3FA35B" }}>{record.wins}</div>
+              <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Wins</div>
+            </div>
+            <div style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
+              <div className="display" style={{ fontSize: 19 }}>{record.draws}</div>
+              <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Draws</div>
+            </div>
+            <div style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
+              <div className="display" style={{ fontSize: 19, color: "#C6503F" }}>{record.losses}</div>
+              <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Losses</div>
+            </div>
+          </div>
+        </div>
+        {record.results.length > 0 && (
+          <div className="card" style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Recent Form</div>
+            <div style={{ display: "flex", gap: 5 }}>
+              {record.results.slice(0, 5).map((r, i) => (
+                <div key={i} style={{ width: 20, height: 20, borderRadius: 4, background: r.outcome === "W" ? "#3FA35B" : r.outcome === "D" ? "#54615a" : "#C6503F", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{r.outcome}</div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="card">
+          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 6 }}>Match History</div>
+          {record.results.length === 0 && <div style={{ fontSize: 13, color: "#8FA396" }}>No published results yet.</div>}
+          {shown.map((r, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < shown.length - 1 ? "1px solid #243128" : "none", fontSize: 12.5 }}>
+              <div><div>vs {r.opponent}</div><div style={{ fontSize: 10, color: "#8FA396", marginTop: 1 }}>{r.match.date}</div></div>
+              <span className="display" style={{ color: "#E6B31E" }}>{r.us}–{r.them}</span>
+            </div>
+          ))}
+          {record.results.length > 2 && (
+            <div style={{ textAlign: "center", fontSize: 11, color: "#8FA396", paddingTop: 8, cursor: "pointer" }} onClick={() => setSeeMore(!seeMore)}>
+              {seeMore ? "See less" : `See more (${record.results.length - 2} more)`}
+            </div>
+          )}
+        </div>
+        <button className="btn btn-ghost" style={{ width: "100%", marginTop: 10 }} onClick={onClose}>Close</button>
       </div>
     </div>
   );
@@ -2193,7 +2456,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
   );
 }
 
-function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster }) {
+function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -2209,6 +2472,20 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
   };
   const [reqOpen, setReqOpen] = useState(false);
   const [streamInput, setStreamInput] = useState("");
+  const [ctrlTab, setCtrlTab] = useState("score"); // score | stats | commentary | stream — captain's live-match control tabs
+  const [commentaryInput, setCommentaryInput] = useState("");
+  const shareStream = async (m) => {
+    const text = `🔴 Watch ${m.teamA.name} vs ${m.teamB.name} live: ${m.streamUrl}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: "Area Match — Live", text, url: m.streamUrl }); return; } catch (_) { /* user cancelled — no error needed */ }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("🔗 Stream link copied — paste it anywhere to share!");
+    } catch (_) {
+      notify("Couldn't copy automatically — long-press the link above to copy it.");
+    }
+  };
   const [streamHelpOpen, setStreamHelpOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -2220,10 +2497,21 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
   const [shootout, setShootout] = useState(false);
   const [scorersA, setScorersA] = useState("");
   const [scorersB, setScorersB] = useState("");
+  const [scorerTallyA, setScorerTallyA] = useState({});
+  const [scorerTallyB, setScorerTallyB] = useState({});
+  /* Turns {"Tunde": 2, "Kola": 1} into "Tunde x2, Kola" — same format the rest of the app already expects */
+  const tallyToStr = (tally) => Object.entries(tally).filter(([, n]) => n > 0).map(([name, n]) => (n > 1 ? `${name} x${n}` : name)).join(", ");
+  const bumpTally = (setTally, setStr) => (name, delta) => {
+    setTally((prev) => {
+      const next = { ...prev, [name]: Math.max(0, (prev[name] || 0) + delta) };
+      setStr(tallyToStr(next));
+      return next;
+    });
+  };
   const [unknowns, setUnknowns] = useState([]); // [{name, team, tag: null|'sub'|'pen'}]
   const [pa, setPa] = useState("");
   const [pb, setPb] = useState("");
-  useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(""); setPb(""); }, [m && m.id]);
+  useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(""); setPb(""); setScorersA(""); setScorersB(""); setScorerTallyA({}); setScorerTallyB({}); }, [m && m.id]);
   if (!m) return null;
   const isOwner = m.createdBy === me.id;
 
@@ -2249,7 +2537,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                 {m.onBreak ? `Half-time break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")} left` : "Half-time break"}
               </div>
             )}
-            {m.status === "Live" && !m.halfPrompt && !m.onBreak && (m.running
+            {m.status === "Live" && ctrlTab === "score" && !m.halfPrompt && !m.onBreak && (m.running
               ? <div className="pulse" style={{ color: "#E8442E", fontWeight: 700 }}>LIVE · {minute(m)}'</div>
               : <div style={{ color: "#E6B31E", fontWeight: 700, fontSize: 13 }}>⏸ Paused{m.pauseReason ? ` — ${m.pauseReason}` : ""}</div>)}
             {m.status === "AwaitingScore" && <div style={{ color: "#8FA396", fontWeight: 700, fontSize: 12 }}>Result awaiting</div>}
@@ -2284,7 +2572,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
         </div>
 
         {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
-        {isOwner && me.role === "Captain" && (m.status === "Scheduled" || m.status === "Live") && (
+        {isOwner && me.role === "Captain" && (m.status === "Scheduled" || (m.status === "Live" && ctrlTab === "stream")) && (
           <div className="card" style={{ display: "grid", gap: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>🔴 Live Stream</div>
@@ -2323,9 +2611,12 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
               </div>
             )
           ) : (
-            <a href={m.streamUrl} target="_blank" rel="noopener noreferrer" className="btn btn-live pulse" style={{ textAlign: "center", textDecoration: "none" }}>
-              ▶ Watch Live on Facebook
-            </a>
+            <div style={{ display: "flex", gap: 8 }}>
+              <a href={m.streamUrl} target="_blank" rel="noopener noreferrer" className="btn btn-live pulse" style={{ flex: 2, textAlign: "center", textDecoration: "none" }}>
+                ▶ Watch Live on Facebook
+              </a>
+              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => shareStream(m)}>📤 Share</button>
+            </div>
           )
         )}
         {m.streamUrl && m.status === "Live" && !isOwner && !watchOpen && (
@@ -2379,6 +2670,16 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
         {isOwner && me.role === "Captain" && (
           <div className="card" style={{ display: "grid", gap: 10 }}>
             <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>Captain Controls</div>
+            {m.status === "Live" && (
+              <div style={{ display: "flex", gap: 4, background: "#0f1511", borderRadius: 10, padding: 4 }}>
+                {[["score", "Score"], ["stats", "Stats"], ["commentary", "Commentary"], ["stream", "Stream"]].map(([key, label]) => (
+                  <button key={key} onClick={() => setCtrlTab(key)}
+                    style={{ flex: 1, background: ctrlTab === key ? "#E6B31E" : "none", color: ctrlTab === key ? "#1a1405" : "#8FA396", border: "none", borderRadius: 7, padding: "8px 4px", fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             {m.status === "Scheduled" && (isDue(m) ? (
               <>
                 <button className="btn btn-live" onClick={() => onStart(m)}>▶ Start Match (90-min timer)</button>
@@ -2414,7 +2715,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                 </div>
               )
             )}
-            {m.status === "Live" && m.halfPrompt && (
+            {m.status === "Live" && ctrlTab === "score" && m.halfPrompt && (
               <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14 }}>
                 <div style={{ fontWeight: 700, color: "#E6B31E" }}>⏱ HALF TIME — the second half only starts when you say so.</div>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -2423,7 +2724,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                 </div>
               </div>
             )}
-            {m.status === "Live" && m.onBreak && (
+            {m.status === "Live" && ctrlTab === "score" && m.onBreak && (
               <div style={{ background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14, textAlign: "center" }}>
                 <div style={{ fontWeight: 700, color: "#E6B31E" }}>☕ Half-time break</div>
                 <div className="display" style={{ fontSize: 30, color: "#F5F0E1" }}>
@@ -2490,6 +2791,53 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
               )
             )}
 
+            {/* STATS TAB — simple +/- steppers, no typing */}
+            {m.status === "Live" && ctrlTab === "stats" && (
+              <div style={{ display: "grid", gap: 4 }}>
+                {[
+                  ["shotsA", "shotsB", "Shots", "🔵"],
+                  ["shotsOnTargetA", "shotsOnTargetB", "On Target", "🎯"],
+                  ["cornersA", "cornersB", "Corners", "⛳"],
+                  ["foulsA", "foulsB", "Fouls", "🟨"],
+                  ["offsidesA", "offsidesB", "Offsides", "🚩"],
+                ].map(([keyA, keyB, label, icon]) => (
+                  <div key={keyA} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0" }}>
+                    <span style={{ flex: 1, fontSize: 12.5 }}>{icon} {label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 10, color: "#8FA396", width: 70, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
+                      <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, keyA, Math.max(0, (m[keyA] ?? 0) - 1))}>−</button>
+                      <span className="display" style={{ fontSize: 14, width: 20, textAlign: "center" }}>{m[keyA] ?? 0}</span>
+                      <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, keyA, (m[keyA] ?? 0) + 1)}>+</button>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ borderTop: "1px solid #243128", marginTop: 6, paddingTop: 10 }}>
+                  <div style={{ fontSize: 12.5, marginBottom: 6 }}>⏱ Possession — {m.teamA.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, "possessionA", Math.max(0, (m.possessionA ?? 50) - 5))}>−</button>
+                    <span className="display" style={{ fontSize: 14, width: 34, textAlign: "center" }}>{m.possessionA ?? 50}%</span>
+                    <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, "possessionA", Math.min(100, (m.possessionA ?? 50) + 5))}>+</button>
+                    <span style={{ fontSize: 11, color: "#8FA396", marginLeft: "auto" }}>{m.teamB.name}: {100 - (m.possessionA ?? 50)}%</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* COMMENTARY TAB — real captain commentary, posted straight to the fan-facing live feed */}
+            {m.status === "Live" && ctrlTab === "commentary" && (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>Add live commentary</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input className="input" style={{ flex: 1 }} maxLength={140} placeholder="e.g. Tunde nearly finds the top corner!"
+                    value={commentaryInput} onChange={(e) => setCommentaryInput(e.target.value)} />
+                  <button className="btn btn-gold" disabled={!commentaryInput.trim()} style={{ opacity: commentaryInput.trim() ? 1 : .5 }}
+                    onClick={() => { if (commentaryInput.trim()) { onPostCommentary(m, commentaryInput.trim()); setCommentaryInput(""); } }}>Post</button>
+                </div>
+                <div style={{ fontSize: 10.5, color: "#8FA396", lineHeight: 1.4 }}>Fans see this instantly in the live timeline. Don't have time to type? We'll keep the commentary flowing automatically.</div>
+              </div>
+            )}
+
+
             {/* SCORE SUBMISSION REQUEST — appears at full time */}
             {m.status === "AwaitingScore" && (
               <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14 }}>
@@ -2505,8 +2853,50 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                     <input className="input" style={{ width: 80, textAlign: "center", fontSize: 22, fontWeight: 700 }} inputMode="numeric" maxLength={2} placeholder="0" value={fb} onChange={(e) => setFb(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                   </div>
                 </div>
-                <input className="input" placeholder={`${m.teamA.name} goal scorers (e.g. Tunde x2, Kola)`} maxLength={150} value={scorersA} onChange={(e) => setScorersA(e.target.value)} />
-                <input className="input" placeholder={`${m.teamB.name} goal scorers`} maxLength={150} value={scorersB} onChange={(e) => setScorersB(e.target.value)} />
+                <div>
+                  <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".05em" }}>{m.teamA.name} — who scored?</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {rosterNames(m.playersA).map((name) => {
+                      const n = scorerTallyA[name] || 0;
+                      return (
+                        <div key={name} style={{ display: "flex", alignItems: "center", gap: 6, background: n > 0 ? "rgba(230,179,30,.12)" : "#131a15", border: `1px solid ${n > 0 ? "#E6B31E" : "#243128"}`, borderRadius: 99, padding: "7px 7px 7px 12px", fontSize: 13 }}>
+                          <span>{name}</span>
+                          {n > 0 && (
+                            <>
+                              <button type="button" style={{ width: 20, height: 20, borderRadius: "50%", border: 0, background: "rgba(198,80,63,.2)", color: "#e08a7d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                                onClick={() => bumpTally(setScorerTallyA, setScorersA)(name, -1)}>−</button>
+                              <span className="display" style={{ fontSize: 13, color: "#E6B31E", minWidth: 14, textAlign: "center" }}>{n}</span>
+                            </>
+                          )}
+                          <button type="button" style={{ width: 20, height: 20, borderRadius: "50%", border: 0, background: "rgba(230,179,30,.2)", color: "#E6B31E", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                            onClick={() => bumpTally(setScorerTallyA, setScorersA)(name, 1)}>+</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".05em" }}>{m.teamB.name} — who scored?</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {rosterNames(m.playersB).map((name) => {
+                      const n = scorerTallyB[name] || 0;
+                      return (
+                        <div key={name} style={{ display: "flex", alignItems: "center", gap: 6, background: n > 0 ? "rgba(230,179,30,.12)" : "#131a15", border: `1px solid ${n > 0 ? "#E6B31E" : "#243128"}`, borderRadius: 99, padding: "7px 7px 7px 12px", fontSize: 13 }}>
+                          <span>{name}</span>
+                          {n > 0 && (
+                            <>
+                              <button type="button" style={{ width: 20, height: 20, borderRadius: "50%", border: 0, background: "rgba(198,80,63,.2)", color: "#e08a7d", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                                onClick={() => bumpTally(setScorerTallyB, setScorersB)(name, -1)}>−</button>
+                              <span className="display" style={{ fontSize: 13, color: "#E6B31E", minWidth: 14, textAlign: "center" }}>{n}</span>
+                            </>
+                          )}
+                          <button type="button" style={{ width: 20, height: 20, borderRadius: "50%", border: 0, background: "rgba(230,179,30,.2)", color: "#E6B31E", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                            onClick={() => bumpTally(setScorerTallyB, setScorersB)(name, 1)}>+</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
                 <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
                   <input type="checkbox" checked={shootout} onChange={(e) => setShootout(e.target.checked)} />
                   ⚽ Match went to a penalty shootout
@@ -2642,7 +3032,7 @@ const genCommentary = (m, rosterNames) => {
   return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
 };
 
-function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onShare, onClose }) {
+function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onClose }) {
   const [commentary, setCommentary] = useState([]);
   const [watching, setWatching] = useState(1);
   const rosterNames = (str) => {
@@ -2690,7 +3080,11 @@ function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onSh
 
   /* Interleave real events (fact) with generated commentary (flavor), newest first, same visual treatment */
   const feed = [
-    ...timeline.map((e) => { const s = splitMinute(e.message); return { id: e.id, text: s.text, min: s.min, ts: new Date(e.created_at).getTime(), kind: "event" }; }),
+    ...timeline.map((e) => {
+      const s = splitMinute(e.message);
+      const isRealCommentary = s.text.startsWith("🎙 ");
+      return { id: e.id, text: isRealCommentary ? s.text.slice(2) : s.text, min: s.min, ts: new Date(e.created_at).getTime(), kind: isRealCommentary ? "commentary" : "event" };
+    }),
     ...commentary.map((c) => ({ id: c.id, text: c.text, min: c.min, ts: c.ts, kind: "commentary" })),
   ].sort((a, b) => b.ts - a.ts);
 
@@ -2728,15 +3122,24 @@ function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onSh
         </div>
 
         {m.streamUrl && (
-          <a href={m.streamUrl} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #243128", textDecoration: "none", background: "rgba(232,68,46,.08)" }}>
-            <span className="chip pulse" style={{ background: T.live, color: "#fff", flexShrink: 0 }}>🔴 LIVE</span>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.chalk }}>
-                {/facebook\.com|fb\.watch/.test(m.streamUrl) ? "Watching live on Facebook" : "Watching live"}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #243128", background: "rgba(232,68,46,.08)" }}>
+            <a href={m.streamUrl} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}>
+              <span className="chip pulse" style={{ background: T.live, color: "#fff", flexShrink: 0 }}>🔴 LIVE</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.chalk }}>
+                  {/facebook\.com|fb\.watch/.test(m.streamUrl) ? "Watching live on Facebook" : "Watching live"}
+                </div>
+                <div style={{ fontSize: 11, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>The captain is streaming this match — tap to watch →</div>
               </div>
-              <div style={{ fontSize: 11, color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>The captain is streaming this match — tap to watch →</div>
-            </div>
-          </a>
+            </a>
+            <button style={{ background: "none", border: "1px solid #3a1f1a", color: T.chalk, borderRadius: 10, padding: "8px 10px", fontSize: 12, flexShrink: 0 }}
+              onClick={async () => {
+                const text = `🔴 Watch ${m.teamA.name} vs ${m.teamB.name} live: ${m.streamUrl}`;
+                if (navigator.share) { try { await navigator.share({ title: "Area Match — Live", text, url: m.streamUrl }); return; } catch (_) {} }
+                try { await navigator.clipboard.writeText(text); notify("🔗 Stream link copied — paste it anywhere to share!"); }
+                catch (_) { notify("Couldn't copy automatically — long-press the link above to copy it."); }
+              }}>📤</button>
+          </div>
         )}
 
         <div style={{ display: "flex", borderBottom: "1px solid #243128" }}>
@@ -2749,6 +3152,36 @@ function LiveMatchView({ m, me, minute, timeline, alertsOn, onToggleAlerts, onSh
             <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Goals</div>
           </div>
         </div>
+
+        {[m.shotsA, m.shotsB, m.shotsOnTargetA, m.shotsOnTargetB, m.cornersA, m.cornersB, m.foulsA, m.foulsB].some((v) => (v ?? 0) > 0) && (
+          <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
+            <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10 }}>Match Stats</div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                <span>{m.possessionA ?? 50}%</span><span style={{ color: T.muted }}>Possession</span><span>{100 - (m.possessionA ?? 50)}%</span>
+              </div>
+              <div style={{ height: 5, background: "#243128", borderRadius: 99, overflow: "hidden", display: "flex" }}>
+                <div style={{ width: `${m.possessionA ?? 50}%`, background: T.floodlight }} />
+                <div style={{ width: `${100 - (m.possessionA ?? 50)}%`, background: "#243128" }} />
+              </div>
+            </div>
+            {[
+              [m.shotsA, "Shots", m.shotsB],
+              [m.shotsOnTargetA, "On Target", m.shotsOnTargetB],
+              [m.cornersA, "Corners", m.cornersB],
+              [m.foulsA, "Fouls", m.foulsB],
+              [m.offsidesA, "Offsides", m.offsidesB],
+            ].map(([a, label, b]) => (
+              <div key={label} style={{ display: "flex", alignItems: "center", padding: "7px 0" }}>
+                <span className="display" style={{ fontSize: 15, color: T.floodlight, width: 40, textAlign: "left" }}>{a ?? 0}</span>
+                <span style={{ flex: 1, fontSize: 11, color: T.muted, textAlign: "center", textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</span>
+                <span className="display" style={{ fontSize: 15, color: T.floodlight, width: 40, textAlign: "right" }}>{b ?? 0}</span>
+              </div>
+            ))}
+            <button style={{ width: "100%", marginTop: 10, background: "none", border: "1px solid #243128", color: T.floodlight, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700 }}
+              onClick={onShareStats}>🎨 Share stats card</button>
+          </div>
+        )}
 
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
         <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
@@ -2930,7 +3363,7 @@ function ProfilePage({ me, stats, onSave, notify }) {
   );
 }
 
-function CreateMatch({ onSave, onCancel }) {
+function CreateMatch({ onSave, onCancel, myTeams = [] }) {
   const [f, setF] = useState({
     teamAName: "", teamAColor: "#E6B31E", teamBName: "", teamBColor: "#1DB954",
     badgeA: "⚽", badgeB: "🦁",
@@ -2942,10 +3375,58 @@ function CreateMatch({ onSave, onCancel }) {
   const [streamInput, setStreamInput] = useState("");
   const [streamHelpOpen, setStreamHelpOpen] = useState(false);
   const streamValid = isValidStreamUrl(streamInput.trim());
+  const [pickedTeamA, setPickedTeamA] = useState(null); // saved team id, or null if typing fresh
+  const [pickedTeamB, setPickedTeamB] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(null); // "A" | "B" | null — which side's picker sheet is open
+  const applyTeam = (side, team) => {
+    if (side === "A") { setPickedTeamA(team.id); setF((prev) => ({ ...prev, teamAName: team.name, teamAColor: team.color, badgeA: team.badge, playersA: team.players })); }
+    else { setPickedTeamB(team.id); setF((prev) => ({ ...prev, teamBName: team.name, teamBColor: team.color, badgeB: team.badge, playersB: team.players })); }
+    setPickerOpen(null);
+  };
+  const clearTeam = (side) => {
+    if (side === "A") { setPickedTeamA(null); setF((prev) => ({ ...prev, teamAName: "", teamAColor: "#E6B31E", badgeA: "ball", playersA: "" })); }
+    else { setPickedTeamB(null); setF((prev) => ({ ...prev, teamBName: "", teamBColor: "#1DB954", badgeB: "lion", playersB: "" })); }
+  };
 
   return (
     <div className="card" style={{ display: "grid", gap: 12 }}>
       <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>Create Match</div>
+
+      {myTeams.length > 0 && (
+        <div style={{ display: "grid", gap: 10, background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: 12 }}>
+          {[["A", pickedTeamA], ["B", pickedTeamB]].map(([side, picked]) => {
+            const team = picked ? myTeams.find((t) => t.id === picked) : null;
+            return (
+              <div key={side}>
+                <div style={{ fontSize: 10, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 6 }}>Team {side}</div>
+                <div style={{ background: "#0f1511", border: "1px solid #243128", borderRadius: 10, padding: 12, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                  onClick={() => setPickerOpen(pickerOpen === side ? null : side)}>
+                  {team ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <MiniLogo team={team} badge={team.badge} size={28} />
+                      <span style={{ fontWeight: 700, fontSize: 13 }}>{team.name}</span>
+                    </div>
+                  ) : <span style={{ color: "#8FA396", fontSize: 13 }}>Select a saved team…</span>}
+                  <span style={{ color: "#8FA396" }}>▾</span>
+                </div>
+                {picked && <div style={{ fontSize: 11, color: "#E6B31E", textAlign: "center", marginTop: 4, textDecoration: "underline", cursor: "pointer" }} onClick={() => clearTeam(side)}>or type a new team instead</div>}
+                {pickerOpen === side && (
+                  <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                    {myTeams.map((t) => (
+                      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, border: "1px solid #243128", borderRadius: 10, cursor: "pointer" }} onClick={() => applyTeam(side, t)}>
+                        <MiniLogo team={t} badge={t.badge} size={26} />
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>{t.name}</span>
+                      </div>
+                    ))}
+                    {!picked && <div style={{ fontSize: 11, color: "#8FA396", textAlign: "center", cursor: "pointer" }} onClick={() => setPickerOpen(null)}>or type a new team instead ↓</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8 }}>
         <input className="input" placeholder="Team A name" maxLength={24} value={f.teamAName} onChange={(e) => setF({ ...f, teamAName: sanitizeText(e.target.value, 24) })} />
         <input type="color" value={f.teamAColor} onChange={set("teamAColor")} style={{ width: 52, height: 48, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} title="Team A colour" />
@@ -3157,6 +3638,98 @@ function PosterModal({ m, onClose, notify }) {
           <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
         </div>
         {(m.shares || 0) > 0 && <div style={{ fontSize: 11, color: "#8FA396", textAlign: "center" }}>🎨 Shared {m.shares} time{m.shares === 1 ? "" : "s"}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- SHAREABLE STATS ARTWORK — dedicated card just for the stat line ---------- */
+function StatsPosterModal({ m, onClose, notify }) {
+  const svgRef = useRef(null);
+  if (!m) return null;
+  const PosterBadge = ({ cx, cy, team, badge }) => {
+    const icon = resolveBadgeIcon(badge);
+    if (!icon) return null;
+    return (
+      <g transform={`translate(${cx} ${cy})`}>
+        <path d="M0 -50 L-14 -60 Q-27 -63 -37 -55 L-64 -35 L-48 -18 L-36 -28 L-36 55 Q0 63 36 55 L36 -28 L48 -18 L64 -35 L37 -55 Q27 -63 14 -60 Z"
+          transform="scale(0.45)" fill={team.color} stroke="#F5F0E1" strokeOpacity="0.3" strokeWidth="3" />
+        <g transform={`scale(${(BADGE_ICON_SCALE[icon] || 1.2) * 0.45})`}><BadgeIconPaths name={icon} /></g>
+      </g>
+    );
+  };
+  const toPng = (cb) => {
+    const svg = svgRef.current;
+    const xml = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([xml], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 800; canvas.height = 1000;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, 800, 1000);
+      canvas.toBlob((png) => { URL.revokeObjectURL(url); cb(png); });
+    };
+    img.src = url;
+  };
+  const download = () => toPng((png) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(png);
+    a.download = `${m.teamA.name}-vs-${m.teamB.name}-stats-area-match.png`;
+    a.click();
+    notify("Stats card downloaded 📲");
+  });
+  const poss = m.possessionA ?? 50;
+  const rows = [
+    [m.shotsA ?? 0, "SHOTS", m.shotsB ?? 0],
+    [m.shotsOnTargetA ?? 0, "ON TARGET", m.shotsOnTargetB ?? 0],
+    [m.cornersA ?? 0, "CORNERS", m.cornersB ?? 0],
+    [m.foulsA ?? 0, "FOULS", m.foulsB ?? 0],
+    [m.offsidesA ?? 0, "OFFSIDES", m.offsidesB ?? 0],
+  ];
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <svg ref={svgRef} viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
+          <defs>
+            <linearGradient id="sbg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0D3A1F" /><stop offset="100%" stopColor="#0C120E" />
+            </linearGradient>
+          </defs>
+          <rect width="400" height="500" fill="url(#sbg)" />
+          <text x="200" y="45" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="22" letterSpacing="2">AREA MATCH</text>
+          <text x="200" y="63" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="3">MATCH STATS</text>
+
+          <PosterBadge cx={90} cy={100} team={m.teamA} badge={m.badgeA} />
+          <PosterBadge cx={310} cy={100} team={m.teamB} badge={m.badgeB} />
+          <text x="90" y="140" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="13">{m.teamA.name}</text>
+          <text x="310" y="140" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="13">{m.teamB.name}</text>
+          <text x="200" y="112" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="20">{m.liveA ?? m.finalA ?? 0}–{m.liveB ?? m.finalB ?? 0}</text>
+
+          <line x1="30" y1="160" x2="370" y2="160" stroke="#F5F0E1" strokeOpacity="0.1" />
+
+          <text x="200" y="185" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="10" letterSpacing="2">POSSESSION</text>
+          <rect x="30" y="193" width={Math.max(2, poss * 3.4)} height="8" rx="4" fill="#E6B31E" />
+          <rect x={30 + poss * 3.4} y="193" width={Math.max(2, (100 - poss) * 3.4)} height="8" rx="4" fill="#243128" />
+          <text x="30" y="213" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize="13">{poss}%</text>
+          <text x="370" y="213" textAnchor="end" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize="13">{100 - poss}%</text>
+
+          {rows.map(([a, label, b], i) => (
+            <g key={label}>
+              <text x="35" y={250 + i * 35} fontFamily="Anton, sans-serif" fontSize="16" fill="#E6B31E">{a}</text>
+              <text x="365" y={250 + i * 35} textAnchor="end" fontFamily="Anton, sans-serif" fontSize="16" fill="#E6B31E">{b}</text>
+              <text x="200" y={248 + i * 35} textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="10" letterSpacing="1">{label}</text>
+            </g>
+          ))}
+
+          <text x="200" y="460" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="10">📍 {m.location}</text>
+          <text x="200" y="478" textAnchor="middle" fill="#8FA396" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="2">HOSTED ON AREA MATCH</text>
+        </svg>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
+          <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
+        </div>
       </div>
     </div>
   );
