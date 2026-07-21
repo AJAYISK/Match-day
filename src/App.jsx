@@ -239,6 +239,30 @@ export default function App() {
   const [matches, setMatches] = useState([]);
   const [page, setPage] = useState("feed"); // feed | mymatches | create | live | admin
   const [openMatch, setOpenMatch] = useState(null);
+  /* ---------- REAL PAGE NAVIGATION — match detail / live view / team profile now
+     behave like actual pages with working back button/gesture, not popups.
+     closeStackRef holds a "how to close whatever's on top" function per depth;
+     the browser's own history handles the back button (including Android's
+     native back gesture inside the installed app) via the popstate listener. ---------- */
+  const closeStackRef = useRef([]);
+  const pushCloseable = (closeFn) => {
+    closeStackRef.current.push(closeFn);
+    window.history.pushState({ __sheetDepth: closeStackRef.current.length }, "");
+  };
+  useEffect(() => {
+    const onPop = () => {
+      const fn = closeStackRef.current.pop();
+      if (fn) fn();
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const goBackPage = () => {
+    if (closeStackRef.current.length > 0) window.history.back();
+  };
+  const openMatchDetail = (id) => { setOpenMatch(id); pushCloseable(() => setOpenMatch(null)); };
+  const openLiveDetail = (id) => { setLiveDetailFor(id); pushCloseable(() => setLiveDetailFor(null)); };
+  const openTeamProfile = (id) => { setViewTeamId(id); pushCloseable(() => setViewTeamId(null)); };
   const [liveDetailFor, setLiveDetailFor] = useState(null); // matchId shown in the 🔴 Live pitch view
   const [liveTimeline, setLiveTimeline] = useState([]);     // fresh per-match events for that view
   const [goalAlertIds, setGoalAlertIds] = useState([]);     // matchIds the fan opted into goal alerts for
@@ -1172,7 +1196,7 @@ export default function App() {
                     </div>
                   ))}
                   <div className="feedgrid" style={{ marginTop: 12 }}>
-                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               )}
@@ -1437,7 +1461,7 @@ export default function App() {
             <span>⚽ Kick-off time reached: {m.teamA.name} vs {m.teamB.name} ({m.time}). The match starts only when you say so.</span>
             <div style={{ display: "flex", gap: 8 }}>
               <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => startMatch(m)}>▶ Start match</button>
-              <button className="btn btn-ghost" style={{ padding: "8px 14px", borderColor: "rgba(255,255,255,.35)", color: "#fff" }} onClick={() => setOpenMatch(m.id)}>📅 Postpone</button>
+              <button className="btn btn-ghost" style={{ padding: "8px 14px", borderColor: "rgba(255,255,255,.35)", color: "#fff" }} onClick={() => openMatchDetail(m.id)}>📅 Postpone</button>
             </div>
           </div>
         ))}
@@ -1451,7 +1475,7 @@ export default function App() {
                 {mins >= 20 ? `⚠️ ${mins} MINUTES LATE — ` : "🏁 Full time: "}
                 {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it.
               </span>
-              <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => setOpenMatch(m.id)}>Upload result</button>
+              <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => openMatchDetail(m.id)}>Upload result</button>
             </div>
           );
         })}
@@ -1511,7 +1535,7 @@ export default function App() {
                 <>
                   <SectionTitle color={T.floodlight}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               ) : null;
@@ -1521,7 +1545,7 @@ export default function App() {
               <>
                 <SectionTitle color={T.live}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -1538,7 +1562,7 @@ export default function App() {
               <>
                 <SectionTitle color={T.floodlight}>📍 Matches in {me.state}</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
                 <SeeMoreBtn k="mystate" list={inMyState} />
               </>
@@ -1547,7 +1571,7 @@ export default function App() {
             <SectionTitle color={T.floodlight}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: T.muted, marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
 
             <SeeMoreBtn k="upcoming" list={upcoming} />
@@ -1555,7 +1579,7 @@ export default function App() {
             <SectionTitle color={T.chalk}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: T.muted }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
           </>
@@ -1573,7 +1597,7 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
+              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
             </div>
             <SeeMoreBtn k="mymatches" list={mine} />
           </>
@@ -1594,7 +1618,7 @@ export default function App() {
               {savedTeams.filter((t) => t.captainId === me.id).map((t) => {
                 const rec = teamRecord(t);
                 return (
-                  <div key={t.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setViewTeamId(t.id)}>
+                  <div key={t.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => openTeamProfile(t.id)}>
                     <MiniLogo team={t} badge={t.badge} size={44} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1817,12 +1841,12 @@ export default function App() {
                     {theirs.length === 0 && <div className="card" style={{ color: T.muted }}>This captain hasn't published any matches yet.</div>}
                     {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <SectionTitle color={T.floodlight}>Current & Upcoming</SectionTitle>}
                     <div className="feedgrid" style={{ marginBottom: 20 }}>
-                      {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                      {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                     </div>
                     <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
                     {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <SectionTitle color={T.chalk}>Past Games Record</SectionTitle>}
                     <div className="feedgrid">
-                      {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setOpenMatch(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                      {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                     </div>
                     <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
                   </>
@@ -1857,7 +1881,7 @@ export default function App() {
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
               {capped("live", liveForUser).map((m) => (
-                <MatchCard key={"lv" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => setLiveDetailFor(m.id)} onPoster={() => setPosterFor(m.id)} />
+                <MatchCard key={"lv" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
               ))}
             </div>
             <SeeMoreBtn k="live" list={liveForUser} />
@@ -1891,7 +1915,7 @@ export default function App() {
           captainName={(users.find((u) => u.id === (matches.find((x) => x.id === openMatch) || {}).createdBy) || {}).name || ""}
           isDue={isDue}
           untilKickoff={untilKickoff}
-          onClose={() => setOpenMatch(null)}
+          onClose={goBackPage}
           onStart={startMatch}
           onPauseResume={(m, reason) => {
             if (m.running) {
@@ -2061,7 +2085,7 @@ export default function App() {
         <TeamProfileModal
           team={savedTeams.find((t) => t.id === viewTeamId)}
           record={teamRecord(savedTeams.find((t) => t.id === viewTeamId))}
-          onClose={() => setViewTeamId(null)}
+          onClose={goBackPage}
         />
       )}
 
@@ -2074,9 +2098,9 @@ export default function App() {
           timeline={liveTimeline}
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
-          onShare={() => { setLiveDetailFor(null); setPosterFor(liveDetailMatch.id); }}
-          onShareStats={() => { setLiveDetailFor(null); setStatsPosterFor(liveDetailMatch.id); }}
-          onClose={() => setLiveDetailFor(null)}
+          onShare={() => { goBackPage(); setPosterFor(liveDetailMatch.id); }}
+          onShareStats={() => { goBackPage(); setStatsPosterFor(liveDetailMatch.id); }}
+          onClose={goBackPage}
         />
       )}
       {adminViewUser && me && me.role === "Admin" && (() => {
@@ -2319,8 +2343,13 @@ function TeamProfileModal({ team, record, onClose }) {
   const [seeMore, setSeeMore] = useState(false);
   const shown = seeMore ? record.results : record.results.slice(0, 2);
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
-      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+    <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 90, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
+        <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
+        <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</div>
+        <span style={{ width: 34 }} />
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 16, maxWidth: 420, width: "100%", margin: "0 auto" }}>
         <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><MiniLogo team={team} badge={team.badge} size={56} /></div>
           <div className="display" style={{ fontSize: 24 }}>{team.name}</div>
@@ -2372,7 +2401,6 @@ function TeamProfileModal({ team, record, onClose }) {
             </div>
           )}
         </div>
-        <button className="btn btn-ghost" style={{ width: "100%", marginTop: 10 }} onClick={onClose}>Close</button>
       </div>
     </div>
   );
@@ -2516,13 +2544,13 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
   const isOwner = m.createdBy === me.id;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div style={{ background: "#12161c", borderRadius: 20, padding: 22, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", display: "grid", gap: 14 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <StatusChip m={m} />
-          <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={onClose}>✕ Close</button>
-        </div>
-
+    <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 50, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
+        <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
+        <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+        <StatusChip m={m} />
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 14, maxWidth: 560, width: "100%", margin: "0 auto" }}>
         <div className="scoreboard" style={{ padding: 18 }}>
           <div style={{ textAlign: "center", flex: 1 }}>
             <MiniLogo team={m.teamA} badge={m.badgeA} size={54} />
@@ -2760,20 +2788,24 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                     </div>
                     {la !== "" && +la > (m.liveA ?? 0) && (
                       <div>
-                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 4 }}>⚽ Who scored for {m.teamA.name}?</div>
-                        <select className="input" value={scorerA} onChange={(e) => setScorerA(e.target.value)}>
-                          <option value="">Select scorer…</option>
-                          {rosterNames(m.playersA).map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
+                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 6 }}>⚽ Who scored for {m.teamA.name}?</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {rosterNames(m.playersA).map((p) => (
+                            <button key={p} type="button" onClick={() => setScorerA(p)}
+                              style={{ background: scorerA === p ? "rgba(230,179,30,.15)" : "#131a15", border: `1px solid ${scorerA === p ? "#E6B31E" : "#243128"}`, color: scorerA === p ? "#E6B31E" : "#F5F0E1", borderRadius: 99, padding: "7px 13px", fontSize: 12.5 }}>{p}</button>
+                          ))}
+                        </div>
                       </div>
                     )}
                     {lb !== "" && +lb > (m.liveB ?? 0) && (
                       <div>
-                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 4 }}>⚽ Who scored for {m.teamB.name}?</div>
-                        <select className="input" value={scorerB} onChange={(e) => setScorerB(e.target.value)}>
-                          <option value="">Select scorer…</option>
-                          {rosterNames(m.playersB).map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select>
+                        <div style={{ fontSize: 11, color: "#8FA396", marginBottom: 6 }}>⚽ Who scored for {m.teamB.name}?</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {rosterNames(m.playersB).map((p) => (
+                            <button key={p} type="button" onClick={() => setScorerB(p)}
+                              style={{ background: scorerB === p ? "rgba(230,179,30,.15)" : "#131a15", border: `1px solid ${scorerB === p ? "#E6B31E" : "#243128"}`, color: scorerB === p ? "#E6B31E" : "#F5F0E1", borderRadius: 99, padding: "7px 13px", fontSize: 12.5 }}>{p}</button>
+                          ))}
+                        </div>
                       </div>
                     )}
                     <button className="btn btn-gold"
@@ -2801,13 +2833,19 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                   ["foulsA", "foulsB", "Fouls", "🟨"],
                   ["offsidesA", "offsidesB", "Offsides", "🚩"],
                 ].map(([keyA, keyB, label, icon]) => (
-                  <div key={keyA} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0" }}>
-                    <span style={{ flex: 1, fontSize: 12.5 }}>{icon} {label}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 10, color: "#8FA396", width: 70, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
+                  <div key={keyA} style={{ padding: "8px 0", borderBottom: "1px solid #1a201c" }}>
+                    <div style={{ fontSize: 12.5, marginBottom: 6 }}>{icon} {label}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, color: "#8FA396", width: 76, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
                       <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, keyA, Math.max(0, (m[keyA] ?? 0) - 1))}>−</button>
                       <span className="display" style={{ fontSize: 14, width: 20, textAlign: "center" }}>{m[keyA] ?? 0}</span>
                       <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, keyA, (m[keyA] ?? 0) + 1)}>+</button>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 10, color: "#8FA396", width: 76, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</span>
+                      <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, keyB, Math.max(0, (m[keyB] ?? 0) - 1))}>−</button>
+                      <span className="display" style={{ fontSize: 14, width: 20, textAlign: "center" }}>{m[keyB] ?? 0}</span>
+                      <button className="btn btn-ghost" style={{ width: 26, height: 26, padding: 0, fontSize: 14 }} onClick={() => onUpdateStats(m, keyB, (m[keyB] ?? 0) + 1)}>+</button>
                     </div>
                   </div>
                 ))}
@@ -2870,6 +2908,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                           )}
                           <button type="button" style={{ width: 20, height: 20, borderRadius: "50%", border: 0, background: "rgba(230,179,30,.2)", color: "#E6B31E", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                             onClick={() => bumpTally(setScorerTallyA, setScorersA)(name, 1)}>+</button>
+                          {n >= 3 && <span style={{ fontSize: 10, fontWeight: 700, background: "rgba(230,179,30,.18)", color: "#E6B31E", padding: "3px 8px", borderRadius: 6 }}>🎩 Hat-trick!</span>}
                         </div>
                       );
                     })}
@@ -2892,6 +2931,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                           )}
                           <button type="button" style={{ width: 20, height: 20, borderRadius: "50%", border: 0, background: "rgba(230,179,30,.2)", color: "#E6B31E", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                             onClick={() => bumpTally(setScorerTallyB, setScorersB)(name, 1)}>+</button>
+                          {n >= 3 && <span style={{ fontSize: 10, fontWeight: 700, background: "rgba(230,179,30,.18)", color: "#E6B31E", padding: "3px 8px", borderRadius: 6 }}>🎩 Hat-trick!</span>}
                         </div>
                       );
                     })}
@@ -3002,7 +3042,6 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
     </div>
   );
 }
-
 /* ---------- LIVE MATCH VIEW — read-only pitch-style broadcast page for the 🔴 Live tab ---------- */
 /* Playful, clearly-fictional color commentary — never a record of what actually happened.
    Real events (goals, cards, KO/HT) only ever come from the captain's timeline. */
@@ -3042,13 +3081,24 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
 
   /* Real "Watching" count — presence channel scoped to this exact match.
      Counts only people who genuinely have this match's Live view open right now. */
+  const [watchers, setWatchers] = useState([]);
+  const [showWatchers, setShowWatchers] = useState(false);
+  const [showScorers, setShowScorers] = useState(false);
+  /* Pulls scorer names straight out of the existing "GOAL — Team! Name scores." event text — no new data needed */
+  const scorerNames = timeline
+    .map((e) => { const mm = /GOAL — .+?! (.+?) scores\./.exec(e.message || ""); return mm ? mm[1] : null; })
+    .filter(Boolean)
+    .reverse();
   useEffect(() => {
     if (!me) return;
     const ch = supabase.channel(`watch-${m.id}`, { config: { presence: { key: me.id } } });
     ch.on("presence", { event: "sync" }, () => {
-      setWatching(Math.max(1, Object.keys(ch.presenceState()).length));
+      const state = ch.presenceState();
+      const names = Object.values(state).map((arr) => (arr[0] && arr[0].name) || "Someone");
+      setWatchers(names);
+      setWatching(Math.max(1, names.length));
     }).subscribe(async (status) => {
-      if (status === "SUBSCRIBED") await ch.track({ at: Date.now() });
+      if (status === "SUBSCRIBED") await ch.track({ at: Date.now(), name: me.name });
     });
     return () => { supabase.removeChannel(ch); };
   }, [m.id, me && me.id]);
@@ -3089,15 +3139,15 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
   ].sort((a, b) => b.ts - a.ts);
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 80, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
-      <div className="card" style={{ maxWidth: 460, width: "100%", padding: 0, overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
+    <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 80, display: "flex", flexDirection: "column" }}>
+      <div style={{ maxWidth: 460, width: "100%", margin: "0 auto", flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128" }}>
-          <button className="btn btn-ghost" style={{ padding: "6px 10px" }} onClick={onClose}>‹</button>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
           <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
             <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".1em" }}>{(m.location || "").toUpperCase()}</div>
           </div>
-          <span style={{ width: 30 }} />
+          <span style={{ width: 34 }} />
         </div>
 
         <div className="scoreboard" style={{ borderRadius: 0, border: 0, borderBottom: "1px solid #243128", flexDirection: "column", gap: 10, padding: "18px 16px" }}>
@@ -3142,16 +3192,34 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         )}
 
-        <div style={{ display: "flex", borderBottom: "1px solid #243128" }}>
-          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px", borderRight: "1px solid #243128" }}>
+        <div style={{ display: "flex", borderBottom: showWatchers || showScorers ? "none" : "1px solid #243128" }}>
+          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px", borderRight: "1px solid #243128", cursor: "pointer" }} onClick={() => { setShowWatchers(!showWatchers); setShowScorers(false); }}>
             <div className="display" style={{ fontSize: 18, color: T.floodlight }}>👀 {watching}</div>
             <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Watching</div>
           </div>
-          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px" }}>
+          <div style={{ flex: 1, textAlign: "center", padding: "12px 4px", cursor: "pointer" }} onClick={() => { setShowScorers(!showScorers); setShowWatchers(false); }}>
             <div className="display" style={{ fontSize: 18, color: T.floodlight }}>{(m.liveA ?? 0) + (m.liveB ?? 0)}</div>
             <div style={{ fontSize: 10, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>Goals</div>
           </div>
         </div>
+        {showWatchers && (
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid #243128" }}>
+            <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Currently Watching ({watchers.length})</div>
+            {watchers.map((n, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", fontSize: 13 }}>
+                <div style={{ width: 26, height: 26, borderRadius: "50%", background: T.turf, color: T.floodlight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{n.slice(0, 1).toUpperCase()}</div>
+                {n}
+              </div>
+            ))}
+          </div>
+        )}
+        {showScorers && (
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid #243128" }}>
+            <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Scorers</div>
+            {scorerNames.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>No goals yet.</div>}
+            {scorerNames.map((n, i) => <div key={i} style={{ fontSize: 13, padding: "5px 0" }}>⚽ {n}</div>)}
+          </div>
+        )}
 
         {[m.shotsA, m.shotsB, m.shotsOnTargetA, m.shotsOnTargetB, m.cornersA, m.cornersB, m.foulsA, m.foulsB].some((v) => (v ?? 0) > 0) && (
           <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
@@ -3182,6 +3250,21 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
               onClick={onShareStats}>🎨 Share stats card</button>
           </div>
         )}
+
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid #243128" }}>
+          <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10 }}>Starting Lineups</div>
+          <div style={{ display: "flex" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
+              {rosterNames(m.playersA).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
+            </div>
+            <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
+              {rosterNames(m.playersB).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
+            </div>
+          </div>
+        </div>
 
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
         <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
@@ -3215,7 +3298,6 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
     </div>
   );
 }
-
 /* ---------- COMING SOON — feature gate with feedback ---------- */
 /* ---------- FEEDBACK — open box for feature requests, complaints, anything ---------- */
 function FeedbackPage({ myFeedback, onSend }) {
@@ -3412,12 +3494,18 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
                 {picked && <div style={{ fontSize: 11, color: "#E6B31E", textAlign: "center", marginTop: 4, textDecoration: "underline", cursor: "pointer" }} onClick={() => clearTeam(side)}>or type a new team instead</div>}
                 {pickerOpen === side && (
                   <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
-                    {myTeams.map((t) => (
-                      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, border: "1px solid #243128", borderRadius: 10, cursor: "pointer" }} onClick={() => applyTeam(side, t)}>
-                        <MiniLogo team={t} badge={t.badge} size={26} />
-                        <span style={{ fontSize: 13, fontWeight: 700 }}>{t.name}</span>
-                      </div>
-                    ))}
+                    {myTeams.map((t) => {
+                      const otherSidePicked = side === "A" ? pickedTeamB : pickedTeamA;
+                      const isTakenByOtherSide = otherSidePicked === t.id;
+                      return (
+                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, border: "1px solid #243128", borderRadius: 10, cursor: isTakenByOtherSide ? "default" : "pointer", opacity: isTakenByOtherSide ? 0.35 : 1 }}
+                          onClick={() => !isTakenByOtherSide && applyTeam(side, t)}>
+                          <MiniLogo team={t} badge={t.badge} size={26} />
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>{t.name}</span>
+                          {isTakenByOtherSide && <span style={{ fontSize: 11, color: "#8FA396", marginLeft: "auto" }}>already Team {side === "A" ? "B" : "A"}</span>}
+                        </div>
+                      );
+                    })}
                     {!picked && <div style={{ fontSize: 11, color: "#8FA396", textAlign: "center", cursor: "pointer" }} onClick={() => setPickerOpen(null)}>or type a new team instead ↓</div>}
                   </div>
                 )}
