@@ -381,8 +381,11 @@ export default function App() {
       supabase.from("matches").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email"),
     ]);
-    const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(12);
-    if (ev) setEvents(ev);
+    const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(24);
+    /* The quick "Live Updates" ticker (News Feed + Admin) shows real match events only —
+       captain commentary is intentionally kept out of it and stays limited to the actual
+       match's own live view, where it belongs alongside the full commentary feed. */
+    if (ev) setEvents(ev.filter((e) => !/🎙/.test(e.message || "")).slice(0, 12));
     const { data: lk } = await supabase.from("likes").select("match_id, user_id");
     if (lk) {
       setMyLikes(lk.filter((x) => x.user_id === meObj.id).map((x) => x.match_id));
@@ -2761,7 +2764,7 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                 <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }} onClick={() => onHalfTime(m, false)}>Skip break — start second half now</button>
               </div>
             )}
-            {m.status === "Live" && !m.halfPrompt && !m.onBreak && (
+            {m.status === "Live" && ctrlTab === "score" && !m.halfPrompt && !m.onBreak && (
               m.running ? (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>⏸ Pause timer — tell the fans why:</div>
