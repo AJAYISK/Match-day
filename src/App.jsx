@@ -169,6 +169,48 @@ const fmtDay = (d) => {
 /* Jersey vector badges — same 12 choices as before, now consistent line-icon crests
    instead of platform-dependent emoji. Old matches saved with an emoji still resolve fine. */
 const BADGES = ["ball", "lion", "eagle", "shield", "star", "fire", "leopard", "scorpion", "crown", "rocket", "bolt", "elephant"];
+
+/* Six standard 11-a-side formations. Each slot has a label (position code, unique per formation)
+   and x/y as percentages of the pitch — GK always deepest, attackers always furthest forward. */
+const FORMATIONS = {
+  "4-4-2": [
+    { key: "GK", x: 50, y: 92 },
+    { key: "LB", x: 15, y: 75 }, { key: "CB1", x: 38, y: 78 }, { key: "CB2", x: 62, y: 78 }, { key: "RB", x: 85, y: 75 },
+    { key: "LM", x: 15, y: 50 }, { key: "CM1", x: 38, y: 52 }, { key: "CM2", x: 62, y: 52 }, { key: "RM", x: 85, y: 50 },
+    { key: "ST1", x: 35, y: 22 }, { key: "ST2", x: 65, y: 22 },
+  ],
+  "4-3-3": [
+    { key: "GK", x: 50, y: 92 },
+    { key: "LB", x: 15, y: 75 }, { key: "CB1", x: 38, y: 78 }, { key: "CB2", x: 62, y: 78 }, { key: "RB", x: 85, y: 75 },
+    { key: "CM1", x: 28, y: 55 }, { key: "CDM", x: 50, y: 60 }, { key: "CM2", x: 72, y: 55 },
+    { key: "LW", x: 18, y: 24 }, { key: "ST", x: 50, y: 18 }, { key: "RW", x: 82, y: 24 },
+  ],
+  "3-5-2": [
+    { key: "GK", x: 50, y: 92 },
+    { key: "CB1", x: 28, y: 78 }, { key: "CB2", x: 50, y: 80 }, { key: "CB3", x: 72, y: 78 },
+    { key: "LM", x: 10, y: 52 }, { key: "CM1", x: 33, y: 56 }, { key: "CDM", x: 50, y: 62 }, { key: "CM2", x: 67, y: 56 }, { key: "RM", x: 90, y: 52 },
+    { key: "ST1", x: 38, y: 20 }, { key: "ST2", x: 62, y: 20 },
+  ],
+  "4-2-3-1": [
+    { key: "GK", x: 50, y: 92 },
+    { key: "LB", x: 15, y: 75 }, { key: "CB1", x: 38, y: 78 }, { key: "CB2", x: 62, y: 78 }, { key: "RB", x: 85, y: 75 },
+    { key: "CDM1", x: 38, y: 60 }, { key: "CDM2", x: 62, y: 60 },
+    { key: "LW", x: 18, y: 36 }, { key: "CAM", x: 50, y: 34 }, { key: "RW", x: 82, y: 36 },
+    { key: "ST", x: 50, y: 15 },
+  ],
+  "5-3-2": [
+    { key: "GK", x: 50, y: 92 },
+    { key: "LWB", x: 8, y: 68 }, { key: "CB1", x: 28, y: 78 }, { key: "CB2", x: 50, y: 80 }, { key: "CB3", x: 72, y: 78 }, { key: "RWB", x: 92, y: 68 },
+    { key: "CM1", x: 30, y: 52 }, { key: "CM2", x: 50, y: 56 }, { key: "CM3", x: 70, y: 52 },
+    { key: "ST1", x: 38, y: 20 }, { key: "ST2", x: 62, y: 20 },
+  ],
+  "3-4-3": [
+    { key: "GK", x: 50, y: 92 },
+    { key: "CB1", x: 28, y: 78 }, { key: "CB2", x: 50, y: 80 }, { key: "CB3", x: 72, y: 78 },
+    { key: "LM", x: 12, y: 52 }, { key: "CM1", x: 38, y: 56 }, { key: "CM2", x: 62, y: 56 }, { key: "RM", x: 88, y: 52 },
+    { key: "LW", x: 18, y: 22 }, { key: "ST", x: 50, y: 16 }, { key: "RW", x: 82, y: 22 },
+  ],
+};
 const LEGACY_BADGE_MAP = { "⚽": "ball", "🦁": "lion", "🦅": "eagle", "🛡️": "shield", "⭐": "star", "🔥": "fire", "🐆": "leopard", "🦂": "scorpion", "👑": "crown", "🚀": "rocket", "⚡": "bolt", "🐘": "elephant" };
 const resolveBadgeIcon = (b) => (b && BADGES.includes(b)) ? b : (b && LEGACY_BADGE_MAP[b]) || null;
 const BADGE_ICON_SCALE = { ball: 1.1, lion: 1.15, eagle: 1.3, shield: 1.2, star: 1.25, fire: 1.2, leopard: 1.15, scorpion: 1.2, crown: 1.2, rocket: 1.2, bolt: 1.3, elephant: 1.15 };
@@ -305,6 +347,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [notifPromptOpen, setNotifPromptOpen] = useState(false);
   const [posterFor, setPosterFor] = useState(null);
+  const [pendingScoreSlide, setPendingScoreSlide] = useState(0);
   const [statsPosterFor, setStatsPosterFor] = useState(null);
   const [teamFormOpen, setTeamFormOpen] = useState(null); // null | "new" | teamId (editing)
   const [viewTeamId, setViewTeamId] = useState(null); // public team profile viewer
@@ -411,7 +454,7 @@ export default function App() {
     if (ms) setMatches(ms.map(rowToMatch));
     if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
     const { data: savedTeamsRows } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
-    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", createdAt: t.created_at })));
+    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, createdAt: t.created_at })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
       if (fb) setFeedbacks(fb.map((f) => ({ id: f.id, userId: f.user_id, feature: f.feature, msg: f.message, at: f.created_at })));
@@ -780,6 +823,11 @@ export default function App() {
   /* Past results older than 30 days are retired from view (and purged nightly by the database) */
   const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
+  useEffect(() => {
+    if (pendingScores.length <= 1) return;
+    const t = setInterval(() => setPendingScoreSlide((i) => (i + 1) % pendingScores.length), 5000);
+    return () => clearInterval(t);
+  }, [pendingScores.length]);
   /* A saved team's record is derived from real published results — matched by team name + the
      same captain, since matches store team names as free text rather than a saved_team id. */
   const teamRecord = (team) => {
@@ -803,13 +851,13 @@ export default function App() {
     return { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
   };
   const createSavedTeam = async (data) => {
-    const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players });
+    const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions });
     if (error) return notify(error.message);
     notify(`✔ ${data.name} saved to your teams.`);
     refreshAll();
   };
   const updateSavedTeam = async (id, data) => {
-    const { error } = await supabase.from("saved_teams").update({ name: data.name, color: data.color, badge: data.badge, players: data.players }).eq("id", id);
+    const { error } = await supabase.from("saved_teams").update({ name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions }).eq("id", id);
     if (error) return notify(error.message);
     notify("✔ Team updated.");
     refreshAll();
@@ -1469,19 +1517,32 @@ export default function App() {
           </div>
         ))}
 
-        {/* SCORE REQUEST BANNER — the site requests the final score */}
-        {pendingScores.map((m) => {
+        {/* SCORE REQUEST BANNER — carousel when a captain has more than one overdue score */}
+        {pendingScores.length > 0 && (() => {
+          const idx = pendingScoreSlide % pendingScores.length;
+          const m = pendingScores[idx];
           const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
           return (
-            <div key={m.id} className="banner" style={{ marginBottom: 16 }}>
-              <span>
-                {mins >= 20 ? `⚠️ ${mins} MINUTES LATE — ` : "🏁 Full time: "}
-                {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it.
-              </span>
-              <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => openMatchDetail(m.id)}>Upload result</button>
+            <div className="banner" style={{ marginBottom: 16, flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <span>
+                  {mins >= 20 ? `⚠️ ${mins} MINUTES LATE — ` : "🏁 Full time: "}
+                  {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it.
+                </span>
+                <button className="btn btn-gold" style={{ padding: "8px 14px", flexShrink: 0 }} onClick={() => openMatchDetail(m.id)}>Upload result</button>
+              </div>
+              {pendingScores.length > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                  <button onClick={() => setPendingScoreSlide((i) => (i - 1 + pendingScores.length) % pendingScores.length)} style={{ background: "none", border: "1px solid rgba(255,255,255,.3)", color: "#fff", borderRadius: 8, width: 26, height: 26, fontSize: 13 }}>‹</button>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {pendingScores.map((_, i) => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: i === idx ? "#fff" : "rgba(255,255,255,.35)" }} />)}
+                  </div>
+                  <button onClick={() => setPendingScoreSlide((i) => (i + 1) % pendingScores.length)} style={{ background: "none", border: "1px solid rgba(255,255,255,.3)", color: "#fff", borderRadius: 8, width: 26, height: 26, fontSize: 13 }}>›</button>
+                </div>
+              )}
             </div>
           );
-        })}
+        })()}
 
         {/* ---------- NEWS FEED (homepage) ---------- */}
         {page === "feed" && (
@@ -1626,7 +1687,7 @@ export default function App() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <div style={{ fontWeight: 700, fontSize: 14 }}>{t.name}</div>
-                        {rec.ratingReady ? <span className="display" style={{ fontSize: 15, color: T.floodlight }}>{rec.rating}</span> : <span style={{ fontSize: 10, color: T.muted }}>Building record</span>}
+                        {rec.ratingReady ? <span style={{ fontSize: 13 }}>{[1, 2, 3, 4, 5].map((i) => <span key={i} style={{ color: i <= Math.round(rec.rating) ? T.floodlight : "#3a4a3e" }}>★</span>)} <span className="display" style={{ fontSize: 13, color: T.floodlight }}>{rec.rating}</span></span> : <span style={{ fontSize: 10, color: T.muted }}>Building record</span>}
                       </div>
                       {rec.ratingReady ? (
                         <>
@@ -1841,6 +1902,26 @@ export default function App() {
                         </button>
                       )}
                     </div>
+                    {savedTeams.filter((t) => t.captainId === c.id).length > 0 && (
+                      <>
+                        <SectionTitle color={T.floodlight}>Teams</SectionTitle>
+                        <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
+                          {savedTeams.filter((t) => t.captainId === c.id).map((t) => (
+                            <div key={t.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => openTeamProfile(t.id)}>
+                              <MiniLogo team={t} badge={t.badge} size={40} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{t.name}</div>
+                                {(() => { const rec = teamRecord(t); return rec.ratingReady
+                                  ? <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{[1,2,3,4,5].map((i) => <span key={i} style={{ color: i <= Math.round(rec.rating) ? T.floodlight : "#3a4a3e" }}>★</span>)} {rec.rating} · {rec.total} matches</div>
+                                  : <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>Building record</div>;
+                                })()}
+                              </div>
+                              <span style={{ color: T.muted }}>›</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
                     {theirs.length === 0 && <div className="card" style={{ color: T.muted }}>This captain hasn't published any matches yet.</div>}
                     {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <SectionTitle color={T.floodlight}>Current & Upcoming</SectionTitle>}
                     <div className="feedgrid" style={{ marginBottom: 20 }}>
@@ -2311,7 +2392,17 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
   const [color, setColor] = useState(existing ? existing.color : "#E6B31E");
   const [badge, setBadge] = useState(existing ? existing.badge : "ball");
   const [players, setPlayers] = useState(existing ? existing.players : "");
+  const [formation, setFormation] = useState(existing ? existing.formation : null);
+  const [positions, setPositions] = useState(existing && existing.positions ? existing.positions : {});
+  const [activeSlot, setActiveSlot] = useState(null);
   const valid = name.trim().length > 0;
+  const roster = players.split(",").map((s) => s.trim()).filter(Boolean);
+  const usedNames = Object.values(positions);
+
+  const pickFormation = (f) => { setFormation(f); setPositions({}); setActiveSlot(null); };
+  const assign = (slotKey, playerName) => { setPositions((p) => ({ ...p, [slotKey]: playerName })); setActiveSlot(null); };
+  const clearSlot = (slotKey) => { setPositions((p) => { const n = { ...p }; delete n[slotKey]; return n; }); setActiveSlot(null); };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "#12161c", border: "1.5px solid #243128", borderRadius: 20, padding: 22, width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
@@ -2330,11 +2421,57 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
         </div>
         <textarea className="input" rows={3} placeholder="Squad — comma separated names (e.g. Tunde, Emeka, Ibrahim)" maxLength={300}
           value={players} onChange={(e) => setPlayers(e.target.value.slice(0, 300))} />
+
+        <div style={{ borderTop: "1px solid #243128", paddingTop: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 8 }}>⚽ Formation (optional)</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {Object.keys(FORMATIONS).map((f) => (
+              <button key={f} type="button" onClick={() => pickFormation(f)}
+                style={{ background: formation === f ? "#E6B31E" : "#131a15", color: formation === f ? "#1a1405" : "#F5F0E1", border: `1px solid ${formation === f ? "#E6B31E" : "#243128"}`, borderRadius: 99, padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>{f}</button>
+            ))}
+            {formation && <button type="button" onClick={() => pickFormation(null)} style={{ background: "none", border: "1px solid #3a1f1a", color: "#E8442E", borderRadius: 99, padding: "7px 12px", fontSize: 12 }}>Remove</button>}
+          </div>
+
+          {formation && roster.length === 0 && <div style={{ fontSize: 12, color: "#8FA396" }}>Add your squad names above first, then assign them to positions here.</div>}
+
+          {formation && roster.length > 0 && (
+            <>
+              <div style={{ position: "relative", width: "100%", aspectRatio: "0.72", borderRadius: 12, overflow: "hidden", background: "repeating-linear-gradient(0deg, #1c6b3a 0 20px, #17602f 20px 40px)", border: "2px solid rgba(245,240,225,.4)", marginBottom: 10 }}>
+                <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1.5, background: "rgba(245,240,225,.4)" }} />
+                <div style={{ position: "absolute", width: "22%", aspectRatio: "1", border: "1.5px solid rgba(245,240,225,.4)", borderRadius: "50%", left: "50%", top: "50%", transform: "translate(-50%,-50%)" }} />
+                {FORMATIONS[formation].map((slot) => {
+                  const filled = positions[slot.key];
+                  return (
+                    <div key={slot.key} onClick={() => setActiveSlot(slot.key)}
+                      style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", aspectRatio: "1", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, textAlign: "center", lineHeight: 1.05, fontWeight: 700, cursor: "pointer", padding: 2,
+                        background: filled ? "#E6B31E" : "#131a15", color: filled ? "#1a1405" : "#8FA396", border: `1.5px solid ${activeSlot === slot.key ? "#fff" : filled ? "#0f3620" : "#3a4a3e"}`, borderStyle: filled ? "solid" : "dashed" }}>
+                      {filled || slot.key}
+                    </div>
+                  );
+                })}
+              </div>
+              {activeSlot && (
+                <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: 10, marginBottom: 4 }}>
+                  <div style={{ fontSize: 10, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>Assign {activeSlot}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {roster.map((p) => (
+                      <button key={p} type="button" onClick={() => assign(activeSlot, p)}
+                        style={{ opacity: usedNames.includes(p) && positions[activeSlot] !== p ? 0.35 : 1, background: positions[activeSlot] === p ? "rgba(230,179,30,.15)" : "#0f1511", border: `1px solid ${positions[activeSlot] === p ? "#E6B31E" : "#243128"}`, color: "#F5F0E1", borderRadius: 99, padding: "6px 11px", fontSize: 11.5 }}>{p}</button>
+                    ))}
+                    {positions[activeSlot] && <button type="button" onClick={() => clearSlot(activeSlot)} style={{ background: "none", border: "1px solid #3a1f1a", color: "#E8442E", borderRadius: 99, padding: "6px 11px", fontSize: 11.5 }}>✕ Clear</button>}
+                  </div>
+                </div>
+              )}
+              <div style={{ fontSize: 10.5, color: "#8FA396" }}>{Object.keys(positions).length}/11 positions assigned. Fans will see whatever's filled in — the rest is fine to leave blank.</div>
+            </>
+          )}
+        </div>
+
         <div style={{ display: "flex", gap: 8 }}>
           {existing && <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a" }} onClick={() => onDelete(existing.id, existing.name)}>🗑 Delete</button>}
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
           <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
-            onClick={() => valid && onSave({ name: name.trim(), color, badge, players })}>{existing ? "Save changes" : "Create team"}</button>
+            onClick={() => valid && onSave({ name: name.trim(), color, badge, players, formation, positions: formation ? positions : null })}>{existing ? "Save changes" : "Create team"}</button>
         </div>
       </div>
     </div>
@@ -2357,9 +2494,11 @@ function TeamProfileModal({ team, record, onClose }) {
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><MiniLogo team={team} badge={team.badge} size={56} /></div>
           <div className="display" style={{ fontSize: 24 }}>{team.name}</div>
           {record.ratingReady ? (
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 6, marginTop: 10 }}>
-              <span className="display" style={{ fontSize: 34, color: "#E6B31E" }}>{record.rating}</span>
-              <span style={{ fontSize: 12, color: "#8FA396" }}>/ 5.0 · {record.total} matches</span>
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 22, letterSpacing: 2 }}>
+                {[1, 2, 3, 4, 5].map((i) => <span key={i} style={{ color: i <= Math.round(record.rating) ? "#E6B31E" : "#3a4a3e" }}>★</span>)}
+              </div>
+              <div style={{ fontSize: 12, color: "#8FA396", marginTop: 4 }}>{record.rating} / 5.0 · {record.total} matches</div>
             </div>
           ) : (
             <div style={{ fontSize: 12, color: "#8FA396", marginTop: 10 }}>Building record — {3 - record.total} more match{3 - record.total === 1 ? "" : "es"} needed for a rating</div>
@@ -2379,7 +2518,28 @@ function TeamProfileModal({ team, record, onClose }) {
             </div>
           </div>
         </div>
-        {record.results.length > 0 && (
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Formation</div>
+          {team.formation && team.positions && Object.keys(team.positions).length > 0 ? (
+            <div style={{ position: "relative", width: "100%", aspectRatio: "0.72", borderRadius: 12, overflow: "hidden", background: "repeating-linear-gradient(0deg, #1c6b3a 0 20px, #17602f 20px 40px)", border: "2px solid rgba(245,240,225,.4)" }}>
+              <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1.5, background: "rgba(245,240,225,.4)" }} />
+              <div style={{ position: "absolute", width: "22%", aspectRatio: "1", border: "1.5px solid rgba(245,240,225,.4)", borderRadius: "50%", left: "50%", top: "50%", transform: "translate(-50%,-50%)" }} />
+              {(FORMATIONS[team.formation] || []).map((slot) => {
+                const filled = team.positions[slot.key];
+                if (!filled) return null;
+                return (
+                  <div key={slot.key} style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", aspectRatio: "1", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, textAlign: "center", lineHeight: 1.05, fontWeight: 700, padding: 2, background: "#E6B31E", color: "#1a1405", border: "1.5px solid #0f3620" }}>
+                    {filled}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "#8FA396", textAlign: "center", padding: "10px 0" }}>{team.name} hasn't set a formation yet.</div>
+          )}
+        </div>
+          {record.results.length > 0 && (
           <div className="card" style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Recent Form</div>
             <div style={{ display: "flex", gap: 5 }}>
@@ -2583,23 +2743,27 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
         {captainName && <div style={{ fontSize: 13, color: "#8FA396" }}>🧢 Hosted by Captain <span style={{ color: "#E6B31E", fontWeight: 700 }}>{captainName}</span></div>}
 
         {/* TEAM SHEETS */}
-        <div className="card" style={{ fontSize: 13, padding: 14, display: "grid", gap: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#8FA396", letterSpacing: ".08em", textTransform: "uppercase" }}>Team Sheets</div>
-          {[[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => (
-            <div key={i}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <MiniLogo team={team} badge={badge} size={26} />
-                <span style={{ fontWeight: 700 }}>{team.name}</span>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {(players || "").split(",").map((p) => p.trim()).filter(Boolean).length > 0
-                  ? (players || "").split(",").map((p) => p.trim()).filter(Boolean).map((p, j) => (
-                      <span key={j} className="chip" style={{ background: "#243128", color: "#F5F0E1", fontWeight: 500 }}>{p}</span>
-                    ))
-                  : <span style={{ color: "#8FA396" }}>Squad to be announced</span>}
-              </div>
-            </div>
-          ))}
+        <div className="card" style={{ fontSize: 13, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#8FA396", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>Team Sheets</div>
+          <div style={{ display: "flex" }}>
+            {[[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => {
+              const names = (players || "").split(",").map((p) => p.trim()).filter(Boolean);
+              return (
+                <React.Fragment key={i}>
+                  {i === 1 && <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <MiniLogo team={team} badge={badge} size={24} />
+                      <span style={{ fontWeight: 700, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
+                    </div>
+                    {names.length > 0
+                      ? names.map((p, j) => <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)
+                      : <div style={{ color: "#8FA396", fontSize: 12 }}>Squad to be announced</div>}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
         </div>
 
         {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
@@ -3270,7 +3434,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
         </div>
 
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
-        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
+        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px" }}>
           {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
           {feed.map((e) => {
             const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
