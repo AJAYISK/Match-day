@@ -990,8 +990,9 @@ export default function App() {
           await supabase.from("saved_teams").update({ players: list.join(", ") }).eq("id", team.id);
         }
       }
-      const { error } = await supabase.from("profiles").update({ team_id: req.teamId, roster_name: rosterName }).eq("id", req.playerId);
+      const { data: updated, error } = await supabase.from("profiles").update({ team_id: req.teamId, roster_name: rosterName }).eq("id", req.playerId).select();
       if (error) return notify(error.message);
+      if (!updated || updated.length === 0) return notify("⚠️ Couldn't link the player — a permissions issue may be blocking it. Try again after the latest update.");
       await supabase.from("notifications").insert({
         user_id: req.playerId,
         message: `✅ You're in! ${team ? team.name : "The captain"} approved you as "${rosterName}". Your goals are now tracked on your profile.`,
