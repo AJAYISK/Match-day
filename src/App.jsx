@@ -367,6 +367,7 @@ export default function App() {
   const [lineupPosterFor, setLineupPosterFor] = useState(null);
   const [teamFormOpen, setTeamFormOpen] = useState(null); // null | "new" | teamId (editing)
   const [squadManageFor, setSquadManageFor] = useState(null); // teamId
+  const [awardCardFor, setAwardCardFor] = useState(null); // award id
   const [viewTeamId, setViewTeamId] = useState(null); // public team profile viewer
   const [toast, setToast] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -1859,6 +1860,8 @@ export default function App() {
         {/* ---------- MY PLAYER PROFILE ---------- */}
         {page === "myplayer" && me.role === "Player" && (() => {
           const stats = playerStats(me);
+          const lvl = playerLevel(me);
+          const myAwards = playerAwards.filter((a) => a.playerId === me.id);
           const myPending = teamRequests.find((r) => r.playerId === me.id && r.status === "pending");
           const pendingTeam = myPending ? savedTeams.find((t) => t.id === myPending.teamId) : null;
           return (
@@ -1882,8 +1885,37 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                <div style={{ marginTop: 14, textAlign: "left" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+                    <span style={{ fontWeight: 700 }}>{lvl.tier.icon} {lvl.tier.name}</span>
+                    <span style={{ color: T.muted }}>{lvl.next ? `${lvl.score}/${lvl.next.min} to ${lvl.next.name}` : "Max level"}</span>
+                  </div>
+                  <div style={{ height: 6, background: "rgba(0,0,0,.3)", borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ width: `${lvl.progress * 100}%`, height: "100%", background: T.floodlight }} />
+                  </div>
+                </div>
                 {stats.ready && <button className="btn btn-gold" style={{ marginTop: 14, width: "100%" }} onClick={() => setPlayerCardFor(me.id)}>🎨 Download my player card</button>}
               </div>
+
+              {myAwards.length > 0 && (
+                <div className="card" style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Achievements</div>
+                  {myAwards.map((a) => {
+                    const info = AWARD_TYPES[a.awardType] || { label: a.awardType, icon: "🏆" };
+                    return (
+                      <div key={a.id} onClick={() => setAwardCardFor(a.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
+                        <span style={{ fontSize: 20 }}>{info.icon}</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{info.label}</div>
+                          <div style={{ fontSize: 10, color: T.muted }}>{new Date(a.createdAt).toLocaleDateString()}</div>
+                        </div>
+                        <span style={{ fontSize: 11, color: T.floodlight }}>🎨 Card ›</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* SQUAD STATUS */}
               <div className="card" style={{ marginBottom: 10 }}>
@@ -2525,7 +2557,14 @@ export default function App() {
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
       {playerCardFor && (() => {
         const p = users.find((u) => u.id === playerCardFor) || (me.id === playerCardFor ? me : null);
-        return p ? <PlayerCardModal player={p} stats={playerStats(p)} onClose={() => setPlayerCardFor(null)} notify={notify} /> : null;
+        return p ? <PlayerCardModal player={p} stats={playerStats(p)} awards={playerAwards.filter((a) => a.playerId === p.id)} level={playerLevel(p)} onClose={() => setPlayerCardFor(null)} notify={notify} /> : null;
+      })()}
+      {awardCardFor && (() => {
+        const award = playerAwards.find((a) => a.id === awardCardFor);
+        if (!award) return null;
+        const p = users.find((u) => u.id === award.playerId) || (me.id === award.playerId ? me : null);
+        const team = savedTeams.find((t) => t.id === award.teamId);
+        return <AwardCardModal award={award} player={p} team={team} onClose={() => setAwardCardFor(null)} notify={notify} />;
       })()}
       {teamFormOpen && (
         <TeamFormModal
@@ -4633,7 +4672,7 @@ function PosterModal({ m, onClose, notify }) {
 
 /* ---------- SHAREABLE STATS ARTWORK — dedicated card just for the stat line ---------- */
 /* ---------- PLAYER CARD — cinematic downloadable achievement artwork ---------- */
-function PlayerCardModal({ player, stats, onClose, notify }) {
+function PlayerCardModal({ player, stats, onClose, notify, awards = [], level }) {
   const svgRef = useRef(null);
   if (!player) return null;
   const download = () => {
@@ -4663,6 +4702,19 @@ function PlayerCardModal({ player, stats, onClose, notify }) {
           <div style={{ display: "flex", gap: 10, fontSize: 12, color: "#8FA396", justifyContent: "center", flexWrap: "wrap" }}>
             {player.state && <span>📍 {player.state}</span>}
             {player.contactPublic && player.contactInfo && <span>📞 {player.contactInfo}</span>}
+          </div>
+        )}
+        {level && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, color: "#E6B31E", fontWeight: 700 }}>
+            {level.tier.icon} {level.tier.name}
+          </div>
+        )}
+        {awards.length > 0 && (
+          <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+            {awards.slice(0, 6).map((a) => {
+              const info = AWARD_TYPES[a.awardType] || { icon: "🏆", label: a.awardType };
+              return <span key={a.id} title={info.label} style={{ fontSize: 16, background: "#131a15", border: "1px solid #243128", borderRadius: 99, padding: "4px 8px" }}>{info.icon}</span>;
+            })}
           </div>
         )}
         <svg ref={svgRef} viewBox="0 0 500 620" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
@@ -4718,6 +4770,84 @@ function PlayerCardModal({ player, stats, onClose, notify }) {
           ))}
 
           <text x="250" y="592" textAnchor="middle" fill="#8FA396" opacity="0.7" fontFamily="Space Grotesk, sans-serif" fontSize="10" letterSpacing="3">HOSTED ON AREA MATCH</text>
+        </svg>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
+          <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- AWARD ARTWORK — cinematic, with a medal and ribbon, distinct from the player stat card ---------- */
+function AwardCardModal({ award, player, team, onClose, notify }) {
+  const svgRef = useRef(null);
+  if (!award || !player) return null;
+  const info = AWARD_TYPES[award.awardType] || { label: award.awardType, icon: "🏆", medal: "#E6B31E" };
+  const download = () => {
+    const xml = new XMLSerializer().serializeToString(svgRef.current);
+    const blob = new Blob([xml], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1000; canvas.height = 1240;
+      canvas.getContext("2d").drawImage(img, 0, 0, 1000, 1240);
+      canvas.toBlob((png) => {
+        URL.revokeObjectURL(url);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(png);
+        a.download = `${player.name}-${info.label.replace(/\s+/g, "-").toLowerCase()}-area-match.png`;
+        a.click();
+        notify("Award card downloaded 📲");
+      });
+    };
+    img.src = url;
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 96, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <svg ref={svgRef} viewBox="0 0 500 620" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
+          <defs>
+            <radialGradient id="acSpot" cx="50%" cy="28%" r="80%">
+              <stop offset="0%" stopColor="#1c1006" /><stop offset="55%" stopColor="#0D0A05" /><stop offset="100%" stopColor="#050403" />
+            </radialGradient>
+            <radialGradient id="acGlow" cx="50%" cy="30%" r="30%">
+              <stop offset="0%" stopColor={info.medal} stopOpacity="0.5" /><stop offset="100%" stopColor={info.medal} stopOpacity="0" />
+            </radialGradient>
+            <linearGradient id="acMedal" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={info.medal} /><stop offset="100%" stopColor="#8a6d1a" />
+            </linearGradient>
+            <filter id="acBlur"><feGaussianBlur stdDeviation="22" /></filter>
+          </defs>
+
+          <rect width="500" height="620" fill="url(#acSpot)" />
+          <g opacity="0.15">
+            <polygon points="100,0 160,0 40,620 -20,620" fill={info.medal} />
+            <polygon points="340,0 400,0 480,620 420,620" fill={info.medal} />
+          </g>
+          <ellipse cx="250" cy="220" rx="180" ry="180" fill="url(#acGlow)" filter="url(#acBlur)" />
+
+          <text x="250" y="46" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="20" letterSpacing="4">AREA MATCH</text>
+
+          <polygon points="220,140 280,140 300,300 250,270 200,300" fill="#8a1f1f" />
+          <polygon points="220,140 280,140 300,300 250,270 200,300" fill="#000" opacity="0.15" />
+
+          <circle cx="250" cy="220" r="90" fill="url(#acMedal)" stroke="#F5F0E1" strokeWidth="3" />
+          <circle cx="250" cy="220" r="72" fill="none" stroke="#0C120E" strokeWidth="2" strokeDasharray="4 5" opacity="0.4" />
+          <text x="250" y="245" textAnchor="middle" fontSize="72">{info.icon}</text>
+
+          <text x="250" y="360" textAnchor="middle" fill={info.medal} fontFamily="Anton, sans-serif" fontSize="26" letterSpacing="1">{info.label.toUpperCase()}</text>
+          <text x="250" y="392" textAnchor="middle" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize="32">{player.name.toUpperCase()}</text>
+          <text x="250" y="416" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">{team ? team.name : ""}</text>
+
+          <line x1="140" y1="450" x2="360" y2="450" stroke="#F5F0E1" strokeOpacity="0.15" />
+          <text x="250" y="480" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12">
+            {award.createdAt ? new Date(award.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : ""}
+          </text>
+
+          <text x="250" y="592" textAnchor="middle" fill="#8FA396" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="10" letterSpacing="3">AWARDED ON AREA MATCH</text>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
