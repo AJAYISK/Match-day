@@ -315,6 +315,9 @@ export default function App() {
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
   const [feedbacks, setFeedbacks] = useState([]);
   const [savedTeams, setSavedTeams] = useState([]);
+  const [teamRequests, setTeamRequests] = useState([]);
+  const [teamSearch, setTeamSearch] = useState("");
+  const [playerCardFor, setPlayerCardFor] = useState(null);
   const [follows, setFollows] = useState([]); // captain ids I follow
   const [adminPosts, setAdminPosts] = useState([]);
   const [adminPostText, setAdminPostText] = useState("");
@@ -422,7 +425,7 @@ export default function App() {
     if (!meObj) return;
     const [{ data: ms }, { data: us }] = await Promise.all([
       supabase.from("matches").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email"),
+      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email, team_id, roster_name, jersey_pattern, jersey_main, jersey_trim, position_played"),
     ]);
     const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(24);
     /* The quick "Live Updates" ticker (News Feed + Admin) shows real match events only —
@@ -452,9 +455,11 @@ export default function App() {
     const { data: ps } = await supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(20);
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
-    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10) })));
+    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10), teamId: u.team_id || null, rosterName: u.roster_name || "", jerseyPattern: u.jersey_pattern || "solid", jerseyMain: u.jersey_main || "#E6B31E", jerseyTrim: u.jersey_trim || "#F5F0E1", positionPlayed: u.position_played || "" })));
     const { data: savedTeamsRows } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
     if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, createdAt: t.created_at })));
+    const { data: trRows } = await supabase.from("team_requests").select("*").order("created_at", { ascending: false });
+    if (trRows) setTeamRequests(trRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, captainId: r.captain_id, kind: r.kind, rosterName: r.roster_name || "", status: r.status, createdAt: r.created_at })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
       if (fb) setFeedbacks(fb.map((f) => ({ id: f.id, userId: f.user_id, feature: f.feature, msg: f.message, at: f.created_at })));
@@ -830,6 +835,93 @@ export default function App() {
   }, [pendingScores.length]);
   /* A saved team's record is derived from real published results — matched by team name + the
      same captain, since matches store team names as free text rather than a saved_team id. */
+  /* A player's real record, resolved from published match results.
+     Because a player is linked to exactly one team + one exact roster name, we can
+     scan that team's published matches and count goals credited to that name.
+     This runs the same way whether they joined fresh or claimed an existing name —
+     which is what makes retroactive backfill work automatically: a claimed name
+     immediately picks up every goal already recorded against it historically. */
+  const playerStats = (player) => {
+    if (!player || !player.teamId || !player.rosterName) return { goals: 0, hatTricks: 0, matches: 0, team: null, ready: false };
+    const team = savedTeams.find((t) => t.id === player.teamId);
+    if (!team) return { goals: 0, hatTricks: 0, matches: 0, team: null, ready: false };
+    const played = matches.filter((m) =>
+      m.status === "ResultPublished" && m.createdBy === team.captainId &&
+      (m.teamA.name === team.name || m.teamB.name === team.name));
+    let goals = 0, hatTricks = 0;
+    const nameLc = player.rosterName.trim().toLowerCase();
+    played.forEach((m) => {
+      const isA = m.teamA.name === team.name;
+      const scorerStr = (isA ? m.scorersA : m.scorersB) || "";
+      /* Scorer strings are stored as "Tunde x2, Kola" — parse the count back out */
+      scorerStr.split(",").forEach((chunk) => {
+        const part = chunk.trim();
+        if (!part) return;
+        const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+        const nm = (mm ? mm[1] : part).trim().toLowerCase();
+        const n = mm ? parseInt(mm[2], 10) : 1;
+        if (nm === nameLc) { goals += n; if (n >= 3) hatTricks += 1; }
+      });
+    });
+    return { goals, hatTricks, matches: played.length, team, ready: true };
+  };
+  /* Player saves a kit/profile tweak — writes straight to their own profile row */
+  const savePlayerKit = async (patch) => {
+    setMe((prev) => ({ ...prev,
+      jerseyPattern: patch.jersey_pattern ?? prev.jerseyPattern,
+      jerseyMain: patch.jersey_main ?? prev.jerseyMain,
+      jerseyTrim: patch.jersey_trim ?? prev.jerseyTrim,
+      positionPlayed: patch.position_played ?? prev.positionPlayed,
+    }));
+    const { error } = await supabase.from("profiles").update(patch).eq("id", me.id);
+    if (error) notify(error.message);
+  };
+  /* Player asks to join a squad — either as a new member, or claiming a name already on the roster */
+  const requestToJoin = async (team, kind, rosterName) => {
+    const { error } = await supabase.from("team_requests").insert({
+      player_id: me.id, team_id: team.id, captain_id: team.captainId, kind, roster_name: rosterName, status: "pending",
+    });
+    if (error) return notify(error.message);
+    await supabase.from("notifications").insert({
+      user_id: team.captainId,
+      message: kind === "claim"
+        ? `👤 ${me.name} says they're "${rosterName}" in your ${team.name} squad — approve to link their profile.`
+        : `👤 ${me.name} wants to join your ${team.name} squad.`,
+    });
+    notify(kind === "claim" ? `Claim sent — waiting for the captain to confirm you're "${rosterName}".` : "Request sent to the captain.");
+    refreshAll();
+  };
+  /* Captain approves: links the player to the team + exact roster name (stats backfill happens automatically
+     because playerStats() reads historical match results by that name) */
+  const respondToRequest = async (req, approve) => {
+    const team = savedTeams.find((t) => t.id === req.teamId);
+    const player = users.find((u) => u.id === req.playerId);
+    if (approve) {
+      let rosterName = req.rosterName || (player ? player.name : "");
+      if (team && req.kind === "join") {
+        /* New member — append their name to the team roster if it isn't already there */
+        const list = (team.players || "").split(",").map((s) => s.trim()).filter(Boolean);
+        if (!list.some((n) => n.toLowerCase() === rosterName.toLowerCase())) {
+          list.push(rosterName);
+          await supabase.from("saved_teams").update({ players: list.join(", ") }).eq("id", team.id);
+        }
+      }
+      const { error } = await supabase.from("profiles").update({ team_id: req.teamId, roster_name: rosterName }).eq("id", req.playerId);
+      if (error) return notify(error.message);
+      await supabase.from("notifications").insert({
+        user_id: req.playerId,
+        message: `✅ You're in! ${team ? team.name : "The captain"} approved you as "${rosterName}". Your goals are now tracked on your profile.`,
+      });
+    } else {
+      await supabase.from("notifications").insert({
+        user_id: req.playerId,
+        message: `Your request to join ${team ? team.name : "the squad"} wasn't approved this time.`,
+      });
+    }
+    await supabase.from("team_requests").update({ status: approve ? "approved" : "denied" }).eq("id", req.id);
+    notify(approve ? "✅ Player added to your squad." : "Request denied.");
+    refreshAll();
+  };
   const teamRecord = (team) => {
     const played = matches
       .filter((m) => m.status === "ResultPublished" && m.createdBy === team.captainId && (m.teamA.name === team.name || m.teamB.name === team.name))
@@ -925,6 +1017,7 @@ export default function App() {
       .adm-badge { position: absolute; margin: 0; transform: translate(14px, -12px); }
       .adm-item { position: relative; }
       .adm-user { justify-content: center; padding: 8px; }
+      .adm-avatar-full { display: none !important; }
       .adm-topbar, .adm-body { padding-left: 14px; padding-right: 14px; }
     }
     .user-pill { display: flex; align-items: center; gap: 9px; }
@@ -1071,12 +1164,17 @@ export default function App() {
               {authMode === "signup" && (
                 <>
                   <input className="input" placeholder="Your name (letters only)" maxLength={30} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value.replace(/[^A-Za-z ]/g, "").slice(0, 30) })} />
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {["Captain", "Fan"].map((r) => (
-                      <button key={r} className={`btn ${form.role === r ? "btn-turf" : "btn-ghost"}`} style={{ flex: 1 }} onClick={() => setForm({ ...form, role: r })}>
-                        {r === "Captain" ? "⚽ Captain" : "📣 Fan"}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {["Captain", "Fan", "Player"].map((r) => (
+                      <button key={r} className={`btn ${form.role === r ? "btn-turf" : "btn-ghost"}`} style={{ flex: 1, padding: "10px 4px", fontSize: 12 }} onClick={() => setForm({ ...form, role: r })}>
+                        {r === "Captain" ? "⚽ Captain" : r === "Fan" ? "📣 Fan" : "👤 Player"}
                       </button>
                     ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, marginTop: -4, lineHeight: 1.4 }}>
+                    {form.role === "Captain" ? "Host and manage your own matches."
+                      : form.role === "Player" ? "Build your player profile, join a captain's squad, and track your goals."
+                      : "Follow matches and captains near you."}
                   </div>
                   <div>
                     <div style={{ fontSize: 12, color: T.muted, marginBottom: 4, fontWeight: 700 }}>📍 Your state (so we can show you matches near you)</div>
@@ -1204,13 +1302,19 @@ export default function App() {
                 {onlineCount} online now
               </div>
               <div className="adm-user">
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: T.floodlight, color: T.night, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", flexShrink: 0 }}>
+                <div className="adm-avatar-full" style={{ width: 36, height: 36, borderRadius: 10, background: T.floodlight, color: T.night, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", flexShrink: 0 }}>
                   {me.name.slice(0, 1).toUpperCase()}
                 </div>
-                <div className="adm-label" style={{ minWidth: 0 }}>
+                <div className="adm-label" style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.name}</div>
                   <button onClick={logout} style={{ background: "none", border: 0, color: T.live, fontSize: 11, cursor: "pointer", padding: 0, fontWeight: 700 }}>Log out →</button>
                 </div>
+                <button onClick={logout} title="Log out" style={{ width: 30, height: 30, borderRadius: "50%", border: "1px solid #2A3A2E", background: "transparent", color: T.muted, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                    <line x1="12" y1="2" x2="12" y2="12" />
+                  </svg>
+                </button>
               </div>
             </div>
           </aside>
@@ -1498,6 +1602,7 @@ export default function App() {
             {me.role === "Fan" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
+            {me.role === "Player" && <button className={page === "myplayer" ? "on" : ""} onClick={() => setPage("myplayer")}>My Profile</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
             {me.role !== "Admin" && <button className={page === "feedbackpage" ? "on" : ""} onClick={() => setPage("feedbackpage")}>Feedback</button>}
           </nav>
@@ -1668,6 +1773,131 @@ export default function App() {
         )}
 
         {/* ---------- MY TEAMS ---------- */}
+        {/* ---------- MY PLAYER PROFILE ---------- */}
+        {page === "myplayer" && me.role === "Player" && (() => {
+          const stats = playerStats(me);
+          const myPending = teamRequests.find((r) => r.playerId === me.id && r.status === "pending");
+          const pendingTeam = myPending ? savedTeams.find((t) => t.id === myPending.teamId) : null;
+          return (
+            <div style={{ maxWidth: 560 }}>
+              <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>My Player Profile</div>
+              <div style={{ color: T.muted, fontSize: 13, marginBottom: 16 }}>Your squad, your kit, your record.</div>
+
+              <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+                  <Jersey pattern={me.jerseyPattern} main={me.jerseyMain} trim={me.jerseyTrim} size={64} />
+                </div>
+                <div className="display" style={{ fontSize: 22 }}>{me.name}</div>
+                <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                  {stats.team ? `${stats.team.name}${me.positionPlayed ? " · " + me.positionPlayed : ""}` : "No squad yet"}
+                </div>
+                <div style={{ display: "flex", gap: 1, marginTop: 16, borderRadius: 10, overflow: "hidden" }}>
+                  {[[stats.goals, "Goals"], [stats.hatTricks, "Hat-tricks"], [stats.matches, "Matches"]].map(([n, l]) => (
+                    <div key={l} style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
+                      <div className="display" style={{ fontSize: 19, color: T.floodlight }}>{n}</div>
+                      <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+                {stats.ready && <button className="btn btn-gold" style={{ marginTop: 14, width: "100%" }} onClick={() => setPlayerCardFor(me.id)}>🎨 Download my player card</button>}
+              </div>
+
+              {/* SQUAD STATUS */}
+              <div className="card" style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>My Squad</div>
+                {stats.team ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <MiniLogo team={stats.team} badge={stats.team.badge} size={38} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{stats.team.name}</div>
+                      <div style={{ fontSize: 11, color: T.muted }}>Listed as "{me.rosterName}"</div>
+                    </div>
+                    <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, color: T.live, borderColor: "#3a1f1a" }}
+                      onClick={async () => {
+                        if (!window.confirm(`Leave ${stats.team.name}? Your goals stay on record, but you'll need to request again to rejoin.`)) return;
+                        const { error } = await supabase.from("profiles").update({ team_id: null, roster_name: null }).eq("id", me.id);
+                        if (error) return notify(error.message);
+                        notify("You've left the squad.");
+                        refreshAll();
+                      }}>Leave</button>
+                  </div>
+                ) : myPending ? (
+                  <div style={{ fontSize: 13, color: T.muted }}>
+                    ⏳ Request sent to <b style={{ color: T.chalk }}>{pendingTeam ? pendingTeam.name : "a team"}</b> — waiting for the captain to approve.
+                    <button className="btn btn-ghost" style={{ marginTop: 10, width: "100%", fontSize: 12 }}
+                      onClick={async () => {
+                        await supabase.from("team_requests").delete().eq("id", myPending.id);
+                        notify("Request withdrawn.");
+                        refreshAll();
+                      }}>Withdraw request</button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: T.muted }}>You're not in a squad yet — find your team below to request a spot.</div>
+                )}
+              </div>
+
+              {/* JERSEY BUILDER */}
+              <div className="card" style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>My Kit</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                  {JERSEY_PATTERNS.map(([key, label]) => (
+                    <button key={key} onClick={() => savePlayerKit({ jersey_pattern: key })}
+                      style={{ background: me.jerseyPattern === key ? T.floodlight : "#131a15", color: me.jerseyPattern === key ? "#1a1405" : T.chalk, border: `1px solid ${me.jerseyPattern === key ? T.floodlight : "#243128"}`, borderRadius: 99, padding: "7px 12px", fontSize: 11.5, fontWeight: 700 }}>{label}</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
+                    Main
+                    <input type="color" value={me.jerseyMain} onChange={(e) => savePlayerKit({ jersey_main: e.target.value })} style={{ width: 40, height: 32, border: 0, borderRadius: 8, background: "none", cursor: "pointer" }} />
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
+                    Trim
+                    <input type="color" value={me.jerseyTrim} onChange={(e) => savePlayerKit({ jersey_trim: e.target.value })} style={{ width: 40, height: 32, border: 0, borderRadius: 8, background: "none", cursor: "pointer" }} />
+                  </label>
+                </div>
+                <input className="input" placeholder="Position (e.g. Striker)" maxLength={20} value={me.positionPlayed}
+                  onChange={(e) => savePlayerKit({ position_played: sanitizeText(e.target.value, 20) })} />
+              </div>
+
+              {/* FIND A TEAM */}
+              {!stats.team && !myPending && (
+                <div className="card">
+                  <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Find Your Team</div>
+                  <input className="input" placeholder="🔍 Search a team…" value={teamSearch} onChange={(e) => setTeamSearch(e.target.value)} style={{ marginBottom: 10 }} />
+                  {savedTeams.filter((t) => !teamSearch || t.name.toLowerCase().includes(teamSearch.toLowerCase())).slice(0, 8).map((t) => {
+                    const cap = users.find((u) => u.id === t.captainId);
+                    const rosterList = (t.players || "").split(",").map((p) => p.trim()).filter(Boolean);
+                    return (
+                      <div key={t.id} style={{ border: "1px solid #243128", borderRadius: 12, padding: 11, marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: rosterList.length ? 8 : 0 }}>
+                          <MiniLogo team={t} badge={t.badge} size={32} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{t.name}</div>
+                            <div style={{ fontSize: 10.5, color: T.muted }}>{cap ? cap.name : "Captain"}</div>
+                          </div>
+                          <button className="btn btn-gold" style={{ padding: "7px 11px", fontSize: 11 }}
+                            onClick={() => requestToJoin(t, "join", me.name)}>Request to join</button>
+                        </div>
+                        {rosterList.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, color: T.muted, marginBottom: 5 }}>Already listed? Claim your name:</div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                              {rosterList.map((nm) => (
+                                <button key={nm} onClick={() => requestToJoin(t, "claim", nm)}
+                                  style={{ background: "#131a15", border: "1px solid #243128", color: T.chalk, borderRadius: 99, padding: "5px 10px", fontSize: 11 }}>{nm}</button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {page === "myteams" && me.role === "Captain" && (
           <div style={{ maxWidth: 560 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -1675,6 +1905,30 @@ export default function App() {
               <button className="btn btn-gold" onClick={() => setTeamFormOpen("new")}>＋ Create Team</button>
             </div>
             <div style={{ color: T.muted, fontSize: 13, marginBottom: 16 }}>Build a squad once, reuse it for every match — no retyping names each time.</div>
+            {teamRequests.filter((r) => r.captainId === me.id && r.status === "pending").length > 0 && (
+              <div className="card" style={{ marginBottom: 14, border: "1px solid rgba(230,179,30,.35)" }}>
+                <div style={{ fontSize: 11, color: T.floodlight, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10, fontWeight: 700 }}>
+                  👤 Join Requests ({teamRequests.filter((r) => r.captainId === me.id && r.status === "pending").length})
+                </div>
+                {teamRequests.filter((r) => r.captainId === me.id && r.status === "pending").map((req) => {
+                  const player = users.find((u) => u.id === req.playerId);
+                  const team = savedTeams.find((t) => t.id === req.teamId);
+                  return (
+                    <div key={req.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #243128" }}>
+                      <Jersey pattern={player?.jerseyPattern} main={player?.jerseyMain} trim={player?.jerseyTrim} size={30} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{player ? player.name : "A player"}</div>
+                        <div style={{ fontSize: 10.5, color: T.muted }}>
+                          {req.kind === "claim" ? `Says they're "${req.rosterName}"` : "Wants to join"} · {team ? team.name : "your squad"}
+                        </div>
+                      </div>
+                      <button className="btn btn-gold" style={{ padding: "6px 10px", fontSize: 11 }} onClick={() => respondToRequest(req, true)}>✓</button>
+                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, color: T.live, borderColor: "#3a1f1a" }} onClick={() => respondToRequest(req, false)}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {savedTeams.filter((t) => t.captainId === me.id).length === 0 && (
               <div className="card" style={{ color: T.muted }}>You haven't saved any teams yet. Create one to speed up hosting future matches.</div>
             )}
@@ -1993,6 +2247,8 @@ export default function App() {
         <MatchDetail
           m={matches.find((x) => x.id === openMatch)}
           me={me}
+          linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
+          onOpenPlayer={(id) => setPlayerCardFor(id)}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -2153,6 +2409,10 @@ export default function App() {
 
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
+      {playerCardFor && (() => {
+        const p = users.find((u) => u.id === playerCardFor) || (me.id === playerCardFor ? me : null);
+        return p ? <PlayerCardModal player={p} stats={playerStats(p)} onClose={() => setPlayerCardFor(null)} notify={notify} /> : null;
+      })()}
       {teamFormOpen && (
         <TeamFormModal
           existing={teamFormOpen === "new" ? null : savedTeams.find((t) => t.id === teamFormOpen)}
@@ -2569,6 +2829,32 @@ function TeamProfileModal({ team, record, onClose }) {
   );
 }
 
+/* ---------- JERSEY — flat vector kit graphic, five patterns ---------- */
+const JERSEY_PATTERNS = [
+  ["solid", "Solid"], ["vstripes", "V-Stripes"], ["hstripes", "H-Stripes"], ["halves", "Halves"], ["sleeves", "Sleeves"],
+];
+const JERSEY_PATH = "M50 8 L36 0 L20 10 L2 26 L14 40 L24 32 L24 108 Q50 116 76 108 L76 32 L86 40 L98 26 L80 10 L64 0 Z";
+function Jersey({ pattern = "solid", main = "#E6B31E", trim = "#F5F0E1", size = 60 }) {
+  const clipId = `jc-${pattern}-${main.replace("#", "")}-${trim.replace("#", "")}-${size}`;
+  return (
+    <svg width={size} height={size * 1.16} viewBox="0 0 100 116" style={{ flexShrink: 0 }}>
+      <defs><clipPath id={clipId}><path d={JERSEY_PATH} /></clipPath></defs>
+      <g clipPath={`url(#${clipId})`}>
+        <rect width="100" height="116" fill={main} />
+        {pattern === "vstripes" && [10, 38, 66, 94].map((x) => <rect key={x} x={x} width="14" height="116" fill={trim} />)}
+        {pattern === "hstripes" && [26, 54, 82].map((y) => <rect key={y} y={y} width="100" height="14" fill={trim} />)}
+        {pattern === "halves" && <rect x="50" width="50" height="116" fill={trim} />}
+        {pattern === "sleeves" && (<>
+          <path d="M20 10 L2 26 L14 40 L24 32 L24 44 L20 10Z" fill={trim} />
+          <path d="M80 10 L98 26 L86 40 L76 32 L76 44 L80 10Z" fill={trim} />
+        </>)}
+      </g>
+      <path d={JERSEY_PATH} fill="none" stroke="rgba(0,0,0,.35)" strokeWidth="2" />
+      <path d="M38 2 Q50 12 62 2" fill="none" stroke={pattern === "solid" ? trim : "rgba(0,0,0,.45)"} strokeWidth="4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function MiniLogo({ team, badge, size = 42 }) {
   const icon = resolveBadgeIcon(badge);
   if (!icon) {
@@ -2647,7 +2933,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
   );
 }
 
-function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -2757,7 +3043,20 @@ function MatchDetail({ m, me, minute, breakLeft, captainName, isDue, untilKickof
                       <span style={{ fontWeight: 700, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
                     </div>
                     {names.length > 0
-                      ? names.map((p, j) => <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)
+                      ? names.map((p, j) => {
+                          /* A name becomes tappable only when a real Player account has been approved
+                             onto this exact team under this exact roster name. */
+                          const linked = linkedPlayers.find((pl) =>
+                            pl.rosterName.trim().toLowerCase() === p.toLowerCase() &&
+                            pl.teamName === team.name);
+                          if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
+                          return (
+                            <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
+                              style={{ fontSize: 12.5, padding: "4px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {p} ›
+                            </div>
+                          );
+                        })
                       : <div style={{ color: "#8FA396", fontSize: 12 }}>Squad to be announced</div>}
                   </div>
                 </React.Fragment>
@@ -3899,6 +4198,96 @@ function PosterModal({ m, onClose, notify }) {
 }
 
 /* ---------- SHAREABLE STATS ARTWORK — dedicated card just for the stat line ---------- */
+/* ---------- PLAYER CARD — cinematic downloadable achievement artwork ---------- */
+function PlayerCardModal({ player, stats, onClose, notify }) {
+  const svgRef = useRef(null);
+  if (!player) return null;
+  const download = () => {
+    const xml = new XMLSerializer().serializeToString(svgRef.current);
+    const blob = new Blob([xml], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1000; canvas.height = 1240;
+      canvas.getContext("2d").drawImage(img, 0, 0, 1000, 1240);
+      canvas.toBlob((png) => {
+        URL.revokeObjectURL(url);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(png);
+        a.download = `${player.name}-area-match.png`;
+        a.click();
+        notify("Player card downloaded 📲");
+      });
+    };
+    img.src = url;
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <svg ref={svgRef} viewBox="0 0 500 620" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
+          <defs>
+            <radialGradient id="pcSpot" cx="50%" cy="30%" r="75%">
+              <stop offset="0%" stopColor="#1c6b3a" /><stop offset="55%" stopColor="#0D3A1F" /><stop offset="100%" stopColor="#050805" />
+            </radialGradient>
+            <linearGradient id="pcDiag" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#E6B31E" stopOpacity="0.25" /><stop offset="45%" stopColor="#E6B31E" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="pcGlow" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#E6B31E" stopOpacity="0.35" /><stop offset="100%" stopColor="#E6B31E" stopOpacity="0" />
+            </linearGradient>
+            <radialGradient id="pcVig" cx="50%" cy="45%" r="75%">
+              <stop offset="60%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity="0.55" />
+            </radialGradient>
+            <filter id="pcBlur"><feGaussianBlur stdDeviation="18" /></filter>
+            <clipPath id="pcJersey"><path d={JERSEY_PATH} transform="translate(174,110) scale(1.9)" /></clipPath>
+          </defs>
+
+          <rect width="500" height="620" fill="url(#pcSpot)" />
+          <polygon points="0,0 500,0 500,180 0,340" fill="url(#pcDiag)" />
+          <g opacity="0.12">
+            <polygon points="100,0 160,0 40,620 -20,620" fill="#F5F0E1" />
+            <polygon points="220,0 260,0 180,620 140,620" fill="#F5F0E1" />
+            <polygon points="380,0 430,0 480,620 430,620" fill="#F5F0E1" />
+          </g>
+          <ellipse cx="250" cy="230" rx="150" ry="150" fill="url(#pcGlow)" filter="url(#pcBlur)" />
+          <rect width="500" height="620" fill="url(#pcVig)" />
+
+          <text x="250" y="46" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="20" letterSpacing="4">AREA MATCH</text>
+
+          <g clipPath="url(#pcJersey)">
+            <rect x="150" y="100" width="200" height="240" fill={player.jerseyMain || "#E6B31E"} />
+            {player.jerseyPattern === "vstripes" && [10, 38, 66, 94].map((x) => <rect key={x} x={174 + x * 1.9} y="100" width={14 * 1.9} height="240" fill={player.jerseyTrim} />)}
+            {player.jerseyPattern === "hstripes" && [26, 54, 82].map((y) => <rect key={y} x="150" y={110 + y * 1.9} width="200" height={14 * 1.9} fill={player.jerseyTrim} />)}
+            {player.jerseyPattern === "halves" && <rect x="250" y="100" width="100" height="240" fill={player.jerseyTrim} />}
+          </g>
+          <path d={JERSEY_PATH} transform="translate(174,110) scale(1.9)" fill="none" stroke="rgba(0,0,0,.4)" strokeWidth="2" />
+
+          <polygon points="0,330 500,290 500,360 0,400" fill="#0C120E" opacity="0.85" />
+          <text x="250" y="352" textAnchor="middle" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize={player.name.length > 14 ? 30 : 40} transform="rotate(-4 250 345)">{player.name.toUpperCase()}</text>
+          <text x="250" y="412" textAnchor="middle" fill="#E6B31E" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="12" letterSpacing="2">
+            {stats.team ? stats.team.name.toUpperCase() : "FREE AGENT"}{player.positionPlayed ? ` · ${player.positionPlayed.toUpperCase()}` : ""}
+          </text>
+
+          {[[60, stats.goals, "GOALS"], [190, stats.hatTricks, "HAT-TRICKS"], [320, stats.matches, "MATCHES"]].map(([x, val, label]) => (
+            <g key={label} transform={`translate(${x},450)`}>
+              <polygon points="0,0 120,0 108,70 -12,70" fill="#14532D" stroke="#E6B31E" strokeWidth="1.5" />
+              <text x="54" y="42" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="34">{val}</text>
+              <text x="54" y="60" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="1">{label}</text>
+            </g>
+          ))}
+
+          <text x="250" y="592" textAnchor="middle" fill="#8FA396" opacity="0.7" fontFamily="Space Grotesk, sans-serif" fontSize="10" letterSpacing="3">HOSTED ON AREA MATCH</text>
+        </svg>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
+          <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatsPosterModal({ m, onClose, notify }) {
   const svgRef = useRef(null);
   if (!m) return null;
