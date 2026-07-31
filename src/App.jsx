@@ -172,6 +172,16 @@ const BADGES = ["ball", "lion", "eagle", "shield", "star", "fire", "leopard", "s
 
 /* Six standard 11-a-side formations. Each slot has a label (position code, unique per formation)
    and x/y as percentages of the pitch — GK always deepest, attackers always furthest forward. */
+/* Award types a captain can give — icon + label + a medal color used consistently across the UI and artwork */
+const AWARD_TYPES = {
+  motm: { label: "Man of the Match", icon: "⭐", medal: "#E6B31E" },
+  golden_boot: { label: "Golden Boot", icon: "🥇", medal: "#E6B31E" },
+  best_defender: { label: "Best Defender", icon: "🛡", medal: "#8FA396" },
+  playmaker: { label: "Playmaker", icon: "🎯", medal: "#3FA35B" },
+  most_improved: { label: "Most Improved", icon: "📈", medal: "#1DB954" },
+  team_player: { label: "Team Player", icon: "🤝", medal: "#8FA396" },
+};
+
 const FORMATIONS = {
   "4-4-2": [
     { key: "GK", x: 50, y: 92 },
@@ -316,6 +326,8 @@ export default function App() {
   const [feedbacks, setFeedbacks] = useState([]);
   const [savedTeams, setSavedTeams] = useState([]);
   const [teamRequests, setTeamRequests] = useState([]);
+  const [teamSupporters, setTeamSupporters] = useState([]); // { fanId, teamId }
+  const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
   const [playerCardFor, setPlayerCardFor] = useState(null);
   const [follows, setFollows] = useState([]); // captain ids I follow
@@ -354,6 +366,7 @@ export default function App() {
   const [statsPosterFor, setStatsPosterFor] = useState(null);
   const [lineupPosterFor, setLineupPosterFor] = useState(null);
   const [teamFormOpen, setTeamFormOpen] = useState(null); // null | "new" | teamId (editing)
+  const [squadManageFor, setSquadManageFor] = useState(null); // teamId
   const [viewTeamId, setViewTeamId] = useState(null); // public team profile viewer
   const [toast, setToast] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -405,7 +418,7 @@ export default function App() {
       notify("🚫 This account has been blocked. Contact the Area Match admin.");
       return;
     }
-    const meObj = { id: p.id, name: p.name, role: p.role, pin: p.pin, state: p.state || "", contactInfo: p.contact_info || "", joined: (p.created_at || "").slice(0, 10), contact: (await supabase.auth.getUser()).data.user?.email || "" };
+    const meObj = { id: p.id, name: p.name, role: p.role, pin: p.pin, state: p.state || "", contactInfo: p.contact_info || "", joined: (p.created_at || "").slice(0, 10), contact: (await supabase.auth.getUser()).data.user?.email || "", contactPublic: !!p.contact_public, jerseyPattern: p.jersey_pattern || "solid", jerseyMain: p.jersey_main || "#E6B31E", jerseyTrim: p.jersey_trim || "#F5F0E1", positionPlayed: p.position_played || "", teamId: p.team_id || null, rosterName: p.roster_name || "" };
     setMe(meObj);
     setScreen("site");
     setPage(p.role === "Admin" ? "admin" : "feed");
@@ -426,7 +439,7 @@ export default function App() {
     if (!meObj) return;
     const [{ data: ms }, { data: us }] = await Promise.all([
       supabase.from("matches").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email, team_id, roster_name, jersey_pattern, jersey_main, jersey_trim, position_played"),
+      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email, team_id, roster_name, jersey_pattern, jersey_main, jersey_trim, position_played, contact_public"),
     ]);
     const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(24);
     /* The quick "Live Updates" ticker (News Feed + Admin) shows real match events only —
@@ -456,11 +469,15 @@ export default function App() {
     const { data: ps } = await supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(20);
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
-    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10), teamId: u.team_id || null, rosterName: u.roster_name || "", jerseyPattern: u.jersey_pattern || "solid", jerseyMain: u.jersey_main || "#E6B31E", jerseyTrim: u.jersey_trim || "#F5F0E1", positionPlayed: u.position_played || "" })));
+    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10), teamId: u.team_id || null, rosterName: u.roster_name || "", jerseyPattern: u.jersey_pattern || "solid", jerseyMain: u.jersey_main || "#E6B31E", jerseyTrim: u.jersey_trim || "#F5F0E1", positionPlayed: u.position_played || "", contactPublic: !!u.contact_public })));
     const { data: savedTeamsRows } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
-    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, createdAt: t.created_at })));
+    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, jerseyPattern: t.jersey_pattern || "solid", jerseyTrim: t.jersey_trim || "#F5F0E1", createdAt: t.created_at })));
     const { data: trRows } = await supabase.from("team_requests").select("*").order("created_at", { ascending: false });
     if (trRows) setTeamRequests(trRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, captainId: r.captain_id, kind: r.kind, rosterName: r.roster_name || "", status: r.status, createdAt: r.created_at })));
+    const { data: tsRows } = await supabase.from("team_supporters").select("*");
+    if (tsRows) setTeamSupporters(tsRows.map((r) => ({ fanId: r.fan_id, teamId: r.team_id })));
+    const { data: paRows } = await supabase.from("player_awards").select("*").order("created_at", { ascending: false });
+    if (paRows) setPlayerAwards(paRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, matchId: r.match_id, awardType: r.award_type, note: r.note || "", awardedBy: r.awarded_by, createdAt: r.created_at })));
     if (meObj.role === "Admin") {
       const { data: fb } = await supabase.from("feedback").select("*").order("created_at", { ascending: false });
       if (fb) setFeedbacks(fb.map((f) => ({ id: f.id, userId: f.user_id, feature: f.feature, msg: f.message, at: f.created_at })));
@@ -881,6 +898,26 @@ export default function App() {
     });
     return { goals, hatTricks, matches: played.length, team, ready: true };
   };
+  /* Auto-computed level — a weighted score from goals, hat-tricks, and awards, no manual input needed.
+     Note: assists aren't tracked anywhere in the app yet (no attribution UI exists for them), so this
+     is goals + hat-tricks + awards only — the honest scope of what's actually measurable right now. */
+  const LEVEL_TIERS = [
+    { name: "Novice", min: 0, icon: "🌱" },
+    { name: "Rising Talent", min: 5, icon: "⚡" },
+    { name: "Star", min: 15, icon: "⭐" },
+    { name: "Top Star", min: 35, icon: "👑" },
+  ];
+  const playerLevel = (player) => {
+    const stats = playerStats(player);
+    const awardsCount = playerAwards.filter((a) => a.playerId === player.id).length;
+    const score = stats.goals * 1 + stats.hatTricks * 2 + awardsCount * 3;
+    let tierIdx = 0;
+    for (let i = LEVEL_TIERS.length - 1; i >= 0; i--) { if (score >= LEVEL_TIERS[i].min) { tierIdx = i; break; } }
+    const tier = LEVEL_TIERS[tierIdx];
+    const next = LEVEL_TIERS[tierIdx + 1];
+    const progress = next ? Math.min(1, (score - tier.min) / (next.min - tier.min)) : 1;
+    return { score, tier, next, progress, awardsCount };
+  };
   /* Player saves a kit/profile tweak — writes straight to their own profile row */
   const savePlayerKit = async (patch) => {
     setMe((prev) => ({ ...prev,
@@ -888,6 +925,8 @@ export default function App() {
       jerseyMain: patch.jersey_main ?? prev.jerseyMain,
       jerseyTrim: patch.jersey_trim ?? prev.jerseyTrim,
       positionPlayed: patch.position_played ?? prev.positionPlayed,
+      contactInfo: patch.contact_info ?? prev.contactInfo,
+      contactPublic: patch.contact_public ?? prev.contactPublic,
     }));
     const { error } = await supabase.from("profiles").update(patch).eq("id", me.id);
     if (error) notify(error.message);
@@ -909,9 +948,37 @@ export default function App() {
   };
   /* Captain approves: links the player to the team + exact roster name (stats backfill happens automatically
      because playerStats() reads historical match results by that name) */
+  /* Captain awards a player — visible on their profile, triggers a notification, and (for MOTM/Golden Boot etc.)
+     feeds directly into their level progress since it's counted alongside goals in playerLevel(). */
+  const giveAward = async (playerId, teamId, awardType, matchId = null) => {
+    const { error } = await supabase.from("player_awards").insert({ player_id: playerId, team_id: teamId, match_id: matchId, award_type: awardType, awarded_by: me.id });
+    if (error) return notify(error.message);
+    const player = users.find((u) => u.id === playerId);
+    await supabase.from("notifications").insert({
+      user_id: playerId,
+      message: `🏆 You've been awarded ${AWARD_TYPES[awardType]?.label || awardType}! Check your profile.`,
+    });
+    notify(`🏆 ${AWARD_TYPES[awardType]?.label || awardType} given to ${player ? player.name : "the player"}.`);
+    refreshAll();
+  };
+  const toggleSupportTeam = async (teamId) => {
+    const already = teamSupporters.some((s) => s.fanId === me.id && s.teamId === teamId);
+    if (already) {
+      await supabase.from("team_supporters").delete().eq("fan_id", me.id).eq("team_id", teamId);
+      setTeamSupporters((s) => s.filter((x) => !(x.fanId === me.id && x.teamId === teamId)));
+    } else {
+      await supabase.from("team_supporters").insert({ fan_id: me.id, team_id: teamId });
+      setTeamSupporters((s) => [...s, { fanId: me.id, teamId }]);
+    }
+  };
   const respondToRequest = async (req, approve) => {
     const team = savedTeams.find((t) => t.id === req.teamId);
     const player = users.find((u) => u.id === req.playerId);
+    /* Clear the original "X wants to join" / "X claims to be Y" notification now that it's been acted on —
+       matched by content since we didn't store the notification's own id on the request row. */
+    if (player && team) {
+      await supabase.from("notifications").delete().eq("user_id", req.captainId).ilike("message", `%${player.name}%${team.name}%`);
+    }
     if (approve) {
       let rosterName = req.rosterName || (player ? player.name : "");
       if (team && req.kind === "join") {
@@ -959,13 +1026,13 @@ export default function App() {
     return { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
   };
   const createSavedTeam = async (data) => {
-    const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions });
+    const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions, jersey_pattern: data.jerseyPattern, jersey_trim: data.jerseyTrim });
     if (error) return notify(error.message);
     notify(`✔ ${data.name} saved to your teams.`);
     refreshAll();
   };
   const updateSavedTeam = async (id, data) => {
-    const { error } = await supabase.from("saved_teams").update({ name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions }).eq("id", id);
+    const { error } = await supabase.from("saved_teams").update({ name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions, jersey_pattern: data.jerseyPattern, jersey_trim: data.jerseyTrim }).eq("id", id);
     if (error) return notify(error.message);
     notify("✔ Team updated.");
     refreshAll();
@@ -1252,8 +1319,7 @@ export default function App() {
   const captainState = (m) => (users.find((u) => u.id === m.createdBy) || {}).state || "";
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
   const published = publishedAll.filter((m) =>
-    (feedState === "All" || captainState(m) === feedState) &&
-    (!feedFollowedOnly || follows.includes(m.createdBy)));
+    (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
   const inMyState = me && me.state ? publishedAll.filter((m) => captainState(m) === me.state && m.status !== "ResultPublished") : [];
   const capped = (key, list) => (seeMore[key] ? list : list.slice(0, 2));
   const SeeMoreBtn = ({ k, list }) => {
@@ -1273,10 +1339,10 @@ export default function App() {
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const results = published.filter((m) => m.status === "ResultPublished");
   const mine = matches.filter((m) => m.createdBy === me.id);
-  /* 🔴 Live tab — every currently-live match in the fan's state or from a followed captain */
+  /* 🔴 Live tab — "Captains I follow" and state are alternate modes, not combinable filters:
+     when follow mode is on, state is ignored entirely, and vice versa. */
   const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
-    (liveStateFilter === "All" || captainState(m) === liveStateFilter) &&
-    (!liveFollowedOnly || follows.includes(m.createdBy)));
+    (liveFollowedOnly ? follows.includes(m.createdBy) : (liveStateFilter === "All" || captainState(m) === liveStateFilter)));
   const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
@@ -1683,13 +1749,14 @@ export default function App() {
 
             {/* FILTERS */}
             <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13 }} value={feedState} onChange={(e) => setFeedState(e.target.value)}>
+              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13, opacity: feedFollowedOnly ? 0.4 : 1 }} value={feedState} disabled={feedFollowedOnly}
+                onChange={(e) => { setFeedFollowedOnly(false); setFeedState(e.target.value); }}>
                 <option value="All">🌍 All states</option>
                 {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
               </select>
               {me.role === "Fan" && follows.length > 0 && (
                 <button className={`btn ${feedFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
-                  onClick={() => setFeedFollowedOnly(!feedFollowedOnly)}>🔔 Captains I follow</button>
+                  onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setFeedState("All"); }}>🔔 Captains I follow</button>
               )}
             </div>
 
@@ -1805,7 +1872,7 @@ export default function App() {
                 </div>
                 <div className="display" style={{ fontSize: 22 }}>{me.name}</div>
                 <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
-                  {stats.team ? `${stats.team.name}${me.positionPlayed ? " · " + me.positionPlayed : ""}` : "No squad yet"}
+                  {stats.team ? `${stats.team.name}${me.positionPlayed ? " · " + me.positionPlayed : ""}` : "No squad yet"}{me.state ? ` · 📍 ${me.state}` : ""}
                 </div>
                 <div style={{ display: "flex", gap: 1, marginTop: 16, borderRadius: 10, overflow: "hidden" }}>
                   {[[stats.goals, "Goals"], [stats.hatTricks, "Hat-tricks"], [stats.matches, "Matches"]].map(([n, l]) => (
@@ -1875,6 +1942,17 @@ export default function App() {
                   onChange={(e) => savePlayerKit({ position_played: sanitizeText(e.target.value, 20) })} />
               </div>
 
+              <div className="card" style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Contact (Optional)</div>
+                <input className="input" placeholder="e.g. WhatsApp 0803 123 4567" maxLength={60} value={me.contactInfo || ""}
+                  onChange={(e) => savePlayerKit({ contact_info: sanitizeText(e.target.value, 60) })} style={{ marginBottom: 10 }} />
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.muted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!me.contactPublic} onChange={(e) => savePlayerKit({ contact_public: e.target.checked })} />
+                  Publish my contact publicly on my profile
+                </label>
+                <div style={{ fontSize: 10.5, color: T.muted, marginTop: 4, lineHeight: 1.4 }}>Off by default — only visible to others if you turn this on.</div>
+              </div>
+
               {/* FIND A TEAM */}
               {!stats.team && !myPending && (
                 <div className="card">
@@ -1926,16 +2004,19 @@ export default function App() {
                 <div style={{ fontSize: 11, color: T.floodlight, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10, fontWeight: 700 }}>
                   👤 Join Requests ({teamRequests.filter((r) => r.captainId === me.id && r.status === "pending").length})
                 </div>
-                {teamRequests.filter((r) => r.captainId === me.id && r.status === "pending").map((req) => {
+                {capped("requests", teamRequests.filter((r) => r.captainId === me.id && r.status === "pending")).map((req) => {
                   const player = users.find((u) => u.id === req.playerId);
                   const team = savedTeams.find((t) => t.id === req.teamId);
                   return (
                     <div key={req.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #243128" }}>
                       <Jersey pattern={player?.jerseyPattern} main={player?.jerseyMain} trim={player?.jerseyTrim} size={30} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 13 }}>{player ? player.name : "A player"}</div>
-                        <div style={{ fontSize: 10.5, color: T.muted }}>
-                          {req.kind === "claim" ? `Says they're "${req.rosterName}"` : "Wants to join"} · {team ? team.name : "your squad"}
+                      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => player && setPlayerCardFor(player.id)}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: T.floodlight, textDecoration: "underline", textUnderlineOffset: 2 }}>{player ? player.name : "A player"} ›</div>
+                        <div style={{ fontSize: 10.5, color: T.muted, display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
+                          <span style={{ background: req.kind === "claim" ? "rgba(230,179,30,.15)" : "rgba(63,163,91,.15)", color: req.kind === "claim" ? T.floodlight : "#3FA35B", padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>
+                            {req.kind === "claim" ? "Claiming a name" : "New member"}
+                          </span>
+                          {req.kind === "claim" ? `"${req.rosterName}"` : ""} · {team ? team.name : "your squad"}
                         </div>
                       </div>
                       <button className="btn btn-gold" style={{ padding: "6px 10px", fontSize: 11 }} onClick={() => respondToRequest(req, true)}>✓</button>
@@ -1943,6 +2024,7 @@ export default function App() {
                     </div>
                   );
                 })}
+                <SeeMoreBtn k="requests" list={teamRequests.filter((r) => r.captainId === me.id && r.status === "pending")} />
               </div>
             )}
             {savedTeams.filter((t) => t.captainId === me.id).length === 0 && (
@@ -1972,8 +2054,12 @@ export default function App() {
                         <div style={{ fontSize: 10.5, color: T.muted, marginTop: 4 }}>{rec.total} match{rec.total === 1 ? "" : "es"} played · {3 - rec.total} more for a rating</div>
                       )}
                     </div>
-                    <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11, flexShrink: 0 }}
-                      onClick={(e) => { e.stopPropagation(); setTeamFormOpen(t.id); }}>Edit</button>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11 }}
+                        onClick={(e) => { e.stopPropagation(); setSquadManageFor(t.id); }}>👥 Squad</button>
+                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11 }}
+                        onClick={(e) => { e.stopPropagation(); setTeamFormOpen(t.id); }}>Edit</button>
+                    </div>
                   </div>
                 );
               })}
@@ -2086,6 +2172,9 @@ export default function App() {
         {page === "profile" && me.role !== "Admin" && (
           <ProfilePage
             me={me}
+            follows={follows}
+            users={users}
+            onOpenCaptain={(id) => { setPage("captains"); setViewCaptain(id); }}
             stats={me.role === "Captain"
               ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["🔔 Followers", followerCounts[me.id] || 0], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
               : { a: ["🔔 Captains followed", follows.length], b: ["💛 Likes given", myLikes.length], c: ["🏁 Results seen", results.length] }}
@@ -2219,18 +2308,19 @@ export default function App() {
               Every live match — filter by state, or just the captains you follow.
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
-              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13 }} value={liveStateFilter} onChange={(e) => setLiveStateFilter(e.target.value)}>
+              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13, opacity: liveFollowedOnly ? 0.4 : 1 }} value={liveStateFilter} disabled={liveFollowedOnly}
+                onChange={(e) => { setLiveFollowedOnly(false); setLiveStateFilter(e.target.value); }}>
                 <option value="All">🌍 All states</option>
                 {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
               </select>
               {me.role === "Fan" && follows.length > 0 && (
                 <button className={`btn ${liveFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
-                  onClick={() => setLiveFollowedOnly(!liveFollowedOnly)}>🔔 Captains I follow</button>
+                  onClick={() => { setLiveFollowedOnly(!liveFollowedOnly); if (!liveFollowedOnly) setLiveStateFilter("All"); }}>🔔 Captains I follow</button>
               )}
             </div>
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
-                {liveStateFilter !== "All" ? `No live matches in ${liveStateFilter} right now.` : liveFollowedOnly ? "None of the captains you follow are live right now." : "Nothing live right now — check back on match day. ⚽"}
+                {liveFollowedOnly ? "None of the captains you follow are live right now." : liveStateFilter !== "All" ? `No live matches in ${liveStateFilter} right now.` : "Nothing live right now — check back on match day. ⚽"}
               </div>
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
@@ -2455,7 +2545,22 @@ export default function App() {
           record={teamRecord(savedTeams.find((t) => t.id === viewTeamId))}
           linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
           onOpenPlayer={(id) => setPlayerCardFor(id)}
+          me={me}
+          supporterCount={teamSupporters.filter((s) => s.teamId === viewTeamId).length}
+          isSupporting={teamSupporters.some((s) => s.fanId === me.id && s.teamId === viewTeamId)}
+          onToggleSupport={toggleSupportTeam}
           onClose={goBackPage}
+        />
+      )}
+      {squadManageFor && savedTeams.find((t) => t.id === squadManageFor) && (
+        <SquadManageModal
+          team={savedTeams.find((t) => t.id === squadManageFor)}
+          linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
+          playerLevel={playerLevel}
+          playerStats={playerStats}
+          playerAwards={playerAwards}
+          onGiveAward={giveAward}
+          onClose={() => setSquadManageFor(null)}
         />
       )}
 
@@ -2677,6 +2782,8 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
   const [name, setName] = useState(existing ? existing.name : "");
   const [color, setColor] = useState(existing ? existing.color : "#E6B31E");
   const [badge, setBadge] = useState(existing ? existing.badge : "ball");
+  const [jerseyPattern, setJerseyPattern] = useState(existing ? existing.jerseyPattern || "solid" : "solid");
+  const [jerseyTrim, setJerseyTrim] = useState(existing ? existing.jerseyTrim || "#F5F0E1" : "#F5F0E1");
   const [players, setPlayers] = useState(existing ? existing.players : "");
   const [formation, setFormation] = useState(existing ? existing.formation : null);
   const [positions, setPositions] = useState(existing && existing.positions ? existing.positions : {});
@@ -2704,6 +2811,25 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
               <MiniLogo team={{ name: "", color: badge === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} />
             </button>
           ))}
+        </div>
+
+        <div style={{ borderTop: "1px solid #243128", paddingTop: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 8 }}>👕 Team Jersey</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
+            <Jersey pattern={jerseyPattern} main={color} trim={jerseyTrim} size={54} />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>
+                {JERSEY_PATTERNS.map(([key, label]) => (
+                  <button key={key} type="button" onClick={() => setJerseyPattern(key)}
+                    style={{ background: jerseyPattern === key ? "#E6B31E" : "#131a15", color: jerseyPattern === key ? "#1a1405" : "#F5F0E1", border: `1px solid ${jerseyPattern === key ? "#E6B31E" : "#243128"}`, borderRadius: 99, padding: "5px 10px", fontSize: 10.5, fontWeight: 700 }}>{label}</button>
+                ))}
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#8FA396" }}>
+                Trim color
+                <input type="color" value={jerseyTrim} onChange={(e) => setJerseyTrim(e.target.value)} style={{ width: 32, height: 28, border: 0, borderRadius: 6, background: "none", cursor: "pointer" }} />
+              </label>
+            </div>
+          </div>
         </div>
         <textarea className="input" rows={3} placeholder="Squad — comma separated names (e.g. Tunde, Emeka, Ibrahim)" maxLength={300}
           value={players} onChange={(e) => setPlayers(e.target.value.slice(0, 300))} />
@@ -2757,7 +2883,7 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
           {existing && <button className="btn btn-ghost" style={{ color: "#E8442E", borderColor: "#3a1f1a" }} onClick={() => onDelete(existing.id, existing.name)}>🗑 Delete</button>}
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
           <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
-            onClick={() => valid && onSave({ name: name.trim(), color, badge, players, formation, positions: formation ? positions : null })}>{existing ? "Save changes" : "Create team"}</button>
+            onClick={() => valid && onSave({ name: name.trim(), color, badge, players, formation, positions: formation ? positions : null, jerseyPattern, jerseyTrim })}>{existing ? "Save changes" : "Create team"}</button>
         </div>
       </div>
     </div>
@@ -2765,7 +2891,65 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
 }
 
 /* ---------- MY TEAMS — public team profile ---------- */
-function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPlayer }) {
+/* ---------- SQUAD MANAGEMENT — captain's roster view, registered players prioritized, award-giving ---------- */
+function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playerAwards, onGiveAward, onClose }) {
+  const [awardMenuFor, setAwardMenuFor] = useState(null); // player id
+  const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
+  const withLink = roster.map((name) => ({ name, linked: linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === name.toLowerCase() && pl.teamName === team.name) }));
+  /* Registered (linked) players first — they have real, verifiable stats. Unregistered plain names after. */
+  const sorted = [...withLink].sort((a, b) => (b.linked ? 1 : 0) - (a.linked ? 1 : 0));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 92, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+        <div className="display" style={{ fontSize: 18, color: "#E6B31E", marginBottom: 4 }}>{team.name} Squad</div>
+        <div style={{ fontSize: 11.5, color: "#8FA396", marginBottom: 14 }}>Registered players show their level and record. Tap one to give an award.</div>
+
+        {sorted.length === 0 && <div style={{ color: "#8FA396", fontSize: 13 }}>No squad names yet — add some from Edit Team.</div>}
+
+        {sorted.map(({ name, linked }, i) => {
+          if (!linked) {
+            return (
+              <div key={i} style={{ padding: "10px 0", borderBottom: "1px solid #243128", fontSize: 13, color: "#8FA396" }}>
+                {name} <span style={{ fontSize: 10 }}>— not on Area Match</span>
+              </div>
+            );
+          }
+          const lvl = playerLevel(linked);
+          const stats = playerStats(linked);
+          const awards = playerAwards.filter((a) => a.playerId === linked.id);
+          return (
+            <div key={i} style={{ borderBottom: "1px solid #243128" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", cursor: "pointer" }}
+                onClick={() => setAwardMenuFor(awardMenuFor === linked.id ? null : linked.id)}>
+                <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={30} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#F5F0E1" }}>{name} <span style={{ fontSize: 10, background: "rgba(230,179,30,.15)", color: "#E6B31E", padding: "1px 6px", borderRadius: 4 }}>{lvl.tier.icon} {lvl.tier.name}</span></div>
+                  <div style={{ fontSize: 10.5, color: "#8FA396", marginTop: 2 }}>⚽ {stats.goals} goals · {awards.length} award{awards.length === 1 ? "" : "s"}</div>
+                </div>
+                <span style={{ color: "#8FA396" }}>{awardMenuFor === linked.id ? "▴" : "▾"}</span>
+              </div>
+              {awardMenuFor === linked.id && (
+                <div style={{ paddingBottom: 12 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {Object.entries(AWARD_TYPES).map(([key, a]) => (
+                      <button key={key} onClick={() => { onGiveAward(linked.id, team.id, key); setAwardMenuFor(null); }}
+                        style={{ background: "#131a15", border: "1px solid #243128", color: "#F5F0E1", borderRadius: 99, padding: "6px 11px", fontSize: 11.5 }}>{a.icon} {a.label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <button className="btn btn-ghost" style={{ width: "100%", marginTop: 14 }} onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPlayer, me, supporterCount = 0, isSupporting = false, onToggleSupport }) {
   const [seeMore, setSeeMore] = useState(false);
   const shown = seeMore ? record.results : record.results.slice(0, 2);
   return (
@@ -2802,6 +2986,15 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
               <div className="display" style={{ fontSize: 19, color: "#C6503F" }}>{record.losses}</div>
               <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Losses</div>
             </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 14 }}>
+            <span style={{ fontSize: 12, color: "#8FA396" }}>❤️ {supporterCount} supporter{supporterCount === 1 ? "" : "s"}</span>
+            {me && me.role === "Fan" && onToggleSupport && (
+              <button onClick={() => onToggleSupport(team.id)}
+                style={{ background: isSupporting ? "#E6B31E" : "none", color: isSupporting ? "#1a1405" : "#F5F0E1", border: `1px solid ${isSupporting ? "#E6B31E" : "rgba(245,240,225,.3)"}`, borderRadius: 99, padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>
+                {isSupporting ? "✓ Supporting" : "❤️ Support this team"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -3718,6 +3911,8 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
   /* Real "Watching" count — presence channel scoped to this exact match.
      Counts only people who genuinely have this match's Live view open right now. */
   const [watchers, setWatchers] = useState([]);
+  const [liveCard, setLiveCard] = useState(0);
+  const liveCardTouchX = useRef(0);
   const [showWatchers, setShowWatchers] = useState(false);
   const [showScorers, setShowScorers] = useState(false);
   /* Pulls scorer names AND which team they scored for, straight out of the existing
@@ -3874,48 +4069,63 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         )}
 
-        {m.status === "Live" && (
-          <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
-            <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10 }}>Match Stats</div>
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                <span>{m.possessionA ?? 50}%</span><span style={{ color: T.muted }}>Possession</span><span>{100 - (m.possessionA ?? 50)}%</span>
-              </div>
-              <div style={{ height: 5, background: "#243128", borderRadius: 99, overflow: "hidden", display: "flex" }}>
-                <div style={{ width: `${m.possessionA ?? 50}%`, background: T.floodlight }} />
-                <div style={{ width: `${100 - (m.possessionA ?? 50)}%`, background: "#243128" }} />
-              </div>
-            </div>
-            {[
-              [m.shotsA, "Shots", m.shotsB],
-              [m.shotsOnTargetA, "On Target", m.shotsOnTargetB],
-              [m.cornersA, "Corners", m.cornersB],
-              [m.foulsA, "Fouls", m.foulsB],
-              [m.offsidesA, "Offsides", m.offsidesB],
-            ].map(([a, label, b]) => (
-              <div key={label} style={{ display: "flex", alignItems: "center", padding: "7px 0" }}>
-                <span className="display" style={{ fontSize: 15, color: T.floodlight, width: 40, textAlign: "left" }}>{a ?? 0}</span>
-                <span style={{ flex: 1, fontSize: 11, color: T.muted, textAlign: "center", textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</span>
-                <span className="display" style={{ fontSize: 15, color: T.floodlight, width: 40, textAlign: "right" }}>{b ?? 0}</span>
-              </div>
-            ))}
-            <button style={{ width: "100%", marginTop: 10, background: "none", border: "1px solid #243128", color: T.floodlight, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700 }}
-              onClick={onShareStats}>🎨 Share stats card</button>
+        <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: liveCard === 0 ? T.floodlight : "#3a4a3e" }} />
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: liveCard === 1 ? T.floodlight : "#3a4a3e" }} />
           </div>
-        )}
-
-        <div style={{ padding: "14px 16px", borderBottom: "1px solid #243128" }}>
-          <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10 }}>Starting Lineups</div>
-          <div style={{ display: "flex" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
-              {rosterNames(m.playersA).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
-            </div>
-            <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
-              {rosterNames(m.playersB).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
-            </div>
+          <div style={{ fontSize: 10, color: T.muted, textAlign: "center", marginBottom: 10 }}>
+            {liveCard === 0 ? "← swipe for lineups" : "← swipe back for stats →"}
+          </div>
+          <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10, textAlign: "center" }}>
+            {liveCard === 0 ? "Match Stats" : "Starting Lineups"}
+          </div>
+          <div onTouchStart={(e) => { liveCardTouchX.current = e.touches[0].clientX; }}
+            onTouchEnd={(e) => {
+              const dx = e.changedTouches[0].clientX - liveCardTouchX.current;
+              if (dx < -40) setLiveCard(1);
+              if (dx > 40) setLiveCard(0);
+            }}>
+            {liveCard === 0 ? (
+              <>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                    <span>{m.possessionA ?? 50}%</span><span style={{ color: T.muted }}>Possession</span><span>{100 - (m.possessionA ?? 50)}%</span>
+                  </div>
+                  <div style={{ height: 5, background: "#243128", borderRadius: 99, overflow: "hidden", display: "flex" }}>
+                    <div style={{ width: `${m.possessionA ?? 50}%`, background: T.floodlight }} />
+                    <div style={{ width: `${100 - (m.possessionA ?? 50)}%`, background: "#243128" }} />
+                  </div>
+                </div>
+                {[
+                  [m.shotsA, "Shots", m.shotsB],
+                  [m.shotsOnTargetA, "On Target", m.shotsOnTargetB],
+                  [m.cornersA, "Corners", m.cornersB],
+                  [m.foulsA, "Fouls", m.foulsB],
+                  [m.offsidesA, "Offsides", m.offsidesB],
+                ].map(([a, label, b]) => (
+                  <div key={label} style={{ display: "flex", alignItems: "center", padding: "7px 0" }}>
+                    <span className="display" style={{ fontSize: 15, color: T.floodlight, width: 40, textAlign: "left" }}>{a ?? 0}</span>
+                    <span style={{ flex: 1, fontSize: 11, color: T.muted, textAlign: "center", textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</span>
+                    <span className="display" style={{ fontSize: 15, color: T.floodlight, width: 40, textAlign: "right" }}>{b ?? 0}</span>
+                  </div>
+                ))}
+                <button style={{ width: "100%", marginTop: 10, background: "none", border: "1px solid #243128", color: T.floodlight, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700 }}
+                  onClick={onShareStats}>🎨 Share stats card</button>
+              </>
+            ) : (
+              <div style={{ display: "flex" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
+                  {rosterNames(m.playersA).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
+                </div>
+                <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
+                  {rosterNames(m.playersB).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -4005,7 +4215,7 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
 }
 
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, stats, onSave, notify }) {
+function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain }) {
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
   const [curPin, setCurPin] = useState("");
@@ -4099,6 +4309,22 @@ function ProfilePage({ me, stats, onSave, notify }) {
         <input className="input" type="password" inputMode="numeric" placeholder="Confirm new PIN" maxLength={4} value={confirmPin} onChange={(e) => setConfirmPin(digits(e.target.value))} />
         <button className="btn btn-gold" onClick={savePin}>{me.pin ? "Change PIN" : "Set PIN"}</button>
       </div>
+      {me.role === "Fan" && follows.length > 0 && (
+        <div className="card" style={{ display: "grid", gap: 8, marginTop: 14 }}>
+          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em" }}>Captains I Follow ({follows.length})</div>
+          {follows.map((id) => {
+            const c = users.find((u) => u.id === id);
+            if (!c) return null;
+            return (
+              <div key={id} onClick={() => onOpenCaptain && onOpenCaptain(id)}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#14532D", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#E6B31E" }}>{c.name.slice(0, 1).toUpperCase()}</div>
+                <span style={{ flex: 1, fontSize: 13, color: "#E6B31E", textDecoration: "underline", textUnderlineOffset: 2 }}>{c.name} ›</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -4433,6 +4659,12 @@ function PlayerCardModal({ player, stats, onClose, notify }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        {(player.state || (player.contactPublic && player.contactInfo)) && (
+          <div style={{ display: "flex", gap: 10, fontSize: 12, color: "#8FA396", justifyContent: "center", flexWrap: "wrap" }}>
+            {player.state && <span>📍 {player.state}</span>}
+            {player.contactPublic && player.contactInfo && <span>📞 {player.contactInfo}</span>}
+          </div>
+        )}
         <svg ref={svgRef} viewBox="0 0 500 620" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
           <defs>
             <radialGradient id="pcSpot" cx="50%" cy="30%" r="75%">
