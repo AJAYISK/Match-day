@@ -352,6 +352,7 @@ export default function App() {
   const [posterFor, setPosterFor] = useState(null);
   const [pendingScoreSlide, setPendingScoreSlide] = useState(0);
   const [statsPosterFor, setStatsPosterFor] = useState(null);
+  const [lineupPosterFor, setLineupPosterFor] = useState(null);
   const [teamFormOpen, setTeamFormOpen] = useState(null); // null | "new" | teamId (editing)
   const [viewTeamId, setViewTeamId] = useState(null); // public team profile viewer
   const [toast, setToast] = useState(null);
@@ -760,7 +761,7 @@ export default function App() {
   const startMatch = (m) => {
     if (m.createdBy !== me.id) return notify("Only this match's captain can start it");
     if (!isDue(m)) return notify(`Kick-off unlocks at ${m.time} on ${m.date}`);
-    patchMatch(m.id, { status: "Live", running: true, elapsed: 0, liveA: 0, liveB: 0, timerStartedAt: new Date().toISOString() });
+    patchMatch(m.id, { status: "Live", running: true, elapsed: 0, liveA: 0, liveB: 0, secondHalf: false, timerStartedAt: new Date().toISOString() });
     notify(`🟢 KICK OFF — ${m.teamA.name} vs ${m.teamB.name}`);
     logEvent(m.id, `🟢 Kick off: ${m.teamA.name} vs ${m.teamB.name}`, 0);
   };
@@ -2249,6 +2250,8 @@ export default function App() {
           me={me}
           linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
           onOpenPlayer={(id) => setPlayerCardFor(id)}
+          allMatches={matches}
+          onPosterLineup={() => setLineupPosterFor(openMatch)}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -2268,7 +2271,12 @@ export default function App() {
           }}
           onLiveScore={(m, a, b, scorerA, scorerB) => {
             const wasA = m.liveA ?? 0, wasB = m.liveB ?? 0;
-            patchMatch(m.id, { liveA: a, liveB: b });
+            const patch = { liveA: a, liveB: b };
+            /* Every goal is at minimum a shot on target — bump both stats automatically so a captain
+               isn't starting from zero on Shots/On Target; they can still fine-tune manually after. */
+            if (a > wasA) { patch.shotsA = (m.shotsA ?? 0) + (a - wasA); patch.shotsOnTargetA = (m.shotsOnTargetA ?? 0) + (a - wasA); }
+            if (b > wasB) { patch.shotsB = (m.shotsB ?? 0) + (b - wasB); patch.shotsOnTargetB = (m.shotsOnTargetB ?? 0) + (b - wasB); }
+            patchMatch(m.id, patch);
             if (a > wasA) logEvent(m.id, `⚽ GOAL — ${m.teamA.name}! ${scorerA || "A player"} scores. ${a}-${b}`, minute(m));
             if (b > wasB) logEvent(m.id, `⚽ GOAL — ${m.teamB.name}! ${scorerB || "A player"} scores. ${a}-${b}`, minute(m));
             if (a <= wasA && b <= wasB) logEvent(m.id, `✏️ Score corrected: ${m.teamA.name} ${a}-${b} ${m.teamB.name}`, minute(m));
@@ -2409,6 +2417,7 @@ export default function App() {
 
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
+      {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
       {playerCardFor && (() => {
         const p = users.find((u) => u.id === playerCardFor) || (me.id === playerCardFor ? me : null);
         return p ? <PlayerCardModal player={p} stats={playerStats(p)} onClose={() => setPlayerCardFor(null)} notify={notify} /> : null;
@@ -2508,7 +2517,7 @@ export default function App() {
                       refreshAll();
                       notify(`${u.name} is now a ${newRole}.`);
                     }}>
-                      {["Fan", "Captain", "Admin"].map((r2) => <option key={r2} value={r2}>{r2}</option>)}
+                      {["Fan", "Captain", "Player", "Admin"].map((r2) => <option key={r2} value={r2}>{r2}</option>)}
                     </select>
                   </div>
                   <button className="btn btn-ghost" style={{ color: T.live, borderColor: "#3a1f1a", fontSize: 12 }}
@@ -2933,7 +2942,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -2973,6 +2982,14 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLef
   const [newTime, setNewTime] = useState("");
   const [shootout, setShootout] = useState(false);
   const [scorersA, setScorersA] = useState("");
+  const [recapEvents, setRecapEvents] = useState([]);
+  const [sheetCard, setSheetCard] = useState(0);
+  const sheetTouchX = useRef(0);
+  useEffect(() => {
+    if (m.status !== "AwaitingScore") return;
+    supabase.from("match_events").select("*").eq("match_id", m.id).order("created_at", { ascending: true })
+      .then(({ data }) => { if (data) setRecapEvents(data); });
+  }, [m.id, m.status]);
   const [scorersB, setScorersB] = useState("");
   const [scorerTallyA, setScorerTallyA] = useState({});
   const [scorerTallyB, setScorerTallyB] = useState({});
@@ -3028,42 +3045,98 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLef
         <div style={{ fontSize: 13, color: "#8FA396" }}>📍 {m.location} · {m.date} at {m.time}</div>
         {captainName && <div style={{ fontSize: 13, color: "#8FA396" }}>🧢 Hosted by Captain <span style={{ color: "#E6B31E", fontWeight: 700 }}>{captainName}</span></div>}
 
-        {/* TEAM SHEETS */}
-        <div className="card" style={{ fontSize: 13, padding: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#8FA396", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>Team Sheets</div>
-          <div style={{ display: "flex" }}>
-            {[[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => {
-              const names = (players || "").split(",").map((p) => p.trim()).filter(Boolean);
-              return (
-                <React.Fragment key={i}>
-                  {i === 1 && <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <MiniLogo team={team} badge={badge} size={24} />
-                      <span style={{ fontWeight: 700, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
-                    </div>
-                    {names.length > 0
-                      ? names.map((p, j) => {
-                          /* A name becomes tappable only when a real Player account has been approved
-                             onto this exact team under this exact roster name. */
-                          const linked = linkedPlayers.find((pl) =>
-                            pl.rosterName.trim().toLowerCase() === p.toLowerCase() &&
-                            pl.teamName === team.name);
-                          if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
+        {/* TEAM SHEETS — swipeable: card 1 rosters, card 2 form & past games */}
+        {(() => {
+          const teamGames = (teamName) => allMatches
+            .filter((x) => x.status === "ResultPublished" && x.createdBy === m.createdBy && (x.teamA.name === teamName || x.teamB.name === teamName))
+            .sort((a, b) => (a.date < b.date ? 1 : -1));
+          const gamesA = teamGames(m.teamA.name), gamesB = teamGames(m.teamB.name);
+          const outcome = (game, teamName) => {
+            const isA = game.teamA.name === teamName;
+            const us = isA ? game.finalA : game.finalB, them = isA ? game.finalB : game.finalA;
+            if (game.shootout && game.pensWinner) return game.pensWinner === (isA ? "A" : "B") ? "W" : "L";
+            return us > them ? "W" : us < them ? "L" : "D";
+          };
+          return (
+            <div className="card" style={{ fontSize: 13, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: sheetCard === 0 ? "#E6B31E" : "#3a4a3e" }} />
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: sheetCard === 1 ? "#E6B31E" : "#3a4a3e" }} />
+              </div>
+              <div style={{ fontSize: 10, color: "#8FA396", textAlign: "center", marginBottom: 10 }}>
+                {sheetCard === 0 ? "← swipe for form & past games" : "← swipe back for rosters →"}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#8FA396", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10, textAlign: "center" }}>
+                {sheetCard === 0 ? "Team Sheets" : "Form & Past Games"}
+              </div>
+              <div style={{ display: "flex" }}
+                onTouchStart={(e) => { sheetTouchX.current = e.touches[0].clientX; }}
+                onTouchEnd={(e) => {
+                  const dx = e.changedTouches[0].clientX - sheetTouchX.current;
+                  if (dx < -40) setSheetCard(1);
+                  if (dx > 40) setSheetCard(0);
+                }}>
+                {sheetCard === 0 ? (
+                  [[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => {
+                    const names = (players || "").split(",").map((p) => p.trim()).filter(Boolean);
+                    return (
+                      <React.Fragment key={i}>
+                        {i === 1 && <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <MiniLogo team={team} badge={badge} size={24} />
+                            <span style={{ fontWeight: 700, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
+                          </div>
+                          {names.length > 0
+                            ? names.map((p, j) => {
+                                const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.toLowerCase() && pl.teamName === team.name);
+                                if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
+                                return (
+                                  <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
+                                    style={{ fontSize: 12.5, padding: "4px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {p} ›
+                                  </div>
+                                );
+                              })
+                            : <div style={{ color: "#8FA396", fontSize: 12 }}>Squad to be announced</div>}
+                        </div>
+                      </React.Fragment>
+                    );
+                  })
+                ) : (
+                  [[m.teamA, gamesA], [m.teamB, gamesB]].map(([team, games], i) => (
+                    <React.Fragment key={i}>
+                      {i === 1 && <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</div>
+                        {games.length === 0 && <div style={{ fontSize: 11.5, color: "#8FA396" }}>No past results yet.</div>}
+                        {games.length > 0 && (
+                          <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                            {games.slice(0, 5).map((g, k) => {
+                              const o = outcome(g, team.name);
+                              return <div key={k} style={{ width: 18, height: 18, borderRadius: 4, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", background: o === "W" ? "#3FA35B" : o === "L" ? "#C6503F" : "#54615a" }}>{o}</div>;
+                            })}
+                          </div>
+                        )}
+                        {games.slice(0, 3).map((g, k) => {
+                          const isA = g.teamA.name === team.name;
+                          const opp = isA ? g.teamB.name : g.teamA.name;
+                          const us = isA ? g.finalA : g.finalB, them = isA ? g.finalB : g.finalA;
                           return (
-                            <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
-                              style={{ fontSize: 12.5, padding: "4px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {p} ›
+                            <div key={k} style={{ fontSize: 11, padding: "4px 0", borderBottom: k < 2 ? "1px solid #243128" : "none", display: "flex", justifyContent: "space-between" }}>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>vs {opp}</span>
+                              <span className="display" style={{ color: "#E6B31E", flexShrink: 0, marginLeft: 6 }}>{us}–{them}</span>
                             </div>
                           );
-                        })
-                      : <div style={{ color: "#8FA396", fontSize: 12 }}>Squad to be announced</div>}
-                  </div>
-                </React.Fragment>
-              );
-            })}
-          </div>
-        </div>
+                        })}
+                      </div>
+                    </React.Fragment>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
         {isOwner && me.role === "Captain" && (m.status === "Scheduled" || (m.status === "Live" && ctrlTab === "stream")) && (
@@ -3343,7 +3416,31 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLef
 
 
             {/* SCORE SUBMISSION REQUEST — appears at full time */}
-            {m.status === "AwaitingScore" && (
+            {m.status === "AwaitingScore" && (() => {
+              const goalLog = recapEvents
+                .map((e) => {
+                  const mm0 = /^(\d+)'\s+(.*)$/.exec(e.message || "");
+                  const min = mm0 ? mm0[1] : null, text = mm0 ? mm0[2] : (e.message || "");
+                  const gm = /GOAL — .+?! (.+?) scores\. (\d+)-(\d+)/.exec(text);
+                  return gm ? { min, name: gm[1], a: gm[2], b: gm[3] } : null;
+                })
+                .filter(Boolean);
+              return (
+                <>
+                  {goalLog.length > 0 && (
+                    <div className="card" style={{ marginBottom: 4 }}>
+                      <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>What happened during the match</div>
+                      {goalLog.map((g, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: i < goalLog.length - 1 ? "1px solid #243128" : "none", fontSize: 12.5 }}>
+                          <span>⚽ {g.name}</span><span style={{ color: "#8FA396" }}>{g.min}'</span>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, marginTop: 4, borderTop: "1px solid #E6B31E", fontSize: 12.5 }}>
+                        <span>Score logged during play</span>
+                        <span className="display" style={{ color: "#E6B31E" }}>{goalLog[goalLog.length - 1].a}–{goalLog[goalLog.length - 1].b}</span>
+                      </div>
+                    </div>
+                  )}
               <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14 }}>
                 <div style={{ fontWeight: 700, color: "#E6B31E" }}>🏁 Full time. Submit the final score to publish this result to the News Feed.</div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
@@ -3461,7 +3558,9 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLef
                 )}
                 <div style={{ fontSize: 12, color: "#8FA396" }}>Your uploaded score is the official result. It publishes to the News Feed on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
               </div>
-            )}
+                </>
+              );
+            })()}
 
             {m.status !== "ResultPublished" && (
               <div style={{ display: "grid", gap: 10 }}>
@@ -3476,6 +3575,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, minute, breakLef
                 <>
                   <div style={{ fontSize: 10, fontWeight: 700, color: "#8FA396", letterSpacing: ".12em", textTransform: "uppercase" }}>Share & Promote</div>
                   <button className="btn btn-ghost" onClick={onPoster}>🎨 Generate match poster</button>
+                  <button className="btn btn-ghost" onClick={onPosterLineup}>🧑‍🤝‍🧑 Generate lineup card</button>
             <button className="btn btn-turf" onClick={() => {
               const lines = m.status === "ResultPublished"
                 ? [`🏁 *FULL TIME* — ${m.teamA.name} ${m.finalA} - ${m.finalB} ${m.teamB.name}`,
@@ -3550,11 +3650,14 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
   const [watchers, setWatchers] = useState([]);
   const [showWatchers, setShowWatchers] = useState(false);
   const [showScorers, setShowScorers] = useState(false);
-  /* Pulls scorer names straight out of the existing "GOAL — Team! Name scores." event text — no new data needed */
-  const scorerNames = timeline
-    .map((e) => { const mm = /GOAL — .+?! (.+?) scores\./.exec(e.message || ""); return mm ? mm[1] : null; })
+  /* Pulls scorer names AND which team they scored for, straight out of the existing
+     "GOAL — Team! Name scores." event text — no new data needed */
+  const scorerEvents = timeline
+    .map((e) => { const mm = /GOAL — (.+?)! (.+?) scores\./.exec(e.message || ""); return mm ? { team: mm[1], name: mm[2] } : null; })
     .filter(Boolean)
     .reverse();
+  const scorerNamesA = scorerEvents.filter((s) => s.team === m.teamA.name).map((s) => s.name);
+  const scorerNamesB = scorerEvents.filter((s) => s.team === m.teamB.name).map((s) => s.name);
   useEffect(() => {
     if (!me) return;
     const ch = supabase.channel(`watch-${m.id}`, { config: { presence: { key: me.id } } });
@@ -3571,12 +3674,12 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
 
   useEffect(() => {
     setCommentary([]);
-    if (m.status !== "Live" || m.onBreak) return;
+    if (m.status !== "Live" || m.onBreak || !m.running) return;
     const fire = () => setCommentary((c) => [{ id: "c" + Date.now(), text: genCommentary(m, rosterNames), min: minute(m), ts: Date.now() }, ...c].slice(0, 12));
     const t = setInterval(fire, 22000 + Math.random() * 14000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [m.id, m.status, m.onBreak, m.playersA, m.playersB]);
+  }, [m.id, m.status, m.onBreak, m.running, m.playersA, m.playersB]);
 
   /* Real events are stored as "NN' message" — split that leading tag off to show as its own badge */
   const splitMinute = (msg) => {
@@ -3682,8 +3785,22 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
         {showScorers && (
           <div style={{ padding: "10px 16px", borderBottom: "1px solid #243128" }}>
             <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Scorers</div>
-            {scorerNames.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>No goals yet.</div>}
-            {scorerNames.map((n, i) => <div key={i} style={{ fontSize: 13, padding: "5px 0" }}>⚽ {n}</div>)}
+            {scorerEvents.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>No goals yet.</div>}
+            {scorerEvents.length > 0 && (
+              <div style={{ display: "flex" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
+                  {scorerNamesA.length === 0 && <div style={{ fontSize: 11.5, color: T.muted }}>—</div>}
+                  {scorerNamesA.map((n, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px 0" }}>⚽ {n}</div>)}
+                </div>
+                <div style={{ width: 1, background: "#243128", margin: "0 12px" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
+                  {scorerNamesB.length === 0 && <div style={{ fontSize: 11.5, color: T.muted }}>—</div>}
+                  {scorerNamesB.map((n, i) => <div key={i} style={{ fontSize: 12.5, padding: "4px 0" }}>⚽ {n}</div>)}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -3732,8 +3849,13 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         </div>
 
+        {m.status === "Live" && !m.running && !m.halfPrompt && !m.onBreak && (
+          <div style={{ margin: "0 16px 10px", background: "rgba(230,179,30,.1)", border: "1px solid rgba(230,179,30,.3)", borderRadius: 10, padding: "10px 12px", fontSize: 11.5, color: T.floodlight, textAlign: "center" }}>
+            ⏸ Match paused — commentary will resume when play restarts
+          </div>
+        )}
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
-        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px" }}>
+        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 320, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y" }}>
           {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
           {feed.map((e) => {
             const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
@@ -4004,6 +4126,9 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>📅 Match date</div>
           <input className="input" type="date" value={f.date} onChange={set("date")} />
+          {f.date && f.date < new Date().toISOString().slice(0, 10) && (
+            <div style={{ fontSize: 11, color: "#e08a7d", marginTop: 6, lineHeight: 1.4 }}>⚠️ This date has already passed — double check before saving.</div>
+          )}
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>🕐 Kick-off time</div>
@@ -4369,6 +4494,81 @@ function StatsPosterModal({ m, onClose, notify }) {
 
           <text x="200" y="460" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="10">📍 {m.location}</text>
           <text x="200" y="478" textAnchor="middle" fill="#8FA396" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="2">HOSTED ON AREA MATCH</text>
+        </svg>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
+          <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- LINEUP ARTWORK — dedicated card for rosters, so the score poster never gets crowded ---------- */
+function LineupPosterModal({ m, onClose, notify }) {
+  const svgRef = useRef(null);
+  if (!m) return null;
+  const namesA = (m.playersA || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const namesB = (m.playersB || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const maxShown = 12; // beyond this, cap with "+N more" rather than shrinking text illegibly
+  const rowH = 24;
+  const listH = (n) => (Math.min(n, maxShown) + (n > maxShown ? 1 : 0)) * rowH;
+  const bodyH = Math.max(listH(namesA.length), listH(namesB.length), rowH);
+  const totalH = 130 + bodyH + 90;
+
+  const download = () => {
+    const xml = new XMLSerializer().serializeToString(svgRef.current);
+    const blob = new Blob([xml], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 800; canvas.height = totalH * 2;
+      canvas.getContext("2d").drawImage(img, 0, 0, 800, totalH * 2);
+      canvas.toBlob((png) => {
+        URL.revokeObjectURL(url);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(png);
+        a.download = `${m.teamA.name}-vs-${m.teamB.name}-lineups-area-match.png`;
+        a.click();
+        notify("Lineup card downloaded 📲");
+      });
+    };
+    img.src = url;
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 360, width: "100%", display: "grid", gap: 12, maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <svg ref={svgRef} viewBox={`0 0 400 ${totalH}`} xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
+          <defs>
+            <linearGradient id="lubg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0D3A1F" /><stop offset="100%" stopColor="#0C120E" />
+            </linearGradient>
+          </defs>
+          <rect width="400" height={totalH} fill="url(#lubg)" />
+          <text x="200" y="42" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="20" letterSpacing="2">AREA MATCH</text>
+          <text x="200" y="60" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="3">TEAM LINEUPS</text>
+
+          <text x="105" y="100" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="14">{m.teamA.name}</text>
+          <text x="295" y="100" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="14">{m.teamB.name}</text>
+          <line x1="200" y1="80" x2="200" y2={110 + bodyH} stroke="#F5F0E1" strokeOpacity="0.1" />
+          <line x1="30" y1="115" x2="370" y2="115" stroke="#F5F0E1" strokeOpacity="0.1" />
+
+          {namesA.length === 0 && <text x="105" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
+          {namesA.slice(0, maxShown).map((n, i) => (
+            <text key={"a" + i} x="190" y={140 + i * rowH} textAnchor="end" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
+          ))}
+          {namesA.length > maxShown && <text x="190" y={140 + maxShown * rowH} textAnchor="end" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesA.length - maxShown} more</text>}
+
+          {namesB.length === 0 && <text x="295" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
+          {namesB.slice(0, maxShown).map((n, i) => (
+            <text key={"b" + i} x="210" y={140 + i * rowH} textAnchor="start" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
+          ))}
+          {namesB.length > maxShown && <text x="210" y={140 + maxShown * rowH} textAnchor="start" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesB.length - maxShown} more</text>}
+
+          <text x="200" y={totalH - 34} textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="10">📍 {m.location}</text>
+          <text x="200" y={totalH - 16} textAnchor="middle" fill="#8FA396" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="2">HOSTED ON AREA MATCH</text>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
