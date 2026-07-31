@@ -506,6 +506,7 @@ export default function App() {
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
           try { new Notification("Area Match", { body: msg, icon: "/icon-512.png" }); } catch (e) {}
         }
+        refreshAll(); // in case this notification means something about MY OWN data changed (e.g. a squad approval) — no manual reload needed
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -624,6 +625,20 @@ export default function App() {
       if (mins >= 20 && !alertsFired.current[m.id].late) {
         alertsFired.current[m.id].late = true;
         notify(`⚠️ ${m.teamA.name} vs ${m.teamB.name} ended over 20 minutes ago — please upload the result now. Fans are waiting!`);
+      }
+    });
+  }, [now, me && me.id, matches]);
+
+  /* Kickoff missed: the scheduled date/time has passed but the captain never started the match */
+  useEffect(() => {
+    if (!me) return;
+    matches.forEach((m) => {
+      if (m.status !== "Scheduled" || m.createdBy !== me.id || !m.date || !m.time) return;
+      const kickoffTime = new Date(`${m.date}T${m.time}`).getTime();
+      if (!alertsFired.current[m.id]) alertsFired.current[m.id] = {};
+      if (now > kickoffTime && !alertsFired.current[m.id].missedKickoff) {
+        alertsFired.current[m.id].missedKickoff = true;
+        notify(`⏰ ${m.teamA.name} vs ${m.teamB.name} was scheduled for ${m.time} on ${m.date} — that's already passed. Start it now, or reschedule/cancel it.`);
       }
     });
   }, [now, me && me.id, matches]);
@@ -2438,6 +2453,8 @@ export default function App() {
         <TeamProfileModal
           team={savedTeams.find((t) => t.id === viewTeamId)}
           record={teamRecord(savedTeams.find((t) => t.id === viewTeamId))}
+          linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
+          onOpenPlayer={(id) => setPlayerCardFor(id)}
           onClose={goBackPage}
         />
       )}
@@ -2748,7 +2765,7 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
 }
 
 /* ---------- MY TEAMS — public team profile ---------- */
-function TeamProfileModal({ team, record, onClose }) {
+function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPlayer }) {
   const [seeMore, setSeeMore] = useState(false);
   const shown = seeMore ? record.results : record.results.slice(0, 2);
   return (
@@ -2807,6 +2824,25 @@ function TeamProfileModal({ team, record, onClose }) {
           ) : (
             <div style={{ fontSize: 13, color: "#8FA396", textAlign: "center", padding: "10px 0" }}>{team.name} hasn't set a formation yet.</div>
           )}
+        </div>
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Squad</div>
+          {(() => {
+            const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
+            if (roster.length === 0) return <div style={{ fontSize: 13, color: "#8FA396" }}>Squad to be announced.</div>;
+            return roster.map((p, j) => {
+              const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.toLowerCase() && pl.teamName === team.name);
+              if (!linked) return <div key={j} style={{ fontSize: 13, padding: "6px 0", color: T.chalk, borderBottom: j < roster.length - 1 ? "1px solid #243128" : "none" }}>{p}</div>;
+              return (
+                <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
+                  style={{ fontSize: 13, padding: "6px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, borderBottom: j < roster.length - 1 ? "1px solid #243128" : "none", display: "flex", alignItems: "center", gap: 6 }}>
+                  <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={16} />
+                  {p} ›
+                </div>
+              );
+            });
+          })()}
         </div>
           {record.results.length > 0 && (
           <div className="card" style={{ marginBottom: 10 }}>
@@ -2986,9 +3022,13 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   const [sheetCard, setSheetCard] = useState(0);
   const sheetTouchX = useRef(0);
   useEffect(() => {
-    if (m.status !== "AwaitingScore") return;
-    supabase.from("match_events").select("*").eq("match_id", m.id).order("created_at", { ascending: true })
+    if (m.status === "Scheduled" || m.status === "Cancelled") { setRecapEvents([]); return; }
+    const load = () => supabase.from("match_events").select("*").eq("match_id", m.id).order("created_at", { ascending: true })
       .then(({ data }) => { if (data) setRecapEvents(data); });
+    load();
+    if (m.status !== "Live") return; // no need to poll once the match is over — history doesn't change
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
   }, [m.id, m.status]);
   const [scorersB, setScorersB] = useState("");
   const [scorerTallyA, setScorerTallyA] = useState({});
@@ -3137,6 +3177,36 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             </div>
           );
         })()}
+
+        {/* MATCH TIMELINE — persists after the match ends, unlike the live-only view */}
+        {recapEvents.length > 0 && (
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ fontSize: 11, letterSpacing: ".15em", color: "#8FA396", textTransform: "uppercase", padding: "14px 16px 10px" }}>Match Timeline</div>
+            <div style={{ display: "grid", gap: 8, padding: "0 16px 16px" }}>
+              {[...recapEvents].reverse().map((e) => {
+                const mm0 = /^(\d+)'\s+(.*)$/.exec(e.message || "");
+                const min = mm0 ? mm0[1] : null, text = mm0 ? mm0[2] : (e.message || "");
+                const isCommentary = text.startsWith("🎙 ");
+                let lead = null, rest = text;
+                if (!isCommentary) {
+                  const bang = text.indexOf("!"), colon = text.indexOf(":");
+                  let cut = -1;
+                  if (bang !== -1 && (colon === -1 || bang < colon)) cut = bang + 1;
+                  else if (colon !== -1) cut = colon + 1;
+                  if (cut !== -1) { lead = text.slice(0, cut); rest = text.slice(cut); }
+                }
+                return (
+                  <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 10, padding: "8px 10px" }}>
+                    {min && <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 11, color: "#E6B31E", background: "rgba(230,179,30,.1)", borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>{min}'</span>}
+                    <span style={{ fontSize: 12.5, color: "#F5F0E1" }}>
+                      {lead ? <><b style={{ color: "#E6B31E" }}>{lead}</b>{rest}</> : text}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
         {isOwner && me.role === "Captain" && (m.status === "Scheduled" || (m.status === "Live" && ctrlTab === "stream")) && (
@@ -3804,7 +3874,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         )}
 
-        {[m.shotsA, m.shotsB, m.shotsOnTargetA, m.shotsOnTargetB, m.cornersA, m.cornersB, m.foulsA, m.foulsB].some((v) => (v ?? 0) > 0) && (
+        {m.status === "Live" && (
           <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
             <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10 }}>Match Stats</div>
             <div style={{ marginBottom: 10 }}>
@@ -3855,7 +3925,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         )}
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
-        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 320, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y" }}>
+        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px" }}>
           {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
           {feed.map((e) => {
             const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
@@ -4040,7 +4110,11 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
     playersA: "", playersB: "", location: "", date: "", time: "", duration: 90,
   });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const valid = f.teamAName && f.teamBName && f.location && f.date && f.time;
+  const isPastDateTime = f.date && f.time && new Date(`${f.date}T${f.time}`).getTime() < Date.now();
+  const countA = f.playersA.split(",").map((s) => s.trim()).filter(Boolean).length;
+  const countB = f.playersB.split(",").map((s) => s.trim()).filter(Boolean).length;
+  const playersMismatch = countA > 0 && countB > 0 && countA !== countB;
+  const valid = f.teamAName && f.teamBName && f.location && f.date && f.time && !isPastDateTime && !playersMismatch;
   const [wantsStream, setWantsStream] = useState(null); // null | "no" | "yes"
   const [streamInput, setStreamInput] = useState("");
   const [streamHelpOpen, setStreamHelpOpen] = useState(false);
@@ -4117,6 +4191,9 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
         <input type="color" value={f.teamBColor} onChange={set("teamBColor")} style={{ width: 52, height: 48, border: 0, borderRadius: 10, background: "none", cursor: "pointer" }} title="Team B colour" />
       </div>
       <input className="input" placeholder="Team B players (comma separated)" maxLength={150} value={f.playersB} onChange={(e) => setF({ ...f, playersB: sanitizeText(e.target.value, 150) })} />
+      {playersMismatch && (
+        <div style={{ fontSize: 11, color: "#e08a7d", marginTop: -6, lineHeight: 1.4 }}>⚠️ Squads must have equal numbers — Team A has {countA}, Team B has {countB}. Doesn't need to be 11, just equal.</div>
+      )}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
         {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setF({ ...f, badgeB: b })}><MiniLogo team={{ name: "", color: f.badgeB === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} /></button>)}
@@ -4126,13 +4203,16 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>📅 Match date</div>
           <input className="input" type="date" value={f.date} onChange={set("date")} />
-          {f.date && f.date < new Date().toISOString().slice(0, 10) && (
-            <div style={{ fontSize: 11, color: "#e08a7d", marginTop: 6, lineHeight: 1.4 }}>⚠️ This date has already passed — double check before saving.</div>
+          {isPastDateTime && (
+            <div style={{ fontSize: 11, color: "#e08a7d", marginTop: 6, lineHeight: 1.4 }}>⚠️ This date and time have already passed — pick a time in the future to save.</div>
           )}
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>🕐 Kick-off time</div>
           <input className="input" type="time" value={f.time} onChange={set("time")} />
+          {isPastDateTime && (
+            <div style={{ fontSize: 11, color: "#e08a7d", marginTop: 6, lineHeight: 1.4 }}>⚠️ Already passed for today's date.</div>
+          )}
         </div>
       </div>
       <div>
@@ -4266,8 +4346,11 @@ function PosterModal({ m, onClose, notify }) {
               <rect x="60" y="400" width="280" height="2" fill="#E6B31E" opacity="0.5" />
               {(m.scorersA || m.scorersB) && (
                 <>
-                  <text x="110" y="420" textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersA || "—").slice(0, 34)}</text>
-                  <text x="290" y="420" textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersB || "—").slice(0, 34)}</text>
+                  <text x="110" y="420" textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersA || "—").length > 34 ? `${(m.scorersA || "").slice(0, 32)}…` : (m.scorersA || "—")}</text>
+                  <text x="290" y="420" textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="10">⚽ {(m.scorersB || "—").length > 34 ? `${(m.scorersB || "").slice(0, 32)}…` : (m.scorersB || "—")}</text>
+                  {((m.scorersA || "").length > 34 || (m.scorersB || "").length > 34) && (
+                    <text x="200" y="434" textAnchor="middle" fill="#8FA396" opacity="0.7" fontFamily="Space Grotesk, sans-serif" fontSize="8" fontStyle="italic">Full squad on the lineup card →</text>
+                  )}
                 </>
               )}
               <text x="200" y="440" textAnchor="middle" fill="#F5F0E1" opacity="0.75" fontFamily="Space Grotesk, sans-serif" fontSize="11">📍 {m.location} · {fmtDate(m.date)}</text>
@@ -4512,9 +4595,14 @@ function LineupPosterModal({ m, onClose, notify }) {
   const namesB = (m.playersB || "").split(",").map((s) => s.trim()).filter(Boolean);
   const maxShown = 12; // beyond this, cap with "+N more" rather than shrinking text illegibly
   const rowH = 24;
-  const listH = (n) => (Math.min(n, maxShown) + (n > maxShown ? 1 : 0)) * rowH;
-  const bodyH = Math.max(listH(namesA.length), listH(namesB.length), rowH);
-  const totalH = 130 + bodyH + 90;
+  const nameStartY = 140;
+  const rowsShown = (n) => Math.min(n, maxShown) + (n > maxShown ? 1 : 0); // +1 row if a "+N more" line is needed
+  const maxRows = Math.max(rowsShown(namesA.length), rowsShown(namesB.length), 1);
+  const lastRowY = nameStartY + (maxRows - 1) * rowH;   // exact y of the final row actually drawn
+  const dividerBottomY = lastRowY + 16;                  // divider ends just past the last row, not a guess
+  const footerY1 = dividerBottomY + 34;
+  const footerY2 = dividerBottomY + 52;
+  const totalH = footerY2 + 24;
 
   const download = () => {
     const xml = new XMLSerializer().serializeToString(svgRef.current);
@@ -4552,23 +4640,23 @@ function LineupPosterModal({ m, onClose, notify }) {
 
           <text x="105" y="100" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="14">{m.teamA.name}</text>
           <text x="295" y="100" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="14">{m.teamB.name}</text>
-          <line x1="200" y1="80" x2="200" y2={110 + bodyH} stroke="#F5F0E1" strokeOpacity="0.1" />
+          <line x1="200" y1="80" x2="200" y2={dividerBottomY} stroke="#F5F0E1" strokeOpacity="0.1" />
           <line x1="30" y1="115" x2="370" y2="115" stroke="#F5F0E1" strokeOpacity="0.1" />
 
           {namesA.length === 0 && <text x="105" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
           {namesA.slice(0, maxShown).map((n, i) => (
-            <text key={"a" + i} x="190" y={140 + i * rowH} textAnchor="end" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
+            <text key={"a" + i} x="30" y={140 + i * rowH} textAnchor="start" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
           ))}
-          {namesA.length > maxShown && <text x="190" y={140 + maxShown * rowH} textAnchor="end" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesA.length - maxShown} more</text>}
+          {namesA.length > maxShown && <text x="30" y={140 + maxShown * rowH} textAnchor="start" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesA.length - maxShown} more</text>}
 
           {namesB.length === 0 && <text x="295" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
           {namesB.slice(0, maxShown).map((n, i) => (
-            <text key={"b" + i} x="210" y={140 + i * rowH} textAnchor="start" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
+            <text key={"b" + i} x="370" y={140 + i * rowH} textAnchor="end" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
           ))}
-          {namesB.length > maxShown && <text x="210" y={140 + maxShown * rowH} textAnchor="start" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesB.length - maxShown} more</text>}
+          {namesB.length > maxShown && <text x="370" y={140 + maxShown * rowH} textAnchor="end" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesB.length - maxShown} more</text>}
 
-          <text x="200" y={totalH - 34} textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="10">📍 {m.location}</text>
-          <text x="200" y={totalH - 16} textAnchor="middle" fill="#8FA396" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="2">HOSTED ON AREA MATCH</text>
+          <text x="200" y={footerY1} textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="10">📍 {m.location}</text>
+          <text x="200" y={footerY2} textAnchor="middle" fill="#8FA396" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="2">HOSTED ON AREA MATCH</text>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
