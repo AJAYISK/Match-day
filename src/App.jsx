@@ -329,6 +329,9 @@ export default function App() {
   const [teamSupporters, setTeamSupporters] = useState([]); // { fanId, teamId }
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
+  const [dreamTeamInput, setDreamTeamInput] = useState("");
+  const [dreamTeamSlide, setDreamTeamSlide] = useState(0);
+  const dreamTeamTouchX = useRef(0);
   const [playerCardFor, setPlayerCardFor] = useState(null);
   const [follows, setFollows] = useState([]); // captain ids I follow
   const [adminPosts, setAdminPosts] = useState([]);
@@ -419,7 +422,7 @@ export default function App() {
       notify("🚫 This account has been blocked. Contact the Area Match admin.");
       return;
     }
-    const meObj = { id: p.id, name: p.name, role: p.role, pin: p.pin, state: p.state || "", contactInfo: p.contact_info || "", joined: (p.created_at || "").slice(0, 10), contact: (await supabase.auth.getUser()).data.user?.email || "", contactPublic: !!p.contact_public, jerseyPattern: p.jersey_pattern || "solid", jerseyMain: p.jersey_main || "#E6B31E", jerseyTrim: p.jersey_trim || "#F5F0E1", positionPlayed: p.position_played || "", teamId: p.team_id || null, rosterName: p.roster_name || "" };
+    const meObj = { id: p.id, name: p.name, role: p.role, pin: p.pin, state: p.state || "", contactInfo: p.contact_info || "", joined: (p.created_at || "").slice(0, 10), contact: (await supabase.auth.getUser()).data.user?.email || "", contactPublic: !!p.contact_public, jerseyPattern: p.jersey_pattern || "solid", jerseyMain: p.jersey_main || "#E6B31E", jerseyTrim: p.jersey_trim || "#F5F0E1", positionPlayed: p.position_played || "", teamId: p.team_id || null, rosterName: p.roster_name || "", dreamTeams: p.dream_teams || [] };
     setMe(meObj);
     setScreen("site");
     setPage(p.role === "Admin" ? "admin" : "feed");
@@ -440,7 +443,7 @@ export default function App() {
     if (!meObj) return;
     const [{ data: ms }, { data: us }] = await Promise.all([
       supabase.from("matches").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email, team_id, roster_name, jersey_pattern, jersey_main, jersey_trim, position_played, contact_public"),
+      supabase.from("profiles").select("id, name, role, created_at, contact_info, state, blocked, last_seen, email, team_id, roster_name, jersey_pattern, jersey_main, jersey_trim, position_played, contact_public, dream_teams"),
     ]);
     const { data: ev } = await supabase.from("match_events").select("*").order("created_at", { ascending: false }).limit(24);
     /* The quick "Live Updates" ticker (News Feed + Admin) shows real match events only —
@@ -470,9 +473,9 @@ export default function App() {
     const { data: ps } = await supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(20);
     if (ps) setAdminPosts(ps);
     if (ms) setMatches(ms.map(rowToMatch));
-    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10), teamId: u.team_id || null, rosterName: u.roster_name || "", jerseyPattern: u.jersey_pattern || "solid", jerseyMain: u.jersey_main || "#E6B31E", jerseyTrim: u.jersey_trim || "#F5F0E1", positionPlayed: u.position_played || "", contactPublic: !!u.contact_public })));
+    if (us) setUsers(us.map((u) => ({ id: u.id, name: u.name, role: u.role, contact: "", email: u.email || "", contactInfo: u.contact_info || "", state: u.state || "", blocked: !!u.blocked, lastSeen: u.last_seen, pin: null, joined: (u.created_at || "").slice(0, 10), teamId: u.team_id || null, rosterName: u.roster_name || "", jerseyPattern: u.jersey_pattern || "solid", jerseyMain: u.jersey_main || "#E6B31E", jerseyTrim: u.jersey_trim || "#F5F0E1", positionPlayed: u.position_played || "", contactPublic: !!u.contact_public, dreamTeams: u.dream_teams || [] })));
     const { data: savedTeamsRows } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
-    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, jerseyPattern: t.jersey_pattern || "solid", jerseyTrim: t.jersey_trim || "#F5F0E1", createdAt: t.created_at })));
+    if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, jerseyPattern: t.jersey_pattern || "solid", jerseyTrim: t.jersey_trim || "#F5F0E1", startingNames: t.starting_names || [], createdAt: t.created_at })));
     const { data: trRows } = await supabase.from("team_requests").select("*").order("created_at", { ascending: false });
     if (trRows) setTeamRequests(trRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, captainId: r.captain_id, kind: r.kind, rosterName: r.roster_name || "", status: r.status, createdAt: r.created_at })));
     const { data: tsRows } = await supabase.from("team_supporters").select("*");
@@ -928,6 +931,7 @@ export default function App() {
       positionPlayed: patch.position_played ?? prev.positionPlayed,
       contactInfo: patch.contact_info ?? prev.contactInfo,
       contactPublic: patch.contact_public ?? prev.contactPublic,
+      dreamTeams: patch.dream_teams ?? prev.dreamTeams,
     }));
     const { error } = await supabase.from("profiles").update(patch).eq("id", me.id);
     if (error) notify(error.message);
@@ -951,6 +955,11 @@ export default function App() {
      because playerStats() reads historical match results by that name) */
   /* Captain awards a player — visible on their profile, triggers a notification, and (for MOTM/Golden Boot etc.)
      feeds directly into their level progress since it's counted alongside goals in playerLevel(). */
+  const saveSquadStarting = async (teamId, names) => {
+    setSavedTeams((ts) => ts.map((t) => (t.id === teamId ? { ...t, startingNames: names } : t)));
+    const { error } = await supabase.from("saved_teams").update({ starting_names: names }).eq("id", teamId);
+    if (error) notify(error.message);
+  };
   const giveAward = async (playerId, teamId, awardType, matchId = null) => {
     const { error } = await supabase.from("player_awards").insert({ player_id: playerId, team_id: teamId, match_id: matchId, award_type: awardType, awarded_by: me.id });
     if (error) return notify(error.message);
@@ -1986,6 +1995,43 @@ export default function App() {
                 <div style={{ fontSize: 10.5, color: T.muted, marginTop: 4, lineHeight: 1.4 }}>Off by default — only visible to others if you turn this on.</div>
               </div>
 
+              <div className="card" style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>My Dream Team ⚽</div>
+                <div style={{ fontSize: 10.5, color: T.muted, marginBottom: 10 }}>Real teams you admire — shown on your profile.</div>
+                {me.dreamTeams.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    {me.dreamTeams.length > 1 && (
+                      <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+                        {me.dreamTeams.map((_, i) => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: i === dreamTeamSlide ? T.floodlight : "#3a4a3e" }} />)}
+                      </div>
+                    )}
+                    <div onTouchStart={(e) => { dreamTeamTouchX.current = e.touches[0].clientX; }}
+                      onTouchEnd={(e) => {
+                        const dx = e.changedTouches[0].clientX - dreamTeamTouchX.current;
+                        if (dx < -40) setDreamTeamSlide((i) => Math.min(me.dreamTeams.length - 1, i + 1));
+                        if (dx > 40) setDreamTeamSlide((i) => Math.max(0, i - 1));
+                      }}
+                      style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 14, padding: "22px 14px", textAlign: "center" }}>
+                      <div style={{ fontSize: 26 }}>⭐</div>
+                      <div className="display" style={{ fontSize: 18, color: T.floodlight, marginTop: 6 }}>{me.dreamTeams[dreamTeamSlide]}</div>
+                      <button onClick={() => savePlayerKit({ dream_teams: me.dreamTeams.filter((_, i) => i !== dreamTeamSlide) })}
+                        style={{ background: "none", border: "1px solid rgba(245,240,225,.25)", color: "#e08a7d", borderRadius: 99, padding: "4px 12px", fontSize: 11, marginTop: 12 }}>Remove</button>
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input className="input" placeholder="e.g. Barcelona, Man United..." maxLength={30} value={dreamTeamInput} onChange={(e) => setDreamTeamInput(e.target.value)} style={{ flex: 1 }} />
+                  <button className="btn btn-gold" style={{ padding: "10px 14px" }}
+                    onClick={() => {
+                      const v = dreamTeamInput.trim();
+                      if (!v || me.dreamTeams.length >= 8) return;
+                      savePlayerKit({ dream_teams: [...me.dreamTeams, v] });
+                      setDreamTeamInput("");
+                      setDreamTeamSlide(me.dreamTeams.length);
+                    }}>Add</button>
+                </div>
+              </div>
+
               {/* FIND A TEAM */}
               {!stats.team && !myPending && (
                 <div className="card">
@@ -2600,6 +2646,7 @@ export default function App() {
           playerStats={playerStats}
           playerAwards={playerAwards}
           onGiveAward={giveAward}
+          onSaveStarting={(names) => saveSquadStarting(squadManageFor, names)}
           onClose={() => setSquadManageFor(null)}
         />
       )}
@@ -2932,56 +2979,83 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
 
 /* ---------- MY TEAMS — public team profile ---------- */
 /* ---------- SQUAD MANAGEMENT — captain's roster view, registered players prioritized, award-giving ---------- */
-function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playerAwards, onGiveAward, onClose }) {
+function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playerAwards, onGiveAward, onSaveStarting, onClose }) {
   const [awardMenuFor, setAwardMenuFor] = useState(null); // player id
   const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
+  const startingNames = Array.isArray(team.startingNames) ? team.startingNames : [];
   const withLink = roster.map((name) => ({ name, linked: linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === name.toLowerCase() && pl.teamName === team.name) }));
-  /* Registered (linked) players first — they have real, verifiable stats. Unregistered plain names after. */
-  const sorted = [...withLink].sort((a, b) => (b.linked ? 1 : 0) - (a.linked ? 1 : 0));
+  /* Registered (linked) players first within each group — they have real, verifiable stats. */
+  const sortGroup = (list) => [...list].sort((a, b) => (b.linked ? 1 : 0) - (a.linked ? 1 : 0));
+  const starting = sortGroup(withLink.filter((p) => startingNames.includes(p.name)));
+  const reserves = sortGroup(withLink.filter((p) => !startingNames.includes(p.name)));
+  const toggleStarting = (name) => {
+    const isStarting = startingNames.includes(name);
+    onSaveStarting(isStarting ? startingNames.filter((n) => n !== name) : [...startingNames, name]);
+  };
+
+  const renderPlayerRow = (name, linked, isStarting) => {
+    if (!linked) {
+      return (
+        <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #243128" }}>
+          <span style={{ flex: 1, fontSize: 13, color: "#8FA396" }}>{name} <span style={{ fontSize: 10 }}>— not on Area Match</span></span>
+          <button onClick={() => toggleStarting(name)} style={{ background: "none", border: "1px solid #243128", color: "#8FA396", borderRadius: 8, padding: "5px 9px", fontSize: 10.5 }}>
+            {isStarting ? "→ Bench" : "→ Start"}
+          </button>
+        </div>
+      );
+    }
+    const lvl = playerLevel(linked);
+    const stats = playerStats(linked);
+    const awards = playerAwards.filter((a) => a.playerId === linked.id);
+    return (
+      <div key={name} style={{ borderBottom: "1px solid #243128" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0" }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minWidth: 0 }}
+            onClick={() => setAwardMenuFor(awardMenuFor === linked.id ? null : linked.id)}>
+            <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={30} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#F5F0E1" }}>{name} <span style={{ fontSize: 10, background: "rgba(230,179,30,.15)", color: "#E6B31E", padding: "1px 6px", borderRadius: 4 }}>{lvl.tier.icon} {lvl.tier.name}</span></div>
+              <div style={{ fontSize: 10.5, color: "#8FA396", marginTop: 2 }}>⚽ {stats.goals} goals · {awards.length} award{awards.length === 1 ? "" : "s"}</div>
+            </div>
+          </div>
+          <button onClick={() => toggleStarting(name)} style={{ background: "none", border: "1px solid #243128", color: "#8FA396", borderRadius: 8, padding: "5px 9px", fontSize: 10.5, flexShrink: 0 }}>
+            {isStarting ? "→ Bench" : "→ Start"}
+          </button>
+        </div>
+        {awardMenuFor === linked.id && (
+          <div style={{ paddingBottom: 12 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {Object.entries(AWARD_TYPES).map(([key, a]) => (
+                <button key={key} onClick={() => { onGiveAward(linked.id, team.id, key); setAwardMenuFor(null); }}
+                  style={{ background: "#131a15", border: "1px solid #243128", color: "#F5F0E1", borderRadius: 99, padding: "6px 11px", fontSize: 11.5 }}>{a.icon} {a.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 92, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
       <div style={{ background: "#12161c", borderRadius: 20, padding: 16, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
         <div className="display" style={{ fontSize: 18, color: "#E6B31E", marginBottom: 4 }}>{team.name} Squad</div>
-        <div style={{ fontSize: 11.5, color: "#8FA396", marginBottom: 14 }}>Registered players show their level and record. Tap one to give an award.</div>
+        <div style={{ fontSize: 11.5, color: "#8FA396", marginBottom: 14 }}>Tap a registered player to give an award. Use → Start / → Bench to make substitutions.</div>
 
-        {sorted.length === 0 && <div style={{ color: "#8FA396", fontSize: 13 }}>No squad names yet — add some from Edit Team.</div>}
+        {roster.length === 0 && <div style={{ color: "#8FA396", fontSize: 13 }}>No squad names yet — add some from Edit Team.</div>}
 
-        {sorted.map(({ name, linked }, i) => {
-          if (!linked) {
-            return (
-              <div key={i} style={{ padding: "10px 0", borderBottom: "1px solid #243128", fontSize: 13, color: "#8FA396" }}>
-                {name} <span style={{ fontSize: 10 }}>— not on Area Match</span>
-              </div>
-            );
-          }
-          const lvl = playerLevel(linked);
-          const stats = playerStats(linked);
-          const awards = playerAwards.filter((a) => a.playerId === linked.id);
-          return (
-            <div key={i} style={{ borderBottom: "1px solid #243128" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", cursor: "pointer" }}
-                onClick={() => setAwardMenuFor(awardMenuFor === linked.id ? null : linked.id)}>
-                <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={30} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: "#F5F0E1" }}>{name} <span style={{ fontSize: 10, background: "rgba(230,179,30,.15)", color: "#E6B31E", padding: "1px 6px", borderRadius: 4 }}>{lvl.tier.icon} {lvl.tier.name}</span></div>
-                  <div style={{ fontSize: 10.5, color: "#8FA396", marginTop: 2 }}>⚽ {stats.goals} goals · {awards.length} award{awards.length === 1 ? "" : "s"}</div>
-                </div>
-                <span style={{ color: "#8FA396" }}>{awardMenuFor === linked.id ? "▴" : "▾"}</span>
-              </div>
-              {awardMenuFor === linked.id && (
-                <div style={{ paddingBottom: 12 }}>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {Object.entries(AWARD_TYPES).map(([key, a]) => (
-                      <button key={key} onClick={() => { onGiveAward(linked.id, team.id, key); setAwardMenuFor(null); }}
-                        style={{ background: "#131a15", border: "1px solid #243128", color: "#F5F0E1", borderRadius: 99, padding: "6px 11px", fontSize: 11.5 }}>{a.icon} {a.label}</button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {starting.length > 0 && (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#3FA35B", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 4 }}>Starting XI ({starting.length})</div>
+            {starting.map((p) => renderPlayerRow(p.name, p.linked, true))}
+          </>
+        )}
+        {reserves.length > 0 && (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#8FA396", letterSpacing: ".1em", textTransform: "uppercase", marginTop: 14, marginBottom: 4 }}>Reserves ({reserves.length})</div>
+            {reserves.map((p) => renderPlayerRow(p.name, p.linked, false))}
+          </>
+        )}
 
         <button className="btn btn-ghost" style={{ width: "100%", marginTop: 14 }} onClick={onClose}>Close</button>
       </div>
