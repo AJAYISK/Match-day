@@ -315,6 +315,7 @@ export default function App() {
   const openMatchDetail = (id) => { setOpenMatch(id); pushCloseable(() => setOpenMatch(null)); };
   const openLiveDetail = (id) => { setLiveDetailFor(id); pushCloseable(() => setLiveDetailFor(null)); };
   const openTeamProfile = (id) => { setViewTeamId(id); pushCloseable(() => setViewTeamId(null)); };
+  const openPlayerProfile = (id) => { setViewPlayerId(id); pushCloseable(() => setViewPlayerId(null)); };
   const [liveDetailFor, setLiveDetailFor] = useState(null); // matchId shown in the 🔴 Live pitch view
   const [liveTimeline, setLiveTimeline] = useState([]);     // fresh per-match events for that view
   const [goalAlertIds, setGoalAlertIds] = useState([]);     // matchIds the fan opted into goal alerts for
@@ -350,6 +351,7 @@ export default function App() {
   const [supportDraft, setSupportDraft] = useState("");
   const [feedState, setFeedState] = useState("All");
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
+  const [heroSlide, setHeroSlide] = useState(0);
   const [liveStateFilter, setLiveStateFilter] = useState("All");
   const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
@@ -372,6 +374,7 @@ export default function App() {
   const [squadManageFor, setSquadManageFor] = useState(null); // teamId
   const [awardCardFor, setAwardCardFor] = useState(null); // award id
   const [viewTeamId, setViewTeamId] = useState(null); // public team profile viewer
+  const [viewPlayerId, setViewPlayerId] = useState(null); // public player profile viewer
   const [toast, setToast] = useState(null);
   const [now, setNow] = useState(Date.now());
   const alertsFired = useRef({});
@@ -855,6 +858,7 @@ export default function App() {
     if (patch.name !== undefined) row.name = patch.name;
     if (patch.pin !== undefined) row.pin = patch.pin;
     if (patch.contactInfo !== undefined) row.contact_info = sanitizeText(patch.contactInfo, 60);
+    if (patch.contactPublic !== undefined) row.contact_public = patch.contactPublic;
     const { error } = await supabase.from("profiles").update(row).eq("id", me.id);
     if (error) return notify(error.message);
     setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, ...patch } : u)));
@@ -865,6 +869,17 @@ export default function App() {
   /* Past results older than 30 days are retired from view (and purged nightly by the database) */
   const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
+  /* Hero card drifts on its own between the text card and the photo, no tap needed —
+     randomized pace (3.5-6.5s) so it doesn't feel mechanical. */
+  useEffect(() => {
+    let timer;
+    const loop = () => {
+      setHeroSlide((s) => (s === 0 ? 1 : 0));
+      timer = setTimeout(loop, 3500 + Math.random() * 3000);
+    };
+    timer = setTimeout(loop, 4500);
+    return () => clearTimeout(timer);
+  }, []);
   useEffect(() => {
     if (pendingScores.length <= 1) return;
     const t = setInterval(() => setPendingScoreSlide((i) => (i + 1) % pendingScores.length), 5000);
@@ -1329,7 +1344,9 @@ export default function App() {
   };
   const captainState = (m) => (users.find((u) => u.id === m.createdBy) || {}).state || "";
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
-  const published = publishedAll.filter((m) =>
+  const published = publishedAll.filter((m) => m.status !== "AwaitingScore" &&
+    (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
+  const awaitingResults = publishedAll.filter((m) => m.status === "AwaitingScore" &&
     (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
   const inMyState = me && me.state ? publishedAll.filter((m) => captainState(m) === me.state && m.status !== "ResultPublished") : [];
   const capped = (key, list) => (seeMore[key] ? list : list.slice(0, 2));
@@ -1346,7 +1363,7 @@ export default function App() {
     );
   };
   const upcoming = published.filter((m) => m.status === "Scheduled");
-  const liveNow = published.filter((m) => m.status === "Live" || m.status === "AwaitingScore")
+  const liveNow = published.filter((m) => m.status === "Live")
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const results = published.filter((m) => m.status === "ResultPublished");
   const mine = matches.filter((m) => m.createdBy === me.id);
@@ -1771,12 +1788,21 @@ export default function App() {
               )}
             </div>
 
-            <div className="hero">
-              <div className="display hero-title">
-                Your community.<br /><span style={{ color: T.floodlight }}>Your matches. Live.</span>
+            <div className="hero-carousel" style={{ position: "relative", overflow: "hidden", borderRadius: 16, marginBottom: 20, height: heroSlide === 0 ? "auto" : 280 }}>
+              <div className="hero" style={{ opacity: heroSlide === 0 ? 1 : 0, transition: "opacity 1s ease", position: heroSlide === 0 ? "static" : "absolute", inset: 0, pointerEvents: heroSlide === 0 ? "auto" : "none" }}>
+                <div className="display hero-title">
+                  Your community.<br /><span style={{ color: T.floodlight }}>Your matches. Live.</span>
+                </div>
+                <div style={{ color: T.muted, marginTop: 10, maxWidth: 520 }}>
+                  Follow published matches from local captains, and catch every score update the moment it happens on 🔴 Live. Results go live the moment the captain submits the final score.
+                </div>
               </div>
-              <div style={{ color: T.muted, marginTop: 10, maxWidth: 520 }}>
-                Follow published matches from local captains, and catch every score update the moment it happens on 🔴 Live. Results go live the moment the captain submits the final score.
+              <div style={{ opacity: heroSlide === 1 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 1 ? "auto" : "none", backgroundImage: "url('/hero-photo.jpg')", backgroundSize: "170%", backgroundPosition: "42% 62%", borderRadius: 16 }}>
+                <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(6,9,7,.15) 0%, rgba(6,9,7,.2) 55%, rgba(6,9,7,.9) 100%)", borderRadius: 16 }} />
+                <div style={{ position: "absolute", bottom: 20, left: 0, right: 0, textAlign: "center" }}>
+                  <div className="display" style={{ fontSize: 22, color: T.chalk, lineHeight: 1.1 }}>YOUR COMMUNITY</div>
+                  <div className="display" style={{ fontSize: 22, color: T.floodlight, lineHeight: 1.1 }}>FOOTBALL LIVE</div>
+                </div>
               </div>
             </div>
 
@@ -1809,6 +1835,15 @@ export default function App() {
                 <SectionTitle color={T.live}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
                   {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                </div>
+              </>
+            )}
+
+            {awaitingResults.length > 0 && (
+              <>
+                <SectionTitle color={T.floodlight}>⏳ Awaiting Results</SectionTitle>
+                <div className="feedgrid" style={{ marginBottom: 28 }}>
+                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -1942,6 +1977,7 @@ export default function App() {
                         if (!window.confirm(`Leave ${stats.team.name}? Your goals stay on record, but you'll need to request again to rejoin.`)) return;
                         const { error } = await supabase.from("profiles").update({ team_id: null, roster_name: null }).eq("id", me.id);
                         if (error) return notify(error.message);
+                        setMe((prev) => ({ ...prev, teamId: null, rosterName: "" }));
                         notify("You've left the squad.");
                         refreshAll();
                       }}>Leave</button>
@@ -1982,17 +2018,6 @@ export default function App() {
                 </div>
                 <input className="input" placeholder="Position (e.g. Striker)" maxLength={20} value={me.positionPlayed}
                   onChange={(e) => savePlayerKit({ position_played: sanitizeText(e.target.value, 20) })} />
-              </div>
-
-              <div className="card" style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Contact (Optional)</div>
-                <input className="input" placeholder="e.g. WhatsApp 0803 123 4567" maxLength={60} value={me.contactInfo || ""}
-                  onChange={(e) => savePlayerKit({ contact_info: sanitizeText(e.target.value, 60) })} style={{ marginBottom: 10 }} />
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.muted, cursor: "pointer" }}>
-                  <input type="checkbox" checked={!!me.contactPublic} onChange={(e) => savePlayerKit({ contact_public: e.target.checked })} />
-                  Publish my contact publicly on my profile
-                </label>
-                <div style={{ fontSize: 10.5, color: T.muted, marginTop: 4, lineHeight: 1.4 }}>Off by default — only visible to others if you turn this on.</div>
               </div>
 
               <div className="card" style={{ marginBottom: 10 }}>
@@ -2089,7 +2114,7 @@ export default function App() {
                   return (
                     <div key={req.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #243128" }}>
                       <Jersey pattern={player?.jerseyPattern} main={player?.jerseyMain} trim={player?.jerseyTrim} size={30} />
-                      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => player && setPlayerCardFor(player.id)}>
+                      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => player && openPlayerProfile(player.id)}>
                         <div style={{ fontWeight: 700, fontSize: 13, color: T.floodlight, textDecoration: "underline", textUnderlineOffset: 2 }}>{player ? player.name : "A player"} ›</div>
                         <div style={{ fontSize: 10.5, color: T.muted, display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
                           <span style={{ background: req.kind === "claim" ? "rgba(230,179,30,.15)" : "rgba(63,163,91,.15)", color: req.kind === "claim" ? T.floodlight : "#3FA35B", padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>
@@ -2433,7 +2458,7 @@ export default function App() {
           m={matches.find((x) => x.id === openMatch)}
           me={me}
           linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
-          onOpenPlayer={(id) => setPlayerCardFor(id)}
+          onOpenPlayer={(id) => openPlayerProfile(id)}
           allMatches={matches}
           onPosterLineup={() => setLineupPosterFor(openMatch)}
           notify={notify}
@@ -2491,8 +2516,10 @@ export default function App() {
           onDeleteMatch={async (m) => {
             await supabase.from("match_events").delete().eq("match_id", m.id);
             await supabase.from("likes").delete().eq("match_id", m.id);
-            const { error } = await supabase.from("matches").delete().eq("id", m.id);
+            const { data: deleted, error } = await supabase.from("matches").delete().eq("id", m.id).select();
             if (error) return notify(error.message);
+            if (!deleted || deleted.length === 0) return notify("⚠️ Couldn't delete the match — a permissions issue may be blocking it.");
+            setMatches((ms) => ms.filter((x) => x.id !== m.id));
             setOpenMatch(null);
             notify("🗑 Match deleted.");
             refreshAll();
@@ -2602,6 +2629,24 @@ export default function App() {
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
+      {viewPlayerId && (() => {
+        const p = users.find((u) => u.id === viewPlayerId);
+        if (!p) return null;
+        const st = playerStats(p);
+        return (
+          <PlayerProfilePage
+            player={p}
+            stats={st}
+            level={playerLevel(p)}
+            awards={playerAwards.filter((a) => a.playerId === p.id)}
+            team={st.team}
+            onClose={goBackPage}
+            onOpenCard={(id) => setPlayerCardFor(id)}
+            onOpenAward={(id) => setAwardCardFor(id)}
+            onOpenTeam={(id) => openTeamProfile(id)}
+          />
+        );
+      })()}
       {playerCardFor && (() => {
         const p = users.find((u) => u.id === playerCardFor) || (me.id === playerCardFor ? me : null);
         return p ? <PlayerCardModal player={p} stats={playerStats(p)} awards={playerAwards.filter((a) => a.playerId === p.id)} level={playerLevel(p)} onClose={() => setPlayerCardFor(null)} notify={notify} /> : null;
@@ -2630,7 +2675,7 @@ export default function App() {
           team={savedTeams.find((t) => t.id === viewTeamId)}
           record={teamRecord(savedTeams.find((t) => t.id === viewTeamId))}
           linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
-          onOpenPlayer={(id) => setPlayerCardFor(id)}
+          onOpenPlayer={(id) => openPlayerProfile(id)}
           me={me}
           supporterCount={teamSupporters.filter((s) => s.teamId === viewTeamId).length}
           isSupporting={teamSupporters.some((s) => s.fanId === me.id && s.teamId === viewTeamId)}
@@ -2661,6 +2706,7 @@ export default function App() {
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
           onShare={() => { goBackPage(); setPosterFor(liveDetailMatch.id); }}
+          onShareLineup={() => { goBackPage(); setLineupPosterFor(liveDetailMatch.id); }}
           onShareStats={() => { goBackPage(); setStatsPosterFor(liveDetailMatch.id); }}
           onClose={goBackPage}
         />
@@ -2942,9 +2988,13 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
                   const filled = positions[slot.key];
                   return (
                     <div key={slot.key} onClick={() => setActiveSlot(slot.key)}
-                      style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", aspectRatio: "1", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, textAlign: "center", lineHeight: 1.05, fontWeight: 700, cursor: "pointer", padding: 2,
-                        background: filled ? "#E6B31E" : "#131a15", color: filled ? "#1a1405" : "#8FA396", border: `1.5px solid ${activeSlot === slot.key ? "#fff" : filled ? "#0f3620" : "#3a4a3e"}`, borderStyle: filled ? "solid" : "dashed" }}>
-                      {filled || slot.key}
+                      style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" }}>
+                      <svg width="60%" viewBox="0 0 100 116" style={{ filter: activeSlot === slot.key ? "drop-shadow(0 0 3px #fff)" : "none" }}>
+                        <path d={JERSEY_PATH} fill={filled ? "#E6B31E" : "#131a15"} stroke={filled ? "#0f3620" : "#3a4a3e"} strokeWidth="4" strokeDasharray={filled ? "0" : "6 5"} />
+                      </svg>
+                      <div style={{ fontSize: 7.5, textAlign: "center", lineHeight: 1.1, color: filled ? "#F5F0E1" : "#8FA396", fontWeight: 700, marginTop: 2, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {filled || slot.key}
+                      </div>
                     </div>
                   );
                 })}
@@ -3122,8 +3172,13 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
                 const filled = team.positions[slot.key];
                 if (!filled) return null;
                 return (
-                  <div key={slot.key} style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", aspectRatio: "1", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, textAlign: "center", lineHeight: 1.05, fontWeight: 700, padding: 2, background: "#E6B31E", color: "#1a1405", border: "1.5px solid #0f3620" }}>
-                    {filled}
+                  <div key={slot.key} style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <svg width="60%" viewBox="0 0 100 116">
+                      <path d={JERSEY_PATH} fill="#E6B31E" stroke="#0f3620" strokeWidth="4" />
+                    </svg>
+                    <div style={{ fontSize: 7.5, textAlign: "center", lineHeight: 1.1, color: "#F5F0E1", fontWeight: 700, marginTop: 2, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {filled}
+                    </div>
                   </div>
                 );
               })}
@@ -3180,6 +3235,100 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
     </div>
   );
 }
+
+/* ---------- PLAYER PROFILE — a real page, reachable from anywhere a name is clickable ---------- */
+function PlayerProfilePage({ player, stats, level, awards, team, onClose, onOpenCard, onOpenAward, onOpenTeam }) {
+  const [dreamSlide, setDreamSlide] = useState(0);
+  const dreamTouchX = useRef(0);
+  if (!player) return null;
+  const dreamTeams = Array.isArray(player.dreamTeams) ? player.dreamTeams : [];
+  return (
+    <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 90, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
+        <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
+        <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{player.name}</div>
+        <span style={{ width: 34 }} />
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 16, maxWidth: 420, width: "100%", margin: "0 auto" }}>
+        <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+            <Jersey pattern={player.jerseyPattern} main={player.jerseyMain} trim={player.jerseyTrim} size={64} />
+          </div>
+          <div className="display" style={{ fontSize: 22 }}>{player.name}</div>
+          <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+            {team ? <span onClick={() => onOpenTeam && onOpenTeam(team.id)} style={{ color: T.floodlight, textDecoration: "underline", cursor: "pointer" }}>{team.name}</span> : "No squad yet"}
+            {player.positionPlayed ? ` · ${player.positionPlayed}` : ""}{player.state ? ` · 📍 ${player.state}` : ""}
+          </div>
+          {(player.contactPublic && player.contactInfo) && <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>📞 {player.contactInfo}</div>}
+
+          {level && (
+            <div style={{ marginTop: 14, textAlign: "left" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+                <span style={{ fontWeight: 700 }}>{level.tier.icon} {level.tier.name}</span>
+                <span style={{ color: T.muted }}>{level.next ? `${level.score}/${level.next.min} to ${level.next.name}` : "Max level"}</span>
+              </div>
+              <div style={{ height: 6, background: "rgba(0,0,0,.3)", borderRadius: 99, overflow: "hidden" }}>
+                <div style={{ width: `${level.progress * 100}%`, height: "100%", background: T.floodlight }} />
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 1, marginTop: 14, borderRadius: 10, overflow: "hidden" }}>
+            {[[stats.goals, "Goals"], [stats.hatTricks, "Hat-tricks"], [stats.matches, "Matches"]].map(([n, l]) => (
+              <div key={l} style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
+                <div className="display" style={{ fontSize: 19, color: T.floodlight }}>{n}</div>
+                <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+          <button className="btn btn-gold" style={{ marginTop: 14, width: "100%" }} onClick={() => onOpenCard(player.id)}>🎨 Download player card</button>
+        </div>
+
+        {awards.length > 0 && (
+          <div className="card" style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Achievements</div>
+            {awards.map((a) => {
+              const info = AWARD_TYPES[a.awardType] || { label: a.awardType, icon: "🏆" };
+              return (
+                <div key={a.id} onClick={() => onOpenAward(a.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
+                  <span style={{ fontSize: 20 }}>{info.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{info.label}</div>
+                    <div style={{ fontSize: 10, color: T.muted }}>{new Date(a.createdAt).toLocaleDateString()}</div>
+                  </div>
+                  <span style={{ fontSize: 11, color: T.floodlight }}>🎨 ›</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {dreamTeams.length > 0 && (
+          <div className="card">
+            <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Dream Team ⚽</div>
+            {dreamTeams.length > 1 && (
+              <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+                {dreamTeams.map((_, i) => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: i === dreamSlide ? T.floodlight : "#3a4a3e" }} />)}
+              </div>
+            )}
+            <div onTouchStart={(e) => { dreamTouchX.current = e.touches[0].clientX; }}
+              onTouchEnd={(e) => {
+                const dx = e.changedTouches[0].clientX - dreamTouchX.current;
+                if (dx < -40) setDreamSlide((i) => Math.min(dreamTeams.length - 1, i + 1));
+                if (dx > 40) setDreamSlide((i) => Math.max(0, i - 1));
+              }}
+              style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 14, padding: "20px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 22 }}>⭐</div>
+              <div className="display" style={{ fontSize: 16, color: T.floodlight, marginTop: 4 }}>{dreamTeams[dreamSlide]}</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 /* ---------- JERSEY — flat vector kit graphic, five patterns ---------- */
 const JERSEY_PATTERNS = [
@@ -3485,36 +3634,6 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
           );
         })()}
 
-        {/* MATCH TIMELINE — persists after the match ends, unlike the live-only view */}
-        {recapEvents.length > 0 && (
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ fontSize: 11, letterSpacing: ".15em", color: "#8FA396", textTransform: "uppercase", padding: "14px 16px 10px" }}>Match Timeline</div>
-            <div style={{ display: "grid", gap: 8, padding: "0 16px 16px" }}>
-              {[...recapEvents].reverse().map((e) => {
-                const mm0 = /^(\d+)'\s+(.*)$/.exec(e.message || "");
-                const min = mm0 ? mm0[1] : null, text = mm0 ? mm0[2] : (e.message || "");
-                const isCommentary = text.startsWith("🎙 ");
-                let lead = null, rest = text;
-                if (!isCommentary) {
-                  const bang = text.indexOf("!"), colon = text.indexOf(":");
-                  let cut = -1;
-                  if (bang !== -1 && (colon === -1 || bang < colon)) cut = bang + 1;
-                  else if (colon !== -1) cut = colon + 1;
-                  if (cut !== -1) { lead = text.slice(0, cut); rest = text.slice(cut); }
-                }
-                return (
-                  <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 10, padding: "8px 10px" }}>
-                    {min && <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 11, color: "#E6B31E", background: "rgba(230,179,30,.1)", borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>{min}'</span>}
-                    <span style={{ fontSize: 12.5, color: "#F5F0E1" }}>
-                      {lead ? <><b style={{ color: "#E6B31E" }}>{lead}</b>{rest}</> : text}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
         {isOwner && me.role === "Captain" && (m.status === "Scheduled" || (m.status === "Live" && ctrlTab === "stream")) && (
           <div className="card" style={{ display: "grid", gap: 10 }}>
@@ -3573,13 +3692,6 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             onClick={() => onSetStream(m, null)}>🛡 Remove stream link (admin)</button>
         )}
 
-        {/* STAR — pin this match to the top of your feed */}
-        {m.status === "Live" && (
-          <button className={`btn ${liked ? "btn-gold" : "btn-ghost"}`} onClick={onLike}>
-            {liked ? "★ Starred" : "☆ Star this match"} · {likeCount}
-          </button>
-        )}
-        {m.status === "Live" && <div style={{ fontSize: 11, color: "#8FA396", marginTop: -6 }}>Starred matches appear at the top of your News Feed for quick access.</div>}
 
         {/* SCORE CORRECTION — captain, once per match, admin approval */}
         {isOwner && me.role === "Captain" && m.status === "ResultPublished" && (
@@ -4014,7 +4126,7 @@ const genCommentary = (m, rosterNames) => {
   return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
 };
 
-function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onClose }) {
+function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, onClose }) {
   const [commentary, setCommentary] = useState([]);
   const [watching, setWatching] = useState(1);
   const rosterNames = (str) => {
@@ -4226,6 +4338,8 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
                 ))}
                 <button style={{ width: "100%", marginTop: 10, background: "none", border: "1px solid #243128", color: T.floodlight, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700 }}
                   onClick={onShareStats}>🎨 Share stats card</button>
+                <button style={{ width: "100%", marginTop: 8, background: "none", border: "1px solid #243128", color: T.floodlight, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700 }}
+                  onClick={onShareLineup}>🧑‍🤝‍🧑 Generate lineup card</button>
               </>
             ) : (
               <div style={{ display: "flex" }}>
@@ -4249,7 +4363,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         )}
         <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
-        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px" }}>
+        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
           {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
           {feed.map((e) => {
             const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
@@ -4389,6 +4503,20 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
           <div style={{ fontSize: 12, color: "#8FA396" }}>Drop your phone/WhatsApp number so fans who want to join your team can reach you. Shown on your captain profile.</div>
           <input className="input" maxLength={60} placeholder="e.g. WhatsApp 0803 123 4567" value={contactInfo} onChange={(e) => setContactInfo(sanitizeText(e.target.value, 60))} />
           <button className="btn btn-gold" onClick={() => { onSave({ contactInfo }); notify("Team contact updated ✔ Fans can now see it on your profile."); }}>Save contact</button>
+        </div>
+      )}
+
+      {/* Player contact — opt-in publish, off by default */}
+      {me.role === "Player" && (
+        <div className="card" style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>📞 Contact (Optional)</div>
+          <input className="input" maxLength={60} placeholder="e.g. WhatsApp 0803 123 4567" value={contactInfo} onChange={(e) => setContactInfo(sanitizeText(e.target.value, 60))} />
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#8FA396", cursor: "pointer" }}>
+            <input type="checkbox" checked={!!me.contactPublic} onChange={(e) => onSave({ contactPublic: e.target.checked })} />
+            Publish my contact publicly on my profile
+          </label>
+          <div style={{ fontSize: 10.5, color: "#8FA396", lineHeight: 1.4 }}>Off by default — only visible to others if you turn this on.</div>
+          <button className="btn btn-gold" onClick={() => { onSave({ contactInfo }); notify("Contact updated ✔"); }}>Save contact</button>
         </div>
       )}
 
@@ -4700,28 +4828,6 @@ function PosterModal({ m, onClose, notify }) {
               <rect x="60" y="315" width="280" height="2" fill="#E6B31E" opacity="0.5" />
               <text x="200" y="345" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="15">{fmtDate(m.date)}  ·  {m.time}</text>
               <text x="200" y="368" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="13">📍 {m.location}</text>
-              {/* LINE-UPS — for fans sharing before kick-off */}
-              {(() => {
-                const names = (str) => (str || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 6);
-                const nA = names(m.playersA), nB = names(m.playersB);
-                const extraA = Math.max(0, (m.playersA || "").split(",").filter((x) => x.trim()).length - 6);
-                const extraB = Math.max(0, (m.playersB || "").split(",").filter((x) => x.trim()).length - 6);
-                if (nA.length === 0 && nB.length === 0) return null;
-                return (
-                  <>
-                    <text x="110" y="392" textAnchor="middle" fill="#E6B31E" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
-                    <text x="290" y="392" textAnchor="middle" fill="#E6B31E" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10" letterSpacing="1">LINE-UP</text>
-                    {nA.map((p, i) => (
-                      <text key={"a" + i} x="110" y={404 + i * 11} textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
-                    ))}
-                    {extraA > 0 && <text x="110" y={404 + nA.length * 11} textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraA} more</text>}
-                    {nB.map((p, i) => (
-                      <text key={"b" + i} x="290" y={404 + i * 11} textAnchor="middle" fill="#F5F0E1" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontSize="9.5">{p.slice(0, 20)}</text>
-                    ))}
-                    {extraB > 0 && <text x="290" y={404 + nB.length * 11} textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="9">+{extraB} more</text>}
-                  </>
-                );
-              })()}
             </>
           )}
           <text x="200" y="470" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON AREA MATCH" : "HOSTED ON AREA MATCH · COME SUPPORT YOUR TEAM"}</text>
