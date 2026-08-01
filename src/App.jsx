@@ -1104,9 +1104,12 @@ export default function App() {
         message: `Your request to join ${team ? team.name : "the squad"} wasn't approved this time.`,
       });
     }
-    const { data: updatedReq } = await supabase.from("team_requests").update({ status: approve ? "approved" : "denied" }).eq("id", req.id).select();
+    const { data: updatedReq, error: reqErr } = await supabase.from("team_requests").update({ status: approve ? "approved" : "denied" }).eq("id", req.id).select();
+    /* Surface the REAL database error rather than guessing at the cause — a vague
+       "permissions issue" message previously hid a unique-constraint violation for days. */
+    if (reqErr) return notify(`⚠️ ${reqErr.message}`);
     if (!updatedReq || updatedReq.length === 0) {
-      return notify("⚠️ Couldn't update the request — a permissions issue may be blocking it.");
+      return notify("⚠️ Couldn't update the request — no rows changed. It may have already been handled.");
     }
     /* Drop it from the local list right away so the Join Requests card updates instantly,
        rather than waiting on a refresh round-trip. */
