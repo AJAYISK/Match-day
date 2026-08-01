@@ -1797,7 +1797,7 @@ export default function App() {
                   Follow published matches from local captains, and catch every score update the moment it happens on 🔴 Live. Results go live the moment the captain submits the final score.
                 </div>
               </div>
-              <div style={{ opacity: heroSlide === 1 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 1 ? "auto" : "none", backgroundImage: "url('/hero-photo.jpg')", backgroundSize: "170%", backgroundPosition: "42% 62%", borderRadius: 16 }}>
+              <div style={{ opacity: heroSlide === 1 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 1 ? "auto" : "none", backgroundImage: "url('/hero-photo.jpg')", backgroundSize: "cover", backgroundPosition: "center", borderRadius: 16 }}>
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(6,9,7,.15) 0%, rgba(6,9,7,.2) 55%, rgba(6,9,7,.9) 100%)", borderRadius: 16 }} />
                 <div style={{ position: "absolute", bottom: 20, left: 0, right: 0, textAlign: "center" }}>
                   <div className="display" style={{ fontSize: 22, color: T.chalk, lineHeight: 1.1 }}>YOUR COMMUNITY</div>
