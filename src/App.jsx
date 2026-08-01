@@ -1005,6 +1005,82 @@ export default function App() {
     });
     return { goals, hatTricks, matches: played.length, team, ready: true };
   };
+
+  /* ---------- RICH PROFILE ENGINE ----------
+     Everything the redesigned player profile needs, all derived from published match
+     results — no new database columns. Returns per-match detail (not just totals),
+     which is what makes form charts, streaks and standout performances possible. */
+  const goalsForNameInMatch = (m, teamName, nameLc) => {
+    const isA = m.teamA.name === teamName;
+    const scorerStr = (isA ? m.scorersA : m.scorersB) || "";
+    let n = 0;
+    scorerStr.split(",").forEach((chunk) => {
+      const part = chunk.trim();
+      if (!part) return;
+      const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+      const nm = (mm ? mm[1] : part).trim().toLowerCase();
+      if (nm === nameLc) n += mm ? parseInt(mm[2], 10) : 1;
+    });
+    return n;
+  };
+  const playerProfileData = (player) => {
+    const base = playerStats(player);
+    if (!base.ready) return { ...base, history: [], streak: 0, lastBlank: null, standout: null, standing: null };
+    const team = base.team;
+    const nameLc = player.rosterName.trim().toLowerCase();
+    const awardsForPlayer = playerAwards.filter((a) => a.playerId === player.id);
+
+    /* Per-match history, newest first */
+    const history = matches
+      .filter((m) => m.status === "ResultPublished" && m.createdBy === team.captainId &&
+        (m.teamA.name === team.name || m.teamB.name === team.name))
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .map((m) => {
+        const isA = m.teamA.name === team.name;
+        const us = isA ? m.finalA : m.finalB, them = isA ? m.finalB : m.finalA;
+        const outcome = m.shootout && m.pensWinner
+          ? (m.pensWinner === (isA ? "A" : "B") ? "W" : "L")
+          : us > them ? "W" : us < them ? "L" : "D";
+        return {
+          id: m.id, date: m.date, location: m.location,
+          opponent: isA ? m.teamB.name : m.teamA.name,
+          us, them, outcome,
+          goals: goalsForNameInMatch(m, team.name, nameLc),
+          award: awardsForPlayer.find((a) => a.matchId === m.id) || null,
+        };
+      });
+
+    /* Scoring streak — consecutive most-recent matches with at least one goal */
+    let streak = 0;
+    for (const h of history) { if (h.goals > 0) streak++; else break; }
+    const lastBlank = history.find((h) => h.goals === 0) || null;
+
+    /* Standout performance — most goals, tie-broken by award, then by margin */
+    const standout = history.filter((h) => h.goals > 0).sort((a, b) =>
+      (b.goals - a.goals) || ((b.award ? 1 : 0) - (a.award ? 1 : 0)) || ((b.us - b.them) - (a.us - a.them))
+    )[0] || null;
+
+    /* Squad standing — rank among registered teammates on the same team */
+    const teammates = users.filter((u) => u.role === "Player" && u.teamId === player.teamId && u.rosterName);
+    const byGoals = teammates.map((u) => ({ id: u.id, goals: playerStats(u).goals }))
+      .sort((a, b) => b.goals - a.goals);
+    const byAwards = teammates.map((u) => ({ id: u.id, n: playerAwards.filter((a) => a.playerId === u.id).length }))
+      .sort((a, b) => b.n - a.n);
+    const scoredIn = history.filter((h) => h.goals > 0);
+    const wonWhenScored = scoredIn.filter((h) => h.outcome === "W").length;
+    const standing = {
+      goalRank: byGoals.findIndex((x) => x.id === player.id) + 1,
+      awardRank: byAwards.findIndex((x) => x.id === player.id) + 1,
+      squadSize: teammates.length,
+      winRateScoring: scoredIn.length > 0 ? Math.round((wonWhenScored / scoredIn.length) * 100) : null,
+      wins: history.filter((h) => h.outcome === "W").length,
+      draws: history.filter((h) => h.outcome === "D").length,
+      losses: history.filter((h) => h.outcome === "L").length,
+    };
+
+    const perMatch = base.matches > 0 ? (base.goals / base.matches) : 0;
+    return { ...base, history, streak, lastBlank, standout, standing, perMatch, awards: awardsForPlayer };
+  };
   /* Auto-computed level — a weighted score from goals, hat-tricks, and awards, no manual input needed.
      Note: assists aren't tracked anywhere in the app yet (no attribution UI exists for them), so this
      is goals + hat-tricks + awards only — the honest scope of what's actually measurable right now. */
@@ -2001,7 +2077,8 @@ export default function App() {
         {/* ---------- MY TEAMS ---------- */}
         {/* ---------- MY PLAYER PROFILE ---------- */}
         {page === "myplayer" && me.role === "Player" && (() => {
-          const stats = playerStats(me);
+          const pd = playerProfileData(me);
+          const stats = pd;
           const lvl = playerLevel(me);
           const myAwards = playerAwards.filter((a) => a.playerId === me.id);
           const myPending = teamRequests.find((r) => r.playerId === me.id && r.status === "pending");
@@ -2011,32 +2088,70 @@ export default function App() {
               <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>My Player Profile</div>
               <div style={{ color: T.muted, fontSize: 13, marginBottom: 16 }}>Your squad, your kit, your record.</div>
 
-              <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
-                <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-                  <Jersey pattern={me.jerseyPattern} main={me.jerseyMain} trim={me.jerseyTrim} size={64} />
+              <div style={{ position: "relative", padding: "6px 2px 0", overflow: "hidden", marginBottom: 18 }}>
+                <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+                <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 15 }}>
+                  <div style={{ flexShrink: 0, filter: "drop-shadow(0 4px 12px rgba(0,0,0,.5))" }}>
+                    <Jersey pattern={me.jerseyPattern} main={me.jerseyMain} trim={me.jerseyTrim} size={54} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 25, lineHeight: 1.02, color: "#F7F4EA" }}>{me.name}</div>
+                    <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 7 }}>
+                      {me.positionPlayed && <b style={{ color: "#B9C7BC", fontWeight: 600 }}>{me.positionPlayed}</b>}
+                      {me.positionPlayed && stats.team ? " · " : ""}
+                      {stats.team ? stats.team.name : "No squad yet"}
+                      {me.state ? ` · ${me.state}` : ""}
+                    </div>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 9, background: "rgba(214,168,29,.10)", border: "1px solid rgba(214,168,29,.28)", borderRadius: 6, padding: "3px 9px", fontSize: 10, fontWeight: 600, color: "#D6A81D", letterSpacing: ".4px" }}>
+                      {lvl.tier.icon} {lvl.tier.name.toUpperCase()}
+                    </div>
+                  </div>
                 </div>
-                <div className="display" style={{ fontSize: 22 }}>{me.name}</div>
-                <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
-                  {stats.team ? `${stats.team.name}${me.positionPlayed ? " · " + me.positionPlayed : ""}` : "No squad yet"}{me.state ? ` · 📍 ${me.state}` : ""}
-                </div>
-                <div style={{ display: "flex", gap: 1, marginTop: 16, borderRadius: 10, overflow: "hidden" }}>
-                  {[[stats.goals, "Goals"], [stats.hatTricks, "Hat-tricks"], [stats.matches, "Matches"]].map(([n, l]) => (
-                    <div key={l} style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
-                      <div className="display" style={{ fontSize: 19, color: T.floodlight }}>{n}</div>
-                      <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>{l}</div>
+
+                <div style={{ position: "relative", display: "flex", marginTop: 20, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
+                  {[[(stats.matches > 0 ? (stats.goals / stats.matches) : 0).toFixed(2), "Goals / match", true], [stats.goals, "Goals", false], [stats.matches, "Matches", false]].map(([n, l, gold], i) => (
+                    <div key={l} style={{ flex: 1, padding: "14px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
+                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 21, color: gold ? "#D6A81D" : "#F7F4EA" }}>{n}</div>
+                      <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{l}</div>
                     </div>
                   ))}
                 </div>
-                <div style={{ marginTop: 14, textAlign: "left" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
-                    <span style={{ fontWeight: 700 }}>{lvl.tier.icon} {lvl.tier.name}</span>
-                    <span style={{ color: T.muted }}>{lvl.next ? `${lvl.score}/${lvl.next.min} to ${lvl.next.name}` : "Max level"}</span>
+
+                {pd.streak > 1 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 11, background: "#0E140F", border: "1px solid #1b241c", borderRadius: 10, padding: "12px 13px", marginTop: 16 }}>
+                    <div style={{ width: 3, alignSelf: "stretch", background: "#D6A81D", borderRadius: 2 }} />
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "#F7F4EA" }}>{pd.streak}-match scoring streak</div>
+                      {pd.lastBlank && <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 2 }}>Last blank — {pd.lastBlank.date} vs {pd.lastBlank.opponent}</div>}
+                    </div>
                   </div>
-                  <div style={{ height: 6, background: "rgba(0,0,0,.3)", borderRadius: 99, overflow: "hidden" }}>
-                    <div style={{ width: `${lvl.progress * 100}%`, height: "100%", background: T.floodlight }} />
+                )}
+
+                {pd.standing && pd.matches > 0 && (
+                  <div style={{ display: "flex", gap: 9, marginTop: 12 }}>
+                    {[
+                      [pd.standing.goalRank > 0 ? `#${pd.standing.goalRank}` : "—", "Top scorer"],
+                      [pd.standing.awardRank > 0 ? `#${pd.standing.awardRank}` : "—", "Most awarded"],
+                      [pd.standing.winRateScoring !== null ? `${pd.standing.winRateScoring}%` : "—", "Win rate scoring"],
+                    ].map(([n, l]) => (
+                      <div key={l} style={{ flex: 1, background: "#0E140F", border: "1px solid #1b241c", borderRadius: 10, padding: "13px 10px" }}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: "#F7F4EA" }}>{n}</div>
+                        <div style={{ fontSize: 9, color: "#5a6a5f", marginTop: 4, lineHeight: 1.35 }}>{l}</div>
+                      </div>
+                    ))}
                   </div>
+                )}
+
+                <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
+                  <button onClick={async () => {
+                    const txt = `${me.name}${stats.team ? ` — ${stats.team.name}` : ""}\n⚽ ${stats.goals} goals in ${stats.matches} matches on Area Match`;
+                    try {
+                      if (navigator.share) await navigator.share({ title: `${me.name} · Area Match`, text: txt, url: window.location.href });
+                      else { await navigator.clipboard.writeText(`${txt}\n${window.location.href}`); notify("Profile copied — paste it anywhere 📋"); }
+                    } catch (e) { /* dismissed */ }
+                  }} style={{ flex: 1, borderRadius: 8, padding: 11, fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: "none", border: "1px solid #1b241c", color: "#B9C7BC", cursor: "pointer" }}>Share profile</button>
+                  {stats.ready && <button onClick={() => setPlayerCardFor(me.id)} style={{ flex: 1, borderRadius: 8, padding: 11, fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: "#D6A81D", color: "#12160f", border: 0, cursor: "pointer" }}>Download card</button>}
                 </div>
-                {stats.ready && <button className="btn btn-gold" style={{ marginTop: 14, width: "100%" }} onClick={() => setPlayerCardFor(me.id)}>🎨 Download my player card</button>}
               </div>
 
               {myAwards.length > 0 && (
@@ -2729,18 +2844,24 @@ export default function App() {
       {viewPlayerId && (() => {
         const p = users.find((u) => u.id === viewPlayerId);
         if (!p) return null;
-        const st = playerStats(p);
+        const pd = playerProfileData(p);
         return (
           <PlayerProfilePage
             player={p}
-            stats={st}
+            data={pd}
             level={playerLevel(p)}
-            awards={playerAwards.filter((a) => a.playerId === p.id)}
-            team={st.team}
+            team={pd.team}
             onClose={goBackPage}
             onOpenCard={(id) => setPlayerCardFor(id)}
             onOpenAward={(id) => setAwardCardFor(id)}
             onOpenTeam={(id) => openTeamProfile(id)}
+            onShareProfile={async () => {
+              const txt = `${p.name}${pd.team ? ` — ${pd.team.name}` : ""}\n⚽ ${pd.goals} goals in ${pd.matches} matches on Area Match`;
+              try {
+                if (navigator.share) await navigator.share({ title: `${p.name} · Area Match`, text: txt, url: window.location.href });
+                else { await navigator.clipboard.writeText(`${txt}\n${window.location.href}`); notify("Profile copied — paste it anywhere 📋"); }
+              } catch (e) { /* user dismissed the share sheet — nothing to do */ }
+            }}
           />
         );
       })()}
@@ -3131,7 +3252,7 @@ function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playe
   const [awardMenuFor, setAwardMenuFor] = useState(null); // player id
   const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
   const startingNames = Array.isArray(team.startingNames) ? team.startingNames : [];
-  const withLink = roster.map((name) => ({ name, linked: linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === name.toLowerCase() && pl.teamName === team.name) }));
+  const withLink = roster.map((name) => ({ name, linked: linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === name.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase()) }));
   /* Registered (linked) players first within each group — they have real, verifiable stats. */
   const sortGroup = (list) => [...list].sort((a, b) => (b.linked ? 1 : 0) - (a.linked ? 1 : 0));
   const starting = sortGroup(withLink.filter((p) => startingNames.includes(p.name)));
@@ -3292,7 +3413,7 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
             const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
             if (roster.length === 0) return <div style={{ fontSize: 13, color: "#8FA396" }}>Squad to be announced.</div>;
             return roster.map((p, j) => {
-              const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.toLowerCase() && pl.teamName === team.name);
+              const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase());
               if (!linked) return <div key={j} style={{ fontSize: 13, padding: "6px 0", color: T.chalk, borderBottom: j < roster.length - 1 ? "1px solid #243128" : "none" }}>{p}</div>;
               return (
                 <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
@@ -3335,93 +3456,238 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
 }
 
 /* ---------- PLAYER PROFILE — a real page, reachable from anywhere a name is clickable ---------- */
-function PlayerProfilePage({ player, stats, level, awards, team, onClose, onOpenCard, onOpenAward, onOpenTeam }) {
-  const [dreamSlide, setDreamSlide] = useState(0);
-  const dreamTouchX = useRef(0);
+/* ---------- PLAYER PROFILE — tabbed, stats-led. A real page, not a popup. ---------- */
+const PP = { gold: "#D6A81D", ink: "#F7F4EA", body: "#EDEAE0", dim: "#7d8f83", faint: "#5a6a5f", ghost: "#4e5c53", panel: "#0E140F", line: "#1b241c", hair: "#151c16", bg: "#0A0D0A" };
+
+function PlayerProfilePage({ player, data, level, team, onClose, onOpenCard, onOpenAward, onOpenTeam, onShareProfile }) {
+  const [tab, setTab] = useState("overview");
   if (!player) return null;
-  const dreamTeams = Array.isArray(player.dreamTeams) ? player.dreamTeams : [];
+  const { history = [], streak = 0, lastBlank, standout, standing, perMatch = 0, awards = [], goals = 0, matches = 0 } = data || {};
+  const form = history.slice(0, 5).reverse(); // oldest→newest for the chart
+  const maxGoals = Math.max(1, ...form.map((f) => f.goals));
+  const abbrev = (s) => (s || "").replace(/[^A-Za-z ]/g, "").split(" ").filter(Boolean)[0]?.slice(0, 3).toUpperCase() || "—";
+
+  const Label = ({ children, style }) => (
+    <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: PP.ghost, fontWeight: 700, marginBottom: 13, ...style }}>{children}</div>
+  );
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 90, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
-        <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{player.name}</div>
-        <span style={{ width: 34 }} />
+    <div style={{ position: "fixed", inset: 0, background: PP.bg, zIndex: 90, display: "flex", flexDirection: "column" }}>
+      {/* Top bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
+        <button onClick={onClose} style={{ width: 29, height: 29, border: `1px solid ${PP.line}`, borderRadius: 8, background: "none", color: PP.dim, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, cursor: "pointer" }}>‹</button>
+        <div style={{ flex: 1 }} />
+        <button onClick={onShareProfile} title="Share profile" style={{ width: 29, height: 29, border: `1px solid ${PP.line}`, borderRadius: 8, background: "none", color: PP.gold, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+            <line x1="8.6" y1="10.5" x2="15.4" y2="6.5" /><line x1="8.6" y1="13.5" x2="15.4" y2="17.5" />
+          </svg>
+        </button>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 16, maxWidth: 420, width: "100%", margin: "0 auto" }}>
-        <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-            <Jersey pattern={player.jerseyPattern} main={player.jerseyMain} trim={player.jerseyTrim} size={64} />
-          </div>
-          <div className="display" style={{ fontSize: 22 }}>{player.name}</div>
-          <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
-            {team ? <span onClick={() => onOpenTeam && onOpenTeam(team.id)} style={{ color: T.floodlight, textDecoration: "underline", cursor: "pointer" }}>{team.name}</span> : "No squad yet"}
-            {player.positionPlayed ? ` · ${player.positionPlayed}` : ""}{player.state ? ` · 📍 ${player.state}` : ""}
-          </div>
-          {(player.contactPublic && player.contactInfo) && <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>📞 {player.contactInfo}</div>}
 
-          {level && (
-            <div style={{ marginTop: 14, textAlign: "left" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
-                <span style={{ fontWeight: 700 }}>{level.tier.icon} {level.tier.name}</span>
-                <span style={{ color: T.muted }}>{level.next ? `${level.score}/${level.next.min} to ${level.next.name}` : "Max level"}</span>
-              </div>
-              <div style={{ height: 6, background: "rgba(0,0,0,.3)", borderRadius: 99, overflow: "hidden" }}>
-                <div style={{ width: `${level.progress * 100}%`, height: "100%", background: T.floodlight }} />
-              </div>
+      <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto" }}>
+        {/* Hero — persists across tabs */}
+        <div style={{ position: "relative", padding: "6px 17px 0", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+          <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 15 }}>
+            <div style={{ flexShrink: 0, filter: "drop-shadow(0 4px 12px rgba(0,0,0,.5))" }}>
+              <Jersey pattern={player.jerseyPattern} main={player.jerseyMain} trim={player.jerseyTrim} size={54} />
             </div>
-          )}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 25, lineHeight: 1.02, color: PP.ink }}>{player.name}</div>
+              <div style={{ fontSize: 11.5, color: PP.dim, marginTop: 7 }}>
+                {player.positionPlayed && <b style={{ color: "#B9C7BC", fontWeight: 600 }}>{player.positionPlayed}</b>}
+                {player.positionPlayed && team ? " · " : ""}
+                {team && <span onClick={() => onOpenTeam && onOpenTeam(team.id)} style={{ cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 }}>{team.name}</span>}
+                {player.state ? ` · ${player.state}` : ""}
+              </div>
+              {level && (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 9, background: "rgba(214,168,29,.10)", border: "1px solid rgba(214,168,29,.28)", borderRadius: 6, padding: "3px 9px", fontSize: 10, fontWeight: 600, color: PP.gold, letterSpacing: ".4px" }}>
+                  {level.tier.icon} {level.tier.name.toUpperCase()}
+                </div>
+              )}
+            </div>
+          </div>
 
-          <div style={{ display: "flex", gap: 1, marginTop: 14, borderRadius: 10, overflow: "hidden" }}>
-            {[[stats.goals, "Goals"], [stats.hatTricks, "Hat-tricks"], [stats.matches, "Matches"]].map(([n, l]) => (
-              <div key={l} style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
-                <div className="display" style={{ fontSize: 19, color: T.floodlight }}>{n}</div>
-                <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>{l}</div>
+          {/* Key figures */}
+          <div style={{ position: "relative", display: "flex", marginTop: 20, borderTop: `1px solid ${PP.hair}`, borderBottom: `1px solid ${PP.hair}` }}>
+            {[[perMatch.toFixed(2), "Goals / match", true], [goals, "Goals", false], [matches, "Matches", false]].map(([n, l, gold], i) => (
+              <div key={l} style={{ flex: 1, padding: "14px 4px", textAlign: "center", borderRight: i < 2 ? `1px solid ${PP.hair}` : "none" }}>
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 21, color: gold ? PP.gold : PP.ink }}>{n}</div>
+                <div style={{ fontSize: 8.5, color: PP.faint, letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{l}</div>
               </div>
             ))}
           </div>
-          <button className="btn btn-gold" style={{ marginTop: 14, width: "100%" }} onClick={() => onOpenCard(player.id)}>🎨 Download player card</button>
         </div>
 
-        {awards.length > 0 && (
-          <div className="card" style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Achievements</div>
-            {awards.map((a) => {
-              const info = AWARD_TYPES[a.awardType] || { label: a.awardType, icon: "🏆" };
-              return (
-                <div key={a.id} onClick={() => onOpenAward(a.id)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
-                  <TrophyIcon art={info.art} size={26} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{info.label}</div>
-                    <div style={{ fontSize: 10, color: T.muted }}>{new Date(a.createdAt).toLocaleDateString()}</div>
-                  </div>
-                  <span style={{ fontSize: 11, color: T.floodlight }}>🎨 ›</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {/* Tabs */}
+        <div style={{ display: "flex", padding: "0 17px", borderBottom: `1px solid ${PP.hair}`, gap: 26 }}>
+          {[["overview", "Overview"], ["matches", "Matches"], ["honours", "Honours"]].map(([key, lbl]) => (
+            <button key={key} onClick={() => setTab(key)}
+              style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: tab === key ? PP.ink : PP.faint, fontWeight: tab === key ? 600 : 500, padding: "13px 0", position: "relative", cursor: "pointer", borderBottom: `1.5px solid ${tab === key ? PP.gold : "transparent"}`, marginBottom: -1 }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
 
-        {dreamTeams.length > 0 && (
-          <div className="card">
-            <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Dream Team ⚽</div>
-            {dreamTeams.length > 1 && (
-              <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
-                {dreamTeams.map((_, i) => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: i === dreamSlide ? T.floodlight : "#3a4a3e" }} />)}
-              </div>
-            )}
-            <div onTouchStart={(e) => { dreamTouchX.current = e.touches[0].clientX; }}
-              onTouchEnd={(e) => {
-                const dx = e.changedTouches[0].clientX - dreamTouchX.current;
-                if (dx < -40) setDreamSlide((i) => Math.min(dreamTeams.length - 1, i + 1));
-                if (dx > 40) setDreamSlide((i) => Math.max(0, i - 1));
-              }}
-              style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 14, padding: "20px 14px", textAlign: "center" }}>
-              <div style={{ fontSize: 22 }}>⭐</div>
-              <div className="display" style={{ fontSize: 16, color: T.floodlight, marginTop: 4 }}>{dreamTeams[dreamSlide]}</div>
-            </div>
-          </div>
-        )}
+        <div style={{ padding: "18px 17px 22px" }}>
+          {/* ---------- OVERVIEW ---------- */}
+          {tab === "overview" && (
+            <>
+              {streak > 1 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 11, background: PP.panel, border: `1px solid ${PP.line}`, borderRadius: 10, padding: "12px 13px", marginBottom: 20 }}>
+                  <div style={{ width: 3, alignSelf: "stretch", background: PP.gold, borderRadius: 2 }} />
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: PP.ink }}>{streak}-match scoring streak</div>
+                    {lastBlank && <div style={{ fontSize: 10.5, color: PP.dim, marginTop: 2 }}>Last blank — {lastBlank.date} vs {lastBlank.opponent}</div>}
+                  </div>
+                </div>
+              )}
+
+              {form.length > 0 && (
+                <>
+                  <Label>Recent form</Label>
+                  <div style={{ display: "flex", gap: 7, alignItems: "flex-end", height: 52, marginBottom: 7 }}>
+                    {form.map((f, i) => (
+                      <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 5, height: "100%", justifyContent: "flex-end" }}>
+                        <div style={{ fontSize: 9, color: PP.faint, fontWeight: 600 }}>{f.goals}</div>
+                        <div style={{ width: "100%", borderRadius: 2, height: f.goals > 0 ? `${Math.max(18, (f.goals / maxGoals) * 78)}%` : "5%", background: f.goals > 0 ? "linear-gradient(180deg,#D6A81D,#8a6b12)" : "#161f18" }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 7 }}>
+                    {form.map((f, i) => <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 8.5, color: "#3f4b43" }}>{abbrev(f.opponent)}</div>)}
+                  </div>
+                </>
+              )}
+
+              {standout && (
+                <>
+                  <Label style={{ marginTop: 22 }}>Standout performance</Label>
+                  <div style={{ background: PP.panel, border: `1px solid ${PP.line}`, borderRadius: 11, padding: 15 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1.2px", textTransform: "uppercase", color: PP.gold }}>
+                        {standout.goals >= 3 ? "Hat-trick" : standout.goals === 2 ? "Brace" : "Best game"}
+                      </span>
+                      <span style={{ fontSize: 9.5, color: PP.ghost }}>{standout.date}</span>
+                    </div>
+                    <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 17, color: PP.ink }}>vs {standout.opponent}</div>
+                    <div style={{ fontSize: 10.5, color: PP.dim, marginTop: 3 }}>
+                      {standout.location}{standout.location ? " · " : ""}{standout.outcome === "W" ? "Won" : standout.outcome === "L" ? "Lost" : "Drew"} {standout.us}–{standout.them}
+                    </div>
+                    <div style={{ display: "flex", marginTop: 13, paddingTop: 12, borderTop: "1px solid #171f18" }}>
+                      {[[standout.goals, "Goals"], [standout.award ? (AWARD_TYPES[standout.award.awardType]?.label.split(" ").map((w) => w[0]).join("") || "★") : "—", "Award"], [`${standout.us}–${standout.them}`, "Result"]].map(([n, l]) => (
+                        <div key={l} style={{ flex: 1 }}>
+                          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: PP.gold }}>{n}</div>
+                          <div style={{ fontSize: 8.5, color: PP.ghost, letterSpacing: ".9px", textTransform: "uppercase", marginTop: 2 }}>{l}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {standing && (
+                <>
+                  <Label style={{ marginTop: 22 }}>Squad standing</Label>
+                  <div style={{ display: "flex", gap: 9 }}>
+                    {[
+                      [standing.goalRank > 0 ? `#${standing.goalRank}` : "—", "Top scorer"],
+                      [standing.awardRank > 0 ? `#${standing.awardRank}` : "—", "Most awarded"],
+                      [standing.winRateScoring !== null ? `${standing.winRateScoring}%` : "—", "Win rate when he scores"],
+                    ].map(([n, l]) => (
+                      <div key={l} style={{ flex: 1, background: PP.panel, border: `1px solid ${PP.line}`, borderRadius: 10, padding: "13px 10px" }}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: PP.ink }}>{n}</div>
+                        <div style={{ fontSize: 9, color: PP.faint, marginTop: 4, lineHeight: 1.35 }}>{l}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {history.length === 0 && (
+                <div style={{ fontSize: 12.5, color: PP.dim, textAlign: "center", padding: "24px 0" }}>
+                  No published matches yet — stats appear once results are in.
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ---------- MATCHES ---------- */}
+          {tab === "matches" && (
+            <>
+              <Label>
+                {history.length} appearance{history.length === 1 ? "" : "s"}
+                {standing ? ` · ${standing.wins}W ${standing.draws}D ${standing.losses}L` : ""}
+              </Label>
+              {history.length === 0 && <div style={{ fontSize: 12.5, color: PP.dim, padding: "10px 0" }}>No matches played yet.</div>}
+              {history.map((h) => (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 0", borderBottom: `1px solid #121a14` }}>
+                  <div style={{ width: 19, height: 19, borderRadius: 4, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    background: h.outcome === "W" ? "rgba(63,163,91,.16)" : h.outcome === "L" ? "rgba(198,80,63,.14)" : "rgba(140,150,145,.14)",
+                    color: h.outcome === "W" ? "#5fcf87" : h.outcome === "L" ? "#e08a7d" : "#93a099",
+                    border: `1px solid ${h.outcome === "W" ? "rgba(63,163,91,.3)" : h.outcome === "L" ? "rgba(198,80,63,.28)" : "rgba(140,150,145,.25)"}` }}>{h.outcome}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 500, color: PP.body, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.opponent}</div>
+                    <div style={{ fontSize: 9.5, color: PP.ghost, marginTop: 2 }}>{h.date}{h.location ? ` · ${h.location}` : ""}</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: h.goals > 0 ? PP.gold : "#2f3a33", fontWeight: 700, letterSpacing: ".5px", flexShrink: 0 }}>{h.goals > 0 ? `${h.goals} G` : "—"}</div>
+                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 12.5, color: PP.dim, width: 32, textAlign: "right", flexShrink: 0 }}>{h.us}–{h.them}</div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ---------- HONOURS ---------- */}
+          {tab === "honours" && (
+            <>
+              <Label>{awards.length} award{awards.length === 1 ? "" : "s"}</Label>
+              {awards.length === 0 && <div style={{ fontSize: 12.5, color: PP.dim, padding: "10px 0" }}>No awards yet.</div>}
+              {awards.map((a) => {
+                const info = AWARD_TYPES[a.awardType] || { label: a.awardType, art: "motm" };
+                const inMatch = history.find((h) => h.id === a.matchId);
+                return (
+                  <div key={a.id} onClick={() => onOpenAward(a.id)} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: `1px solid #121a14`, cursor: "pointer" }}>
+                    <TrophyIcon art={info.art} size={26} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 500 }}>{info.label}</div>
+                      <div style={{ fontSize: 9.5, color: PP.ghost, marginTop: 2 }}>
+                        {inMatch ? `vs ${inMatch.opponent} · ` : ""}{new Date(a.createdAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 10, color: PP.ghost }}>›</span>
+                  </div>
+                );
+              })}
+
+              {level && (
+                <>
+                  <Label style={{ marginTop: 24 }}>{level.next ? `Progress to ${level.next.name}` : "Level"}</Label>
+                  <div style={{ background: PP.panel, border: `1px solid ${PP.line}`, borderRadius: 10, padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 8 }}>
+                      <span style={{ color: "#B9C7BC", fontWeight: 600 }}>{level.tier.icon} {level.tier.name}</span>
+                      <span style={{ color: PP.faint }}>{level.next ? `${level.score} / ${level.next.min} pts` : `${level.score} pts`}</span>
+                    </div>
+                    <div style={{ height: 4, background: "#161f18", borderRadius: 99, overflow: "hidden" }}>
+                      <div style={{ width: `${level.progress * 100}%`, height: "100%", background: PP.gold, borderRadius: 99 }} />
+                    </div>
+                    <div style={{ fontSize: 9.5, color: PP.ghost, marginTop: 9, lineHeight: 1.4 }}>
+                      {level.next
+                        ? <>{level.next.min - level.score} more points to reach <span style={{ color: "#B9C7BC" }}>{level.next.name}</span> — earn points from goals, hat-tricks and awards.</>
+                        : "Highest level reached."}
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer actions */}
+        <div style={{ display: "flex", gap: 9, padding: "0 17px 22px" }}>
+          <button onClick={onShareProfile} style={{ flex: 1, borderRadius: 8, padding: 11, textAlign: "center", fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: "none", border: `1px solid ${PP.line}`, color: "#B9C7BC", cursor: "pointer" }}>Share profile</button>
+          <button onClick={() => onOpenCard(player.id)} style={{ flex: 1, borderRadius: 8, padding: 11, textAlign: "center", fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: PP.gold, color: "#12160f", border: 0, cursor: "pointer" }}>Download card</button>
+        </div>
       </div>
     </div>
   );
@@ -3683,7 +3949,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                           </div>
                           {names.length > 0
                             ? names.map((p, j) => {
-                                const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.toLowerCase() && pl.teamName === team.name);
+                                const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase());
                                 if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
                                 return (
                                   <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
