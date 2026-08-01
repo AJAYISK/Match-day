@@ -697,6 +697,14 @@ export default function App() {
         logEvent(m.id, `⏱ Half time: ${m.teamA.name} vs ${m.teamB.name}`, minute(m));
         return;
       }
+      /* Recovery guard: if a match is somehow still running past half-time without the second
+         half being started (e.g. the captain refreshed and the in-memory half-time flag was
+         lost), stop the clock anyway. Without this, elapsed keeps climbing in the data even
+         though the on-screen clock is visually clamped. */
+      if (m.running && el >= HALF && !m.secondHalf && m.createdBy === me.id) {
+        patchMatch(m.id, { elapsed: HALF, running: false, timerStartedAt: null });
+        return;
+      }
       /* Second-half nag: break over / half passed but captain hasn't restarted */
       if (!m.running && !m.onBreak && !m.secondHalf && el >= HALF && el < FULL && m.status === "Live") {
         const last = alertsFired.current[m.id].shNagAt || 0;
@@ -706,7 +714,10 @@ export default function App() {
           else alertsFired.current[m.id].shNagAt = now;
         }
       }
-      if (m.running && el >= FULL && !alertsFired.current[m.id].full) {
+      /* Full time can only trigger once the second half has actually been started by the captain.
+         Without the m.secondHalf guard, a match left running through half-time could jump
+         straight to full time even though the captain never approved the restart. */
+      if (m.running && m.secondHalf && el >= FULL && !alertsFired.current[m.id].full) {
         alertsFired.current[m.id].full = true;
         notify(`🏁 FULL TIME — ${m.teamA.name} vs ${m.teamB.name}. Captain, please upload the result.`);
         patchMatch(m.id, { elapsed: FULL, running: false, timerStartedAt: null, status: "AwaitingScore", awaitingSince: new Date().toISOString() });
@@ -4505,27 +4516,6 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
             ⏸ Match paused — commentary will resume when play restarts
           </div>
         )}
-        <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", padding: "14px 16px 6px" }}>Match timeline</div>
-        <div style={{ display: "grid", gap: 8, padding: "0 16px 16px", maxHeight: 340, overflowY: "auto" }}>
-          {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Events will appear here as the match unfolds.</div>}
-          {feed.map((e) => {
-            const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
-            return (
-              <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px" }}>
-                {e.min !== null && e.min !== undefined && (
-                  <span className="display" style={{ fontSize: 13, color: T.floodlight, background: "rgba(230,179,30,.1)", borderRadius: 8, padding: "3px 7px", flexShrink: 0, minWidth: 32, textAlign: "center" }}>{e.min}'</span>
-                )}
-                <span style={{ fontSize: 13, color: T.chalk, paddingTop: 1 }}>
-                  {e.kind === "commentary" ? (
-                    <>🎙 {rest}</>
-                  ) : lead ? (
-                    <><b style={{ color: T.floodlight }}>{lead}</b>{rest}</>
-                  ) : rest}
-                </span>
-              </div>
-            );
-          })}
-        </div>
 
         <div style={{ display: "flex", gap: 8, padding: "12px 16px 16px", borderTop: "1px solid #243128" }}>
           <button className={`btn ${alertsOn ? "btn-gold" : "btn-ghost"}`} style={{ flex: 1 }} onClick={onToggleAlerts}>
@@ -4944,8 +4934,8 @@ function PosterModal({ m, onClose, notify }) {
           <PosterBadge cx={110} cy={185} team={m.teamA} badge={m.badgeA} />
           <PosterBadge cx={290} cy={185} team={m.teamB} badge={m.badgeB} />
           {!isResult && <text x="200" y="197" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="26">VS</text>}
-          <text x="110" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamA.name}</text>
-          <text x="290" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="15">{m.teamB.name}</text>
+          <text x="110" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize={m.teamA.name.length > 16 ? 10 : m.teamA.name.length > 12 ? 12.5 : 15}>{m.teamA.name}</text>
+          <text x="290" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize={m.teamB.name.length > 16 ? 10 : m.teamB.name.length > 12 ? 12.5 : 15}>{m.teamB.name}</text>
 
           {isResult ? (
             <>
@@ -5163,8 +5153,8 @@ function AwardCardModal({ award, player, team, onClose, notify }) {
           <text x="250" y="245" textAnchor="middle" fontSize="72">{info.icon}</text>
 
           <text x="250" y="360" textAnchor="middle" fill={info.medal} fontFamily="Anton, sans-serif" fontSize="26" letterSpacing="1">{info.label.toUpperCase()}</text>
-          <text x="250" y="392" textAnchor="middle" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize="32">{player.name.toUpperCase()}</text>
-          <text x="250" y="416" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">{team ? team.name : ""}</text>
+          <text x="250" y="392" textAnchor="middle" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize={player.name.length > 18 ? 20 : player.name.length > 13 ? 26 : 32}>{player.name.toUpperCase()}</text>
+          <text x="250" y="416" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">{team ? (team.name.length > 30 ? team.name.slice(0, 28) + "…" : team.name) : ""}</text>
 
           <line x1="140" y1="450" x2="360" y2="450" stroke="#F5F0E1" strokeOpacity="0.15" />
           <text x="250" y="480" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12">
@@ -5241,8 +5231,8 @@ function StatsPosterModal({ m, onClose, notify }) {
 
           <PosterBadge cx={90} cy={100} team={m.teamA} badge={m.badgeA} />
           <PosterBadge cx={310} cy={100} team={m.teamB} badge={m.badgeB} />
-          <text x="90" y="140" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="13">{m.teamA.name}</text>
-          <text x="310" y="140" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize="13">{m.teamB.name}</text>
+          <text x="90" y="140" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize={m.teamA.name.length > 14 ? 9 : m.teamA.name.length > 10 ? 11 : 13}>{m.teamA.name}</text>
+          <text x="310" y="140" textAnchor="middle" fill="#F5F0E1" fontWeight="700" fontFamily="Space Grotesk, sans-serif" fontSize={m.teamB.name.length > 14 ? 9 : m.teamB.name.length > 10 ? 11 : 13}>{m.teamB.name}</text>
           <text x="200" y="112" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="20">{m.liveA ?? m.finalA ?? 0}–{m.liveB ?? m.finalB ?? 0}</text>
 
           <line x1="30" y1="160" x2="370" y2="160" stroke="#F5F0E1" strokeOpacity="0.1" />
@@ -5331,13 +5321,13 @@ function LineupPosterModal({ m, onClose, notify }) {
 
           {namesA.length === 0 && <text x="105" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
           {namesA.slice(0, maxShown).map((n, i) => (
-            <text key={"a" + i} x="30" y={140 + i * rowH} textAnchor="start" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
+            <text key={"a" + i} x="30" y={140 + i * rowH} textAnchor="start" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n.length > 18 ? n.slice(0, 17) + "…" : n}</text>
           ))}
           {namesA.length > maxShown && <text x="30" y={140 + maxShown * rowH} textAnchor="start" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesA.length - maxShown} more</text>}
 
           {namesB.length === 0 && <text x="295" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
           {namesB.slice(0, maxShown).map((n, i) => (
-            <text key={"b" + i} x="370" y={140 + i * rowH} textAnchor="end" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n}</text>
+            <text key={"b" + i} x="370" y={140 + i * rowH} textAnchor="end" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n.length > 18 ? n.slice(0, 17) + "…" : n}</text>
           ))}
           {namesB.length > maxShown && <text x="370" y={140 + maxShown * rowH} textAnchor="end" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesB.length - maxShown} more</text>}
 
