@@ -1104,7 +1104,13 @@ export default function App() {
         message: `Your request to join ${team ? team.name : "the squad"} wasn't approved this time.`,
       });
     }
-    await supabase.from("team_requests").update({ status: approve ? "approved" : "denied" }).eq("id", req.id);
+    const { data: updatedReq } = await supabase.from("team_requests").update({ status: approve ? "approved" : "denied" }).eq("id", req.id).select();
+    if (!updatedReq || updatedReq.length === 0) {
+      return notify("⚠️ Couldn't update the request — a permissions issue may be blocking it.");
+    }
+    /* Drop it from the local list right away so the Join Requests card updates instantly,
+       rather than waiting on a refresh round-trip. */
+    setTeamRequests((rs) => rs.filter((r) => r.id !== req.id));
     notify(approve ? "✅ Player added to your squad." : "Request denied.");
     refreshAll();
   };
