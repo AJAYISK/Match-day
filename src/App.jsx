@@ -408,6 +408,8 @@ export default function App() {
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
+  const [showLeaderboards, setShowLeaderboards] = useState(false);
+  const [lbTab, setLbTab] = useState("scorers");
   const [dreamTeamInput, setDreamTeamInput] = useState("");
   const [dreamTeamSlide, setDreamTeamSlide] = useState(0);
   const dreamTeamTouchX = useRef(0);
@@ -1523,6 +1525,94 @@ export default function App() {
   const awaitingResults = publishedAll.filter((m) => m.status === "AwaitingScore" &&
     (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
   const inMyState = me && me.state ? publishedAll.filter((m) => captainState(m) === me.state && m.status !== "ResultPublished") : [];
+
+  /* ---------- FEED INTELLIGENCE ----------
+     Upcoming fixtures, auto-generated milestones and leaderboards — all derived from
+     match results and profiles already in the database. No new tables needed. */
+  const upcomingFixtures = matches
+    .filter((m) => m.published && m.status === "Scheduled" && m.date && m.time &&
+      new Date(`${m.date}T${m.time}`).getTime() > now &&
+      (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)))
+    .sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`))
+    .slice(0, 6);
+
+  /* Leaderboards — scoped to the same state/follow filter the rest of the feed uses */
+  const leaderboards = (() => {
+    const scoped = matches.filter((m) => m.status === "ResultPublished" &&
+      (feedState === "All" || captainState(m) === feedState));
+    /* Goals per player name, resolved per team so identical names on different teams stay separate */
+    const tally = {};
+    scoped.forEach((m) => {
+      [["A", m.teamA.name, m.scorersA], ["B", m.teamB.name, m.scorersB]].forEach(([, teamName, str]) => {
+        (str || "").split(",").forEach((chunk) => {
+          const part = chunk.trim();
+          if (!part) return;
+          const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+          const nm = (mm ? mm[1] : part).trim();
+          if (!nm) return;
+          const n = mm ? parseInt(mm[2], 10) : 1;
+          const key = `${nm.toLowerCase()}|${teamName.toLowerCase()}`;
+          if (!tally[key]) tally[key] = { name: nm, team: teamName, goals: 0 };
+          tally[key].goals += n;
+        });
+      });
+    });
+    const topScorers = Object.values(tally).sort((a, b) => b.goals - a.goals).slice(0, 5);
+    const teamForm = savedTeams
+      .map((t) => ({ team: t, rec: teamRecord(t) }))
+      .filter((x) => x.rec.ratingReady)
+      .sort((a, b) => b.rec.rating - a.rec.rating)
+      .slice(0, 5);
+    const mostSupported = savedTeams
+      .map((t) => ({ team: t, count: teamSupporters.filter((s) => s.teamId === t.id).length }))
+      .filter((x) => x.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    return { topScorers, teamForm, mostSupported };
+  })();
+
+  /* Milestones — notable things that happened recently, phrased as news */
+  const milestones = (() => {
+    const out = [];
+    const registered = users.filter((u) => u.role === "Player" && u.teamId && u.rosterName);
+    /* Goal milestones at meaningful thresholds */
+    registered.forEach((p) => {
+      const st = playerStats(p);
+      if (!st.ready) return;
+      const threshold = [50, 25, 15, 10, 5].find((t) => st.goals >= t);
+      if (threshold) out.push({
+        id: `g-${p.id}`, accent: "#D6A81D", weight: threshold,
+        head: `${p.name} reached ${threshold} goals`,
+        sub: st.team ? st.team.name : "",
+        playerId: p.id,
+      });
+    });
+    /* Team winning runs */
+    savedTeams.forEach((t) => {
+      const rec = teamRecord(t);
+      let run = 0;
+      for (const r of rec.results) { if (r.outcome === "W") run++; else break; }
+      if (run >= 3) out.push({
+        id: `w-${t.id}`, accent: "#3FA35B", weight: run * 4,
+        head: `${t.name} on a ${run}-match winning run`,
+        sub: "Unbeaten in their last " + run,
+        teamId: t.id,
+      });
+    });
+    /* Supporter milestones */
+    savedTeams.forEach((t) => {
+      const c = teamSupporters.filter((s) => s.teamId === t.id).length;
+      const threshold = [100, 50, 25, 10].find((x) => c >= x);
+      if (threshold) out.push({
+        id: `s-${t.id}`, accent: "#4a7d9c", weight: threshold / 4,
+        head: `${t.name} passed ${threshold} supporters`,
+        sub: `${c} fans backing them`,
+        teamId: t.id,
+      });
+    });
+    return out.sort((a, b) => b.weight - a.weight).slice(0, 6);
+  })();
+
   const capped = (key, list) => (seeMore[key] ? list : list.slice(0, 2));
   const SeeMoreBtn = ({ k, list }) => {
     if (list.length <= 2) return null;
@@ -2004,6 +2094,25 @@ export default function App() {
               ) : null;
             })()}
 
+            {milestones.length > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between" }}>
+                  <span>This week</span>
+                  {milestones.length > 1 && <span style={{ color: "#4e5c53", letterSpacing: 0, textTransform: "none", fontSize: 10 }}>swipe →</span>}
+                </div>
+                <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, scrollbarWidth: "none" }}>
+                  {milestones.map((ms) => (
+                    <div key={ms.id}
+                      onClick={() => { if (ms.playerId) openPlayerProfile(ms.playerId); else if (ms.teamId) openTeamProfile(ms.teamId); }}
+                      style={{ flexShrink: 0, width: 186, background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${ms.accent}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer" }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.3, color: "#F7F4EA" }}>{ms.head}</div>
+                      {ms.sub && <div style={{ fontSize: 9.5, color: "#6b7d72", marginTop: 3 }}>{ms.sub}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {liveNow.length > 0 && (
               <>
                 <SectionTitle color={T.live}>● Live Now</SectionTitle>
@@ -2020,6 +2129,38 @@ export default function App() {
                   {awaitingResults.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
+            )}
+
+            {upcomingFixtures.length > 0 && (
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>
+                  Coming up{feedState !== "All" ? ` in ${feedState}` : " near you"}
+                </div>
+                {upcomingFixtures.map((m) => {
+                  const kickoff = new Date(`${m.date}T${m.time}`).getTime();
+                  const hoursOut = (kickoff - now) / 3600000;
+                  const d = new Date(kickoff);
+                  const soon = hoursOut < 24;
+                  return (
+                    <div key={m.id} onClick={() => openMatchDetail(m.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                      <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, lineHeight: 1, color: soon ? "#D6A81D" : "#F7F4EA" }}>
+                          {soon ? Math.max(1, Math.round(hoursOut)) : d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}
+                        </div>
+                        <div style={{ fontSize: 8, color: "#4e5c53", letterSpacing: ".8px", textTransform: "uppercase", marginTop: 3 }}>
+                          {soon ? "hrs" : d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                        </div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
+                      </div>
+                      <div style={{ fontSize: 9.5, color: "#D6A81D", fontWeight: 600, flexShrink: 0 }}>{m.time}</div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
 
             {feedState !== "All" && published.length === 0 && (
@@ -2054,6 +2195,17 @@ export default function App() {
               {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
+
+            {(leaderboards.topScorers.length > 0 || leaderboards.teamForm.length > 0) && (
+              <div onClick={() => { setShowLeaderboards(true); pushCloseable(() => setShowLeaderboards(false)); }}
+                style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 10, padding: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 20 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA" }}>Leaderboards</div>
+                  <div style={{ fontSize: 9.5, color: "#6b7d72", marginTop: 2 }}>Top scorers · team form · most supported</div>
+                </div>
+                <div style={{ color: "#D6A81D", fontSize: 11 }}>View ›</div>
+              </div>
+            )}
           </>
         )}
 
@@ -2950,6 +3102,88 @@ export default function App() {
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
+      {showLeaderboards && (
+        <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
+            <button onClick={goBackPage} style={{ width: 29, height: 29, border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#7d8f83", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, cursor: "pointer" }}>‹</button>
+            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Leaderboards</div>
+          </div>
+          <div style={{ display: "flex", padding: "0 17px", borderBottom: "1px solid #151c16", gap: 24 }}>
+            {[["scorers", "Top scorers"], ["form", "Team form"], ["supported", "Most supported"]].map(([key, lbl]) => (
+              <button key={key} onClick={() => setLbTab(key)}
+                style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12, color: lbTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: lbTab === key ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: `1.5px solid ${lbTab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "18px 17px 24px" }}>
+            <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 13 }}>
+              {feedState === "All" ? "All states" : feedState}
+            </div>
+
+            {lbTab === "scorers" && (
+              leaderboards.topScorers.length === 0
+                ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No goals recorded yet.</div>
+                : leaderboards.topScorers.map((s, i) => (
+                    <div key={`${s.name}-${s.team}`} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14" }}>
+                      <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{s.team}</div>
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#D6A81D" }}>{s.goals}</span>
+                        <span style={{ fontSize: 8.5, color: "#4e5c53", letterSpacing: ".7px", textTransform: "uppercase", marginLeft: 3 }}>gls</span>
+                      </div>
+                    </div>
+                  ))
+            )}
+
+            {lbTab === "form" && (
+              leaderboards.teamForm.length === 0
+                ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams have played enough matches yet (3 minimum).</div>
+                : leaderboards.teamForm.map((x, i) => (
+                    <div key={x.team.id} onClick={() => { setShowLeaderboards(false); openTeamProfile(x.team.id); }}
+                      style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                      <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
+                      <MiniLogo team={x.team} badge={x.team.badge} size={26} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.team.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{x.rec.wins}W {x.rec.draws}D {x.rec.losses}L · {x.rec.total} played</div>
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#D6A81D" }}>{x.rec.rating}</span>
+                        <span style={{ fontSize: 8.5, color: "#4e5c53", marginLeft: 3 }}>★</span>
+                      </div>
+                    </div>
+                  ))
+            )}
+
+            {lbTab === "supported" && (
+              leaderboards.mostSupported.length === 0
+                ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams have supporters yet.</div>
+                : leaderboards.mostSupported.map((x, i) => {
+                    const cap = users.find((u) => u.id === x.team.captainId);
+                    return (
+                      <div key={x.team.id} onClick={() => { setShowLeaderboards(false); openTeamProfile(x.team.id); }}
+                        style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                        <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
+                        <MiniLogo team={x.team} badge={x.team.badge} size={26} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.team.name}</div>
+                          <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{cap ? cap.name : "Captain"}</div>
+                        </div>
+                        <div style={{ flexShrink: 0 }}>
+                          <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#D6A81D" }}>{x.count}</span>
+                          <span style={{ fontSize: 8.5, color: "#4e5c53", letterSpacing: ".7px", textTransform: "uppercase", marginLeft: 3 }}>fans</span>
+                        </div>
+                      </div>
+                    );
+                  })
+            )}
+          </div>
+        </div>
+      )}
       {viewPlayerId && (() => {
         const p = users.find((u) => u.id === viewPlayerId);
         if (!p) return null;
