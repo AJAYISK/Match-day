@@ -174,13 +174,90 @@ const BADGES = ["ball", "lion", "eagle", "shield", "star", "fire", "leopard", "s
    and x/y as percentages of the pitch — GK always deepest, attackers always furthest forward. */
 /* Award types a captain can give — icon + label + a medal color used consistently across the UI and artwork */
 const AWARD_TYPES = {
-  motm: { label: "Man of the Match", icon: "⭐", medal: "#E6B31E" },
-  golden_boot: { label: "Golden Boot", icon: "🥇", medal: "#E6B31E" },
-  best_defender: { label: "Best Defender", icon: "🛡", medal: "#8FA396" },
-  playmaker: { label: "Playmaker", icon: "🎯", medal: "#3FA35B" },
-  most_improved: { label: "Most Improved", icon: "📈", medal: "#1DB954" },
-  team_player: { label: "Team Player", icon: "🤝", medal: "#8FA396" },
+  motm: { label: "Man of the Match", icon: "⭐", medal: "#E6B31E", art: "motm" },
+  golden_boot: { label: "Golden Boot", icon: "🥇", medal: "#E6B31E", art: "boot" },
+  golden_glove: { label: "Golden Glove", icon: "🧤", medal: "#E6B31E", art: "glove" },
+  golden_ball: { label: "Golden Ball", icon: "🏆", medal: "#E6B31E", art: "ball" },
+  best_defender: { label: "Best Defender", icon: "🛡", medal: "#8FA396", art: "shield" },
+  playmaker: { label: "Playmaker", icon: "🎯", medal: "#3FA35B", art: "playmaker" },
+  best_young: { label: "Best Young Player", icon: "🌟", medal: "#E6B31E", art: "young" },
+  fair_play: { label: "Fair Play Award", icon: "🤝", medal: "#8FA396", art: "fairplay" },
+  most_improved: { label: "Most Improved", icon: "📈", medal: "#1DB954", art: "motm" },
+  team_player: { label: "Team Player", icon: "🤝", medal: "#8FA396", art: "fairplay" },
 };
+
+/* Trophy illustrations — original flat-vector artwork with metallic gradients.
+   Rendered at any size; used in award lists, the squad picker, and the award card. */
+function TrophyIcon({ art, size = 24 }) {
+  const gid = `tg-${art}-${size}`;
+  const G = (
+    <defs>
+      <linearGradient id={`${gid}-d`} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#FDE9A8" /><stop offset="35%" stopColor="#E6B31E" /><stop offset="70%" stopColor="#9c7412" /><stop offset="100%" stopColor="#5e4409" />
+      </linearGradient>
+      <linearGradient id={`${gid}-v`} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#FDE9A8" /><stop offset="50%" stopColor="#E6B31E" /><stop offset="100%" stopColor="#8a6d1a" />
+      </linearGradient>
+      <radialGradient id={`${gid}-r`} cx="35%" cy="30%" r="70%">
+        <stop offset="0%" stopColor="#FDE9A8" /><stop offset="45%" stopColor="#E6B31E" /><stop offset="100%" stopColor="#6b4f0c" />
+      </radialGradient>
+    </defs>
+  );
+  const shapes = {
+    boot: (<>
+      <path d="M22 78 C20 68 22 60 30 55 L34 40 C35 32 42 26 52 27 L64 30 C72 32 76 40 75 48 L74 60 C82 62 86 68 85 75 C85 79 82 80 78 80 L28 80 C24 80 22 80 22 78 Z" fill={`url(#${gid}-d)`} stroke="#4a3608" strokeWidth="1.5" />
+      <path d="M55 34 L60 39 M62 37 L67 42 M69 40 L74 45" stroke="#4a3608" strokeWidth="2" strokeLinecap="round" />
+      <ellipse cx="38" cy="42" rx="6" ry="4" fill="#FDE9A8" opacity="0.7" />
+    </>),
+    glove: (<>
+      <path d="M38 88 L38 74 L62 74 L62 88 Z" fill="#3a2c08" />
+      <path d="M30 40 C28 26 38 15 50 15 C62 15 71 26 70 40 L70 58 C70 66 65 70 58 70 L42 70 C35 70 30 66 30 58 Z" fill={`url(#${gid}-d)`} stroke="#4a3608" strokeWidth="1.5" />
+      <path d="M38 20 L38 55 M46 16 L46 58 M54 16 L54 58 M62 20 L62 55" stroke="#4a3608" strokeWidth="2.2" strokeLinecap="round" />
+    </>),
+    ball: (<>
+      <rect x="40" y="66" width="20" height="8" fill="#8a6d1a" />
+      <path d="M28 74 L72 74 L66 82 L34 82 Z" fill="#5e4409" />
+      <circle cx="50" cy="42" r="28" fill={`url(#${gid}-r)`} stroke="#4a3608" strokeWidth="1.5" />
+      <path d="M50 22 L58 30 L55 40 L45 40 L42 30 Z" fill="#4a3608" opacity="0.55" />
+      <ellipse cx="40" cy="30" rx="7" ry="5" fill="#FDE9A8" opacity="0.7" />
+    </>),
+    motm: (<>
+      <rect x="42" y="66" width="16" height="16" fill="#5e4409" />
+      <rect x="30" y="82" width="40" height="6" rx="2" fill="#3a2c08" />
+      <path d="M50 16 L59 40 L84 42 L64 57 L71 81 L50 67 L29 81 L36 57 L16 42 L41 40 Z" fill={`url(#${gid}-v)`} stroke="#4a3608" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M50 16 L54 30 L50 40 L46 30 Z" fill="#FDE9A8" opacity="0.55" />
+    </>),
+    young: (<>
+      <circle cx="50" cy="30" r="13" fill={`url(#${gid}-v)`} stroke="#4a3608" strokeWidth="1.5" />
+      <path d="M28 78 C28 55 36 46 50 46 C64 46 72 55 72 78 Z" fill={`url(#${gid}-v)`} stroke="#4a3608" strokeWidth="1.5" />
+      <path d="M50 8 L53 15 L50 22 L47 15 Z" fill="#FDE9A8" />
+      <path d="M28 22 L34 26 M72 22 L66 26" stroke="#E6B31E" strokeWidth="2.5" strokeLinecap="round" />
+    </>),
+    fairplay: (<>
+      <path d="M18 52 C22 44 30 44 36 50 L46 50 L58 38 C61 35 66 35 68 39 C70 42 69 45 67 47 L58 56" fill="none" stroke={`url(#${gid}-v)`} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M82 48 C78 40 70 40 64 46 L54 46 L42 34 C39 31 34 31 32 35 C30 38 31 41 33 43 L42 52" fill="none" stroke={`url(#${gid}-v)`} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="30" cy="47" r="4.5" fill="#E6B31E" /><circle cx="70" cy="47" r="4.5" fill="#E6B31E" />
+    </>),
+    shield: (<>
+      <path d="M50 12 C62 20 74 22 74 22 L74 48 C74 68 62 80 50 88 C38 80 26 68 26 48 L26 22 C26 22 38 20 50 12 Z" fill={`url(#${gid}-v)`} stroke="#4a3608" strokeWidth="1.5" />
+      <path d="M40 48 L47 56 L62 38" fill="none" stroke="#4a3608" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M50 12 C56 16 62 19 68 20 L68 24 L50 16Z" fill="#FDE9A8" opacity="0.6" />
+    </>),
+    playmaker: (<>
+      <circle cx="50" cy="50" r="34" fill="none" stroke="#3a4a3e" strokeWidth="1.5" strokeDasharray="3 4" />
+      <path d="M50 50 L26 30 M50 50 L74 30 M50 50 L22 60 M50 50 L78 60 M50 50 L50 80" stroke={`url(#${gid}-v)`} strokeWidth="3" strokeLinecap="round" />
+      <circle cx="50" cy="50" r="9" fill={`url(#${gid}-v)`} stroke="#4a3608" strokeWidth="1.5" />
+      <circle cx="26" cy="30" r="5" fill="#3FA35B" /><circle cx="74" cy="30" r="5" fill="#3FA35B" />
+      <circle cx="22" cy="60" r="5" fill="#3FA35B" /><circle cx="78" cy="60" r="5" fill="#3FA35B" /><circle cx="50" cy="80" r="5" fill="#3FA35B" />
+    </>),
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
+      {G}
+      {shapes[art] || shapes.motm}
+    </svg>
+  );
+}
 
 const FORMATIONS = {
   "4-4-2": [
@@ -1950,7 +2027,7 @@ export default function App() {
                     return (
                       <div key={a.id} onClick={() => setAwardCardFor(a.id)}
                         style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
-                        <span style={{ fontSize: 20 }}>{info.icon}</span>
+                        <TrophyIcon art={info.art} size={26} />
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 700, fontSize: 13 }}>{info.label}</div>
                           <div style={{ fontSize: 10, color: T.muted }}>{new Date(a.createdAt).toLocaleDateString()}</div>
@@ -2707,6 +2784,7 @@ export default function App() {
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
           onShare={() => { goBackPage(); setPosterFor(liveDetailMatch.id); }}
           onShareLineup={() => { goBackPage(); setLineupPosterFor(liveDetailMatch.id); }}
+          allMatches={matches}
           onShareStats={() => { goBackPage(); setStatsPosterFor(liveDetailMatch.id); }}
           onClose={goBackPage}
         />
@@ -3077,7 +3155,7 @@ function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playe
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {Object.entries(AWARD_TYPES).map(([key, a]) => (
                 <button key={key} onClick={() => { onGiveAward(linked.id, team.id, key); setAwardMenuFor(null); }}
-                  style={{ background: "#131a15", border: "1px solid #243128", color: "#F5F0E1", borderRadius: 99, padding: "6px 11px", fontSize: 11.5 }}>{a.icon} {a.label}</button>
+                  style={{ background: "#131a15", border: "1px solid #243128", color: "#F5F0E1", borderRadius: 99, padding: "5px 11px 5px 5px", fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 6 }}><TrophyIcon art={a.art} size={20} />{a.label}</button>
               ))}
             </div>
           </div>
@@ -3292,7 +3370,7 @@ function PlayerProfilePage({ player, stats, level, awards, team, onClose, onOpen
               return (
                 <div key={a.id} onClick={() => onOpenAward(a.id)}
                   style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
-                  <span style={{ fontSize: 20 }}>{info.icon}</span>
+                  <TrophyIcon art={info.art} size={26} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 700, fontSize: 13 }}>{info.label}</div>
                     <div style={{ fontSize: 10, color: T.muted }}>{new Date(a.createdAt).toLocaleDateString()}</div>
@@ -4126,7 +4204,7 @@ const genCommentary = (m, rosterNames) => {
   return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
 };
 
-function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, onClose }) {
+function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, allMatches = [], onClose }) {
   const [commentary, setCommentary] = useState([]);
   const [watching, setWatching] = useState(1);
   const rosterNames = (str) => {
@@ -4137,7 +4215,22 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
   /* Real "Watching" count — presence channel scoped to this exact match.
      Counts only people who genuinely have this match's Live view open right now. */
   const [watchers, setWatchers] = useState([]);
-  const [liveCard, setLiveCard] = useState(0);
+  const [liveTab, setLiveTab] = useState("stats");
+  /* Head-to-head — past published meetings between these exact two teams */
+  const h2hGames = (allMatches || [])
+    .filter((g) => g.id !== m.id && g.status === "ResultPublished" &&
+      ((g.teamA.name === m.teamA.name && g.teamB.name === m.teamB.name) ||
+       (g.teamA.name === m.teamB.name && g.teamB.name === m.teamA.name)))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const h2hRecord = h2hGames.reduce((acc, g) => {
+    const aIsHome = g.teamA.name === m.teamA.name;
+    const aScore = aIsHome ? g.finalA : g.finalB;
+    const bScore = aIsHome ? g.finalB : g.finalA;
+    if (aScore > bScore) acc.aWins++;
+    else if (bScore > aScore) acc.bWins++;
+    else acc.draws++;
+    return acc;
+  }, { aWins: 0, bWins: 0, draws: 0 });
   const liveCardTouchX = useRef(0);
   const [showWatchers, setShowWatchers] = useState(false);
   const [showScorers, setShowScorers] = useState(false);
@@ -4296,23 +4389,23 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
         )}
 
         <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
-          <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: liveCard === 0 ? T.floodlight : "#3a4a3e" }} />
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: liveCard === 1 ? T.floodlight : "#3a4a3e" }} />
-          </div>
-          <div style={{ fontSize: 10, color: T.muted, textAlign: "center", marginBottom: 10 }}>
-            {liveCard === 0 ? "← swipe for lineups" : "← swipe back for stats →"}
-          </div>
-          <div style={{ fontSize: 11, letterSpacing: ".15em", color: T.muted, textTransform: "uppercase", marginBottom: 10, textAlign: "center" }}>
-            {liveCard === 0 ? "Match Stats" : "Starting Lineups"}
+          <div style={{ display: "flex", borderBottom: "1px solid #243128", marginBottom: 14 }}>
+            {[["stats", "Info"], ["commentary", "Commentary"], ["lineups", "Line-ups"], ["h2h", "H2H"]].map(([key, label]) => (
+              <button key={key} onClick={() => setLiveTab(key)}
+                style={{ flex: 1, background: "none", border: 0, borderBottom: `2px solid ${liveTab === key ? T.chalk : "transparent"}`, color: liveTab === key ? T.chalk : T.muted, fontWeight: liveTab === key ? 700 : 500, fontSize: 12.5, padding: "10px 2px", fontFamily: "inherit", cursor: "pointer" }}>
+                {label}
+              </button>
+            ))}
           </div>
           <div onTouchStart={(e) => { liveCardTouchX.current = e.touches[0].clientX; }}
             onTouchEnd={(e) => {
+              const order = ["stats", "commentary", "lineups", "h2h"];
+              const i = order.indexOf(liveTab);
               const dx = e.changedTouches[0].clientX - liveCardTouchX.current;
-              if (dx < -40) setLiveCard(1);
-              if (dx > 40) setLiveCard(0);
+              if (dx < -40 && i < order.length - 1) setLiveTab(order[i + 1]);
+              if (dx > 40 && i > 0) setLiveTab(order[i - 1]);
             }}>
-            {liveCard === 0 ? (
+            {liveTab === "stats" ? (
               <>
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
@@ -4341,7 +4434,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
                 <button style={{ width: "100%", marginTop: 8, background: "none", border: "1px solid #243128", color: T.floodlight, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700 }}
                   onClick={onShareLineup}>🧑‍🤝‍🧑 Generate lineup card</button>
               </>
-            ) : (
+            ) : liveTab === "lineups" ? (
               <div style={{ display: "flex" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
@@ -4352,6 +4445,47 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
                   <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
                   {rosterNames(m.playersB).map((p) => <div key={p} style={{ fontSize: 12, padding: "5px 0", color: T.chalk, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>)}
                 </div>
+              </div>
+            ) : liveTab === "commentary" ? (
+              <div style={{ display: "grid", gap: 8, maxHeight: 340, overflowY: "auto" }}>
+                {feed.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>Commentary will appear here as the match unfolds.</div>}
+                {feed.map((e) => {
+                  const { lead, rest } = e.kind === "event" ? splitLeadIn(e.text) : { lead: null, rest: e.text };
+                  return (
+                    <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#161E19", border: "1px solid #243128", borderRadius: 12, padding: "10px 12px" }}>
+                      {e.min !== null && e.min !== undefined && (
+                        <span className="display" style={{ fontSize: 13, color: T.floodlight, background: "rgba(230,179,30,.1)", borderRadius: 8, padding: "3px 7px", flexShrink: 0, minWidth: 32, textAlign: "center" }}>{e.min}'</span>
+                      )}
+                      <span style={{ fontSize: 13, color: T.chalk, paddingTop: 1 }}>
+                        {e.kind === "commentary" ? (<>🎙 {rest}</>) : lead ? (<><b style={{ color: T.floodlight }}>{lead}</b>{rest}</>) : rest}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10, textAlign: "center" }}>Head to Head</div>
+                {h2hGames.length === 0 ? (
+                  <div style={{ fontSize: 13, color: T.muted, textAlign: "center", padding: "10px 0" }}>These two teams haven't met before on Area Match.</div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", gap: 1, borderRadius: 10, overflow: "hidden", marginBottom: 12 }}>
+                      {[[h2hRecord.aWins, m.teamA.name, "#3FA35B"], [h2hRecord.draws, "Draws", "#54615a"], [h2hRecord.bWins, m.teamB.name, "#C6503F"]].map(([n, label, color]) => (
+                        <div key={label} style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
+                          <div className="display" style={{ fontSize: 19, color }}>{n}</div>
+                          <div style={{ fontSize: 8.5, color: T.muted, letterSpacing: 1, textTransform: "uppercase", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {h2hGames.slice(0, 5).map((g) => (
+                      <div key={g.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #243128", fontSize: 12.5 }}>
+                        <span style={{ color: T.muted, fontSize: 11 }}>{g.date}</span>
+                        <span className="display" style={{ color: T.floodlight }}>{g.finalA}–{g.finalB}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -4894,7 +5028,7 @@ function PlayerCardModal({ player, stats, onClose, notify, awards = [], level })
           <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
             {awards.slice(0, 6).map((a) => {
               const info = AWARD_TYPES[a.awardType] || { icon: "🏆", label: a.awardType };
-              return <span key={a.id} title={info.label} style={{ fontSize: 16, background: "#131a15", border: "1px solid #243128", borderRadius: 99, padding: "4px 8px" }}>{info.icon}</span>;
+              return <span key={a.id} title={info.label} style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 99, padding: "5px 7px", display: "inline-flex" }}><TrophyIcon art={info.art} size={18} /></span>;
             })}
           </div>
         )}
