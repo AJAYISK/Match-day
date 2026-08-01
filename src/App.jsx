@@ -407,6 +407,7 @@ export default function App() {
   const [teamSupporters, setTeamSupporters] = useState([]); // { fanId, teamId }
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
+  const [myProfileTab, setMyProfileTab] = useState("overview");
   const [dreamTeamInput, setDreamTeamInput] = useState("");
   const [dreamTeamSlide, setDreamTeamSlide] = useState(0);
   const dreamTeamTouchX = useRef(0);
@@ -2154,26 +2155,133 @@ export default function App() {
                 </div>
               </div>
 
-              {myAwards.length > 0 && (
-                <div className="card" style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Achievements</div>
+              <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 26, marginBottom: 18 }}>
+                {[["overview", "Overview"], ["matches", "Matches"], ["honours", "Honours"], ["edit", "Edit"]].map(([key, lbl]) => (
+                  <button key={key} onClick={() => setMyProfileTab(key)}
+                    style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: myProfileTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: myProfileTab === key ? 600 : 500, padding: "13px 0", cursor: "pointer", borderBottom: `1.5px solid ${myProfileTab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+
+              {myProfileTab === "overview" && (
+                <>
+                  {pd.standout && (
+                    <>
+                      <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 13 }}>Standout performance</div>
+                      <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 15, marginBottom: 22 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1.2px", textTransform: "uppercase", color: "#D6A81D" }}>
+                            {pd.standout.goals >= 3 ? "Hat-trick" : pd.standout.goals === 2 ? "Brace" : "Best game"}
+                          </span>
+                          <span style={{ fontSize: 9.5, color: "#4e5c53" }}>{pd.standout.date}</span>
+                        </div>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 17, color: "#F7F4EA" }}>vs {pd.standout.opponent}</div>
+                        <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 3 }}>
+                          {pd.standout.location}{pd.standout.location ? " · " : ""}{pd.standout.outcome === "W" ? "Won" : pd.standout.outcome === "L" ? "Lost" : "Drew"} {pd.standout.us}–{pd.standout.them}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {pd.history.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 13 }}>Recent form</div>
+                      {(() => {
+                        const form = pd.history.slice(0, 5).reverse();
+                        const maxG = Math.max(1, ...form.map((f) => f.goals));
+                        const abbrev = (s) => (s || "").replace(/[^A-Za-z ]/g, "").split(" ").filter(Boolean)[0]?.slice(0, 3).toUpperCase() || "—";
+                        return (
+                          <div style={{ marginBottom: 22 }}>
+                            <div style={{ display: "flex", gap: 7, alignItems: "flex-end", height: 52, marginBottom: 7 }}>
+                              {form.map((f, i) => (
+                                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 5, height: "100%", justifyContent: "flex-end" }}>
+                                  <div style={{ fontSize: 9, color: "#5a6a5f", fontWeight: 600 }}>{f.goals}</div>
+                                  <div style={{ width: "100%", borderRadius: 2, height: f.goals > 0 ? `${Math.max(18, (f.goals / maxG) * 78)}%` : "5%", background: f.goals > 0 ? "linear-gradient(180deg,#D6A81D,#8a6b12)" : "#161f18" }} />
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display: "flex", gap: 7 }}>
+                              {form.map((f, i) => <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 8.5, color: "#3f4b43" }}>{abbrev(f.opponent)}</div>)}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </>
+                  )}
+                  {pd.history.length === 0 && (
+                    <div style={{ fontSize: 12.5, color: "#7d8f83", textAlign: "center", padding: "24px 0" }}>
+                      No published matches yet — your stats appear once results are in.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {myProfileTab === "matches" && (
+                <>
+                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 13 }}>
+                    {pd.history.length} appearance{pd.history.length === 1 ? "" : "s"}
+                    {pd.standing ? ` · ${pd.standing.wins}W ${pd.standing.draws}D ${pd.standing.losses}L` : ""}
+                  </div>
+                  {pd.history.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No matches played yet.</div>}
+                  {pd.history.map((h) => (
+                    <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 0", borderBottom: "1px solid #121a14" }}>
+                      <div style={{ width: 19, height: 19, borderRadius: 4, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                        background: h.outcome === "W" ? "rgba(63,163,91,.16)" : h.outcome === "L" ? "rgba(198,80,63,.14)" : "rgba(140,150,145,.14)",
+                        color: h.outcome === "W" ? "#5fcf87" : h.outcome === "L" ? "#e08a7d" : "#93a099",
+                        border: `1px solid ${h.outcome === "W" ? "rgba(63,163,91,.3)" : h.outcome === "L" ? "rgba(198,80,63,.28)" : "rgba(140,150,145,.25)"}` }}>{h.outcome}</div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: "#EDEAE0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.opponent}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{h.date}{h.location ? ` · ${h.location}` : ""}</div>
+                      </div>
+                      <div style={{ fontSize: 10, color: h.goals > 0 ? "#D6A81D" : "#2f3a33", fontWeight: 700, letterSpacing: ".5px", flexShrink: 0 }}>{h.goals > 0 ? `${h.goals} G` : "—"}</div>
+                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 12.5, color: "#7d8f83", width: 32, textAlign: "right", flexShrink: 0 }}>{h.us}–{h.them}</div>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {myProfileTab === "honours" && (
+                <>
+                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 13 }}>
+                    {myAwards.length} award{myAwards.length === 1 ? "" : "s"}
+                  </div>
+                  {myAwards.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No awards yet.</div>}
                   {myAwards.map((a) => {
-                    const info = AWARD_TYPES[a.awardType] || { label: a.awardType, icon: "🏆" };
+                    const info = AWARD_TYPES[a.awardType] || { label: a.awardType, art: "motm" };
+                    const inMatch = pd.history.find((h) => h.id === a.matchId);
                     return (
                       <div key={a.id} onClick={() => setAwardCardFor(a.id)}
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
+                        style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                         <TrophyIcon art={info.art} size={26} />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13 }}>{info.label}</div>
-                          <div style={{ fontSize: 10, color: T.muted }}>{new Date(a.createdAt).toLocaleDateString()}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500 }}>{info.label}</div>
+                          <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>
+                            {inMatch ? `vs ${inMatch.opponent} · ` : ""}{new Date(a.createdAt).toLocaleDateString()}
+                          </div>
                         </div>
-                        <span style={{ fontSize: 11, color: T.floodlight }}>🎨 Card ›</span>
+                        <span style={{ fontSize: 10, color: "#4e5c53" }}>›</span>
                       </div>
                     );
                   })}
-                </div>
+                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "24px 0 13px" }}>
+                    {lvl.next ? `Progress to ${lvl.next.name}` : "Level"}
+                  </div>
+                  <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 10, padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 8 }}>
+                      <span style={{ color: "#B9C7BC", fontWeight: 600 }}>{lvl.tier.icon} {lvl.tier.name}</span>
+                      <span style={{ color: "#5a6a5f" }}>{lvl.next ? `${lvl.score} / ${lvl.next.min} pts` : `${lvl.score} pts`}</span>
+                    </div>
+                    <div style={{ height: 4, background: "#161f18", borderRadius: 99, overflow: "hidden" }}>
+                      <div style={{ width: `${lvl.progress * 100}%`, height: "100%", background: "#D6A81D", borderRadius: 99 }} />
+                    </div>
+                    <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 9, lineHeight: 1.4 }}>
+                      {lvl.next ? `${lvl.next.min - lvl.score} more points to reach ${lvl.next.name} — earn points from goals, hat-tricks and awards.` : "Highest level reached."}
+                    </div>
+                  </div>
+                </>
               )}
 
+              <div style={{ display: myProfileTab === "edit" ? "block" : "none" }}>
               {/* SQUAD STATUS */}
               <div className="card" style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>My Squad</div>
@@ -2304,6 +2412,7 @@ export default function App() {
                   })}
                 </div>
               )}
+              </div>
             </div>
           );
         })()}
