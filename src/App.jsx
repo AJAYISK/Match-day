@@ -2795,28 +2795,9 @@ export default function App() {
             follows={follows}
             users={users}
             onOpenCaptain={(id) => { setPage("captains"); setViewCaptain(id); }}
-            onOpenTeam={(id) => openTeamProfile(id)}
-            onOpenMatch={(id) => openMatchDetail(id)}
-            supportedTeams={(() => {
-              const mine = teamSupporters.filter((s) => s.fanId === me.id).map((s) => s.teamId);
-              return savedTeams.filter((t) => mine.includes(t.id)).map((t) => {
-                const rec = teamRecord(t);
-                const last = rec.results.slice(0, 3).map((r) => r.outcome).join("");
-                return { ...t, formLine: rec.total > 0 ? `Last 3: ${last || "—"} · ${rec.wins}W ${rec.draws}D ${rec.losses}L` : "No results yet" };
-              });
-            })()}
-            myUpcoming={(() => {
-              const mine = teamSupporters.filter((s) => s.fanId === me.id).map((s) => s.teamId);
-              const names = savedTeams.filter((t) => mine.includes(t.id)).map((t) => (t.name || "").trim().toLowerCase());
-              if (names.length === 0) return [];
-              return matches.filter((m) => m.published && m.status === "Scheduled" && m.date && m.time &&
-                new Date(`${m.date}T${m.time}`).getTime() > now &&
-                (names.includes((m.teamA.name || "").trim().toLowerCase()) || names.includes((m.teamB.name || "").trim().toLowerCase())))
-                .sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
-            })()}
             stats={me.role === "Captain"
-              ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["Teams", savedTeams.filter((t) => t.captainId === me.id).length], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
-              : { a: ["Captains followed", follows.length], b: ["Teams backed", teamSupporters.filter((s) => s.fanId === me.id).length], c: ["Member since", me.joined || "—"] }}
+              ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["🔔 Followers", followerCounts[me.id] || 0], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
+              : { a: ["🔔 Captains followed", follows.length], b: ["💛 Likes given", myLikes.length], c: ["🏁 Results seen", results.length] }}
             onSave={updateProfile}
             notify={notify}
           />
@@ -5535,8 +5516,7 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
 }
 
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch }) {
-  const [selfTab, setSelfTab] = useState("overview");
+function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain }) {
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
   const [curPin, setCurPin] = useState("");
@@ -5561,130 +5541,35 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
   };
 
   return (
-    <div style={{ maxWidth: 430 }}>
-      {/* Hero — matches the player/captain/team profile language */}
-      <div style={{ position: "relative", overflow: "hidden", marginBottom: 2 }}>
-        <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
-        <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
-          <div style={{ width: 54, height: 54, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 21, color: me.role === "Fan" ? "#7ab0cf" : "#D6A81D", flexShrink: 0 }}>
-            {me.name.slice(0, 2).toUpperCase()}
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 23, lineHeight: 1.05, color: "#F7F4EA" }}>{me.name}</div>
-            <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6 }}>
-              {me.role}{me.state ? ` · ${me.state}` : ""}{me.joined ? ` · Since ${me.joined}` : ""}
-            </div>
-            {me.role === "Fan" && supportedTeams.length > 0 && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, background: "rgba(74,125,156,.10)", border: "1px solid rgba(74,125,156,.3)", borderRadius: 6, padding: "3px 9px", fontSize: 10, fontWeight: 600, color: "#7ab0cf", letterSpacing: ".4px" }}>
-                ◆ TRUE SUPPORTER
-              </div>
-            )}
-          </div>
-        </div>
+    <div style={{ maxWidth: 560 }}>
+      <div className="display" style={{ fontSize: 24, marginBottom: 16 }}>My Profile</div>
 
-        <div style={{ position: "relative", display: "flex", marginTop: 18, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
-          {[stats.a, stats.b, stats.c].map(([label, val], i) => (
-            <div key={label} style={{ flex: 1, padding: "13px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
-              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: i === 0 ? "#D6A81D" : "#F7F4EA" }}>{val}</div>
-              <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{label}</div>
-            </div>
-          ))}
+      {/* Identity card */}
+      <div className="card" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+        <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#14532D", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 28, color: "#E6B31E", border: "2px solid rgba(255,212,71,.4)", flexShrink: 0 }}>
+          {me.name.slice(0, 1).toUpperCase()}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 18 }}>{me.name}</div>
+          <div style={{ fontSize: 13, color: "#8FA396" }}>{me.contact}</div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            <span className="chip" style={{ background: "#14532D", color: "#E6B31E" }}>{me.role}</span>
+            <span className="chip" style={{ background: "#243128", color: "#F5F0E1" }}>Joined {me.joined}</span>
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 22, marginTop: 13, marginBottom: 17 }}>
-        {[["overview", "Overview"], ["following", "Following"], ["settings", "Settings"]].map(([key, lbl]) => (
-          <button key={key} onClick={() => setSelfTab(key)}
-            style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: selfTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: selfTab === key ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: `1.5px solid ${selfTab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
-            {lbl}
-          </button>
+      {/* Stats */}
+      <div className="feedgrid" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 14 }}>
+        {[stats.a, stats.b, stats.c].map(([label, val]) => (
+          <div key={label} className="card" style={{ textAlign: "center", padding: 12 }}>
+            <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
+            <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>{val}</div>
+          </div>
         ))}
       </div>
 
-      {/* ---------- OVERVIEW ---------- */}
-      {selfTab === "overview" && (
-        <>
-          {supportedTeams.length > 0 ? (
-            <>
-              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 12 }}>My teams</div>
-              {supportedTeams.map((t) => (
-                <div key={t.id} className="tappable" onClick={() => onOpenTeam && onOpenTeam(t.id)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
-                  <MiniLogo team={t} badge={t.badge} size={30} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
-                    <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{t.formLine || "Supporting"}</div>
-                  </div>
-                  <span style={{ fontSize: 10, color: "#4e5c53" }}>›</span>
-                </div>
-              ))}
-            </>
-          ) : (
-            <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center", marginBottom: 18 }}>
-              <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>No teams backed yet</div>
-              <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Tap “Support” on any team profile to follow their season here.</div>
-            </div>
-          )}
-
-          {myUpcoming.length > 0 && (
-            <>
-              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "22px 0 12px" }}>Your teams play next</div>
-              {myUpcoming.slice(0, 4).map((m) => {
-                const d = new Date(`${m.date}T${m.time}`);
-                return (
-                  <div key={m.id} className="tappable" onClick={() => onOpenMatch && onOpenMatch(m.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
-                    <div style={{ width: 40, textAlign: "center", flexShrink: 0 }}>
-                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#D6A81D" }}>{d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}</div>
-                      <div style={{ fontSize: 8, color: "#4e5c53", marginTop: 2 }}>{d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
-                      <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{m.location} · {m.time}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </>
-          )}
-        </>
-      )}
-
-      {/* ---------- FOLLOWING ---------- */}
-      {selfTab === "following" && (
-        <>
-          <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 12 }}>
-            Captains I follow{follows.length > 0 ? ` · ${follows.length}` : ""}
-          </div>
-          {follows.length === 0 && (
-            <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center" }}>
-              <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>Not following anyone yet</div>
-              <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Follow a captain to see their matches first in your feed.</div>
-            </div>
-          )}
-          {follows.map((id) => {
-            const cap = users.find((u) => u.id === id);
-            if (!cap) return null;
-            return (
-              <div key={id} className="tappable" onClick={() => onOpenCaptain && onOpenCaptain(id)}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
-                <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 12, color: "#D6A81D", flexShrink: 0 }}>
-                  {cap.name.slice(0, 1).toUpperCase()}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cap.name}</div>
-                  {cap.state && <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{cap.state}</div>}
-                </div>
-                <span style={{ fontSize: 10, color: "#4e5c53" }}>›</span>
-              </div>
-            );
-          })}
-        </>
-      )}
-
-      {/* ---------- SETTINGS ---------- */}
-      <div style={{ display: selfTab === "settings" ? "block" : "none" }}>
+      <div>
 
       {/* Captain team-join contact */}
       {me.role === "Captain" && (
