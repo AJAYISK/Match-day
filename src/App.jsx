@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { supabase } from "./supabase.js";
 
 /* ---------- DB row ⇄ app shape ---------- */
@@ -399,6 +399,7 @@ export default function App() {
   const goalAlertIdsRef = useRef([]);
   useEffect(() => { goalAlertIdsRef.current = goalAlertIds; }, [goalAlertIds]);
   const [viewCaptain, setViewCaptain] = useState(null);
+  const [captainTab, setCaptainTab] = useState("overview");
   const [capStateFilter, setCapStateFilter] = useState("All");
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
   const [feedbacks, setFeedbacks] = useState([]);
@@ -461,10 +462,17 @@ export default function App() {
 
   const notify = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3600); };
 
+  /* The clock drives live timers and countdowns. Ticking every second re-renders the
+     whole app, so only do that when something on screen actually needs per-second
+     accuracy — a running match. Otherwise a slow tick is plenty. */
+  const needsFastClock = useMemo(
+    () => matches.some((m) => m.status === "Live" || m.status === "AwaitingScore"),
+    [matches]
+  );
   useEffect(() => {
-    const iv = setInterval(() => setNow(Date.now()), 1000);
+    const iv = setInterval(() => setNow(Date.now()), needsFastClock ? 1000 : 30000);
     return () => clearInterval(iv);
-  }, []);
+  }, [needsFastClock]);
 
   /* Recovery links carry their purpose in the URL — read it directly,
      immune to auth-event timing races */
@@ -961,8 +969,10 @@ export default function App() {
   const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
   /* Hero card drifts on its own between the text card and the photo, no tap needed —
-     randomized pace (3.5-6.5s) so it doesn't feel mechanical. */
+     randomized pace (3.5-6.5s) so it doesn't feel mechanical. Only runs while the feed
+     is actually on screen; otherwise it would re-render the whole app for nothing. */
   useEffect(() => {
+    if (page !== "feed") return;
     let timer;
     const loop = () => {
       setHeroSlide((s) => (s === 0 ? 1 : 0));
@@ -970,7 +980,7 @@ export default function App() {
     };
     timer = setTimeout(loop, 4500);
     return () => clearTimeout(timer);
-  }, []);
+  }, [page]);
   useEffect(() => {
     if (pendingScores.length <= 1) return;
     const t = setInterval(() => setPendingScoreSlide((i) => (i + 1) % pendingScores.length), 5000);
@@ -984,29 +994,52 @@ export default function App() {
      This runs the same way whether they joined fresh or claimed an existing name —
      which is what makes retroactive backfill work automatically: a claimed name
      immediately picks up every goal already recorded against it historically. */
+  /* ---------- MATCH INDEX ----------
+     Built once whenever matches change, instead of re-scanning every match for
+     every player on every render. This is the difference between thousands of
+     passes per second and one pass per data change. */
+  const matchIndex = useMemo(() => {
+    const parseScorers = (str) => {
+      const out = [];
+      (str || "").split(",").forEach((chunk) => {
+        const part = chunk.trim();
+        if (!part) return;
+        const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+        out.push({ name: (mm ? mm[1] : part).trim().toLowerCase(), n: mm ? parseInt(mm[2], 10) : 1 });
+      });
+      return out;
+    };
+    /* byTeam: "captainId|teamname" -> published matches for that team, newest first */
+    const byTeam = new Map();
+    /* goalsByTeamPlayer: "captainId|teamname|playername" -> { goals, hatTricks } */
+    const goalsByTeamPlayer = new Map();
+    matches.forEach((m) => {
+      if (m.status !== "ResultPublished") return;
+      [[m.teamA.name, m.scorersA], [m.teamB.name, m.scorersB]].forEach(([teamName, scorers]) => {
+        const tKey = `${m.createdBy}|${(teamName || "").trim().toLowerCase()}`;
+        if (!byTeam.has(tKey)) byTeam.set(tKey, []);
+        byTeam.get(tKey).push(m);
+        parseScorers(scorers).forEach(({ name, n }) => {
+          const pKey = `${tKey}|${name}`;
+          const cur = goalsByTeamPlayer.get(pKey) || { goals: 0, hatTricks: 0 };
+          cur.goals += n;
+          if (n >= 3) cur.hatTricks += 1;
+          goalsByTeamPlayer.set(pKey, cur);
+        });
+      });
+    });
+    byTeam.forEach((list) => list.sort((a, b) => (a.date < b.date ? 1 : -1)));
+    return { byTeam, goalsByTeamPlayer };
+  }, [matches]);
+
   const playerStats = (player) => {
     if (!player || !player.teamId || !player.rosterName) return { goals: 0, hatTricks: 0, matches: 0, team: null, ready: false };
     const team = savedTeams.find((t) => t.id === player.teamId);
     if (!team) return { goals: 0, hatTricks: 0, matches: 0, team: null, ready: false };
-    const played = matches.filter((m) =>
-      m.status === "ResultPublished" && m.createdBy === team.captainId &&
-      (m.teamA.name === team.name || m.teamB.name === team.name));
-    let goals = 0, hatTricks = 0;
-    const nameLc = player.rosterName.trim().toLowerCase();
-    played.forEach((m) => {
-      const isA = m.teamA.name === team.name;
-      const scorerStr = (isA ? m.scorersA : m.scorersB) || "";
-      /* Scorer strings are stored as "Tunde x2, Kola" — parse the count back out */
-      scorerStr.split(",").forEach((chunk) => {
-        const part = chunk.trim();
-        if (!part) return;
-        const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
-        const nm = (mm ? mm[1] : part).trim().toLowerCase();
-        const n = mm ? parseInt(mm[2], 10) : 1;
-        if (nm === nameLc) { goals += n; if (n >= 3) hatTricks += 1; }
-      });
-    });
-    return { goals, hatTricks, matches: played.length, team, ready: true };
+    const tKey = `${team.captainId}|${(team.name || "").trim().toLowerCase()}`;
+    const played = matchIndex.byTeam.get(tKey) || [];
+    const hit = matchIndex.goalsByTeamPlayer.get(`${tKey}|${player.rosterName.trim().toLowerCase()}`) || { goals: 0, hatTricks: 0 };
+    return { goals: hit.goals, hatTricks: hit.hatTricks, matches: played.length, team, ready: true };
   };
 
   /* ---------- RICH PROFILE ENGINE ----------
@@ -1207,10 +1240,14 @@ export default function App() {
     notify(approve ? "✅ Player added to your squad." : "Request denied.");
     refreshAll();
   };
+  /* Cache team records for the life of this data — teamRecord gets called repeatedly
+     (leaderboards, milestones, every team card) and each call used to re-scan matches. */
+  const teamRecordCache = useMemo(() => new Map(), [matches, savedTeams]);
   const teamRecord = (team) => {
-    const played = matches
-      .filter((m) => m.status === "ResultPublished" && m.createdBy === team.captainId && (m.teamA.name === team.name || m.teamB.name === team.name))
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (!team) return { wins: 0, draws: 0, losses: 0, total: 0, rating: 0, ratingReady: false, results: [] };
+    const cached = teamRecordCache.get(team.id);
+    if (cached) return cached;
+    const played = matchIndex.byTeam.get(`${team.captainId}|${(team.name || "").trim().toLowerCase()}`) || [];
     const results = played.map((m) => {
       const isA = m.teamA.name === team.name;
       const us = isA ? m.finalA : m.finalB, them = isA ? m.finalB : m.finalA;
@@ -1225,7 +1262,9 @@ export default function App() {
     /* Weighted points formula: Win=3, Draw=1, Loss=0, scaled to a 5-star rating */
     const points = wins * 3 + draws * 1;
     const rating = total > 0 ? Math.round((points / (total * 3)) * 5 * 10) / 10 : 0;
-    return { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
+    const out = { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
+    teamRecordCache.set(team.id, out);
+    return out;
   };
   const createSavedTeam = async (data) => {
     const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions, jersey_pattern: data.jerseyPattern, jersey_trim: data.jerseyTrim });
@@ -1259,6 +1298,10 @@ export default function App() {
     .btn-gold { background: ${T.floodlight}; color: ${T.night}; }
     .btn-turf { background: ${T.turf}; color: ${T.chalk}; }
     .btn-ghost { background: transparent; color: ${T.chalk}; border: 1.5px solid #2A3A2E; }
+    /* Immediate press feedback — without this, tapping a name feels unresponsive
+       while the profile page mounts. */
+    .tappable { transition: opacity .12s ease, transform .12s ease; -webkit-tap-highlight-color: transparent; }
+    .tappable:active { opacity: .55; transform: scale(.985); }
     .btn-live { background: ${T.live}; color: #fff; }
     .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #2A3A2E; background: #121814; color: ${T.chalk}; font-size: 15px; font-family: 'Space Grotesk', sans-serif; outline: none; }
     .input:focus { border-color: ${T.floodlight}; }
@@ -1537,7 +1580,7 @@ export default function App() {
     .slice(0, 6);
 
   /* Leaderboards — scoped to the same state/follow filter the rest of the feed uses */
-  const leaderboards = (() => {
+  const leaderboards = useMemo(() => {
     const scoped = matches.filter((m) => m.status === "ResultPublished" &&
       (feedState === "All" || captainState(m) === feedState));
     /* Goals per player name, resolved per team so identical names on different teams stay separate */
@@ -1569,10 +1612,10 @@ export default function App() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
     return { topScorers, teamForm, mostSupported };
-  })();
+  }, [matches, savedTeams, teamSupporters, feedState, matchIndex]);
 
   /* Milestones — notable things that happened recently, phrased as news */
-  const milestones = (() => {
+  const milestones = useMemo(() => {
     const out = [];
     const registered = users.filter((u) => u.role === "Player" && u.teamId && u.rosterName);
     /* Goal milestones at meaningful thresholds */
@@ -1611,7 +1654,7 @@ export default function App() {
       });
     });
     return out.sort((a, b) => b.weight - a.weight).slice(0, 6);
-  })();
+  }, [users, savedTeams, teamSupporters, matchIndex]);
 
   const capped = (key, list) => (seeMore[key] ? list : list.slice(0, 2));
   const SeeMoreBtn = ({ k, list }) => {
@@ -2103,7 +2146,7 @@ export default function App() {
                 <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, scrollbarWidth: "none" }}>
                   {milestones.map((ms) => (
                     <div key={ms.id}
-                      onClick={() => { if (ms.playerId) openPlayerProfile(ms.playerId); else if (ms.teamId) openTeamProfile(ms.teamId); }}
+                      className="tappable" onClick={() => { if (ms.playerId) openPlayerProfile(ms.playerId); else if (ms.teamId) openTeamProfile(ms.teamId); }}
                       style={{ flexShrink: 0, width: 186, background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${ms.accent}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer" }}>
                       <div style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.3, color: "#F7F4EA" }}>{ms.head}</div>
                       {ms.sub && <div style={{ fontSize: 9.5, color: "#6b7d72", marginTop: 3 }}>{ms.sub}</div>}
@@ -2142,7 +2185,7 @@ export default function App() {
                   const d = new Date(kickoff);
                   const soon = hoursOut < 24;
                   return (
-                    <div key={m.id} onClick={() => openMatchDetail(m.id)}
+                    <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
                       style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                       <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
                         <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, lineHeight: 1, color: soon ? "#D6A81D" : "#F7F4EA" }}>
@@ -2197,7 +2240,7 @@ export default function App() {
             <SeeMoreBtn k="results" list={results} />
 
             {(leaderboards.topScorers.length > 0 || leaderboards.teamForm.length > 0) && (
-              <div onClick={() => { setShowLeaderboards(true); pushCloseable(() => setShowLeaderboards(false)); }}
+              <div className="tappable" onClick={() => { setShowLeaderboards(true); pushCloseable(() => setShowLeaderboards(false)); }}
                 style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 10, padding: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 20 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA" }}>Leaderboards</div>
@@ -2587,7 +2630,7 @@ export default function App() {
                   return (
                     <div key={req.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #243128" }}>
                       <Jersey pattern={player?.jerseyPattern} main={player?.jerseyMain} trim={player?.jerseyTrim} size={30} />
-                      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => player && openPlayerProfile(player.id)}>
+                      <div className="tappable" style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => player && openPlayerProfile(player.id)}>
                         <div style={{ fontWeight: 700, fontSize: 13, color: T.floodlight, textDecoration: "underline", textUnderlineOffset: 2 }}>{player ? player.name : "A player"} ›</div>
                         <div style={{ fontSize: 10.5, color: T.muted, display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
                           <span style={{ background: req.kind === "claim" ? "rgba(230,179,30,.15)" : "rgba(63,163,91,.15)", color: req.kind === "claim" ? T.floodlight : "#3FA35B", padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, textTransform: "uppercase" }}>
@@ -2752,9 +2795,28 @@ export default function App() {
             follows={follows}
             users={users}
             onOpenCaptain={(id) => { setPage("captains"); setViewCaptain(id); }}
+            onOpenTeam={(id) => openTeamProfile(id)}
+            onOpenMatch={(id) => openMatchDetail(id)}
+            supportedTeams={(() => {
+              const mine = teamSupporters.filter((s) => s.fanId === me.id).map((s) => s.teamId);
+              return savedTeams.filter((t) => mine.includes(t.id)).map((t) => {
+                const rec = teamRecord(t);
+                const last = rec.results.slice(0, 3).map((r) => r.outcome).join("");
+                return { ...t, formLine: rec.total > 0 ? `Last 3: ${last || "—"} · ${rec.wins}W ${rec.draws}D ${rec.losses}L` : "No results yet" };
+              });
+            })()}
+            myUpcoming={(() => {
+              const mine = teamSupporters.filter((s) => s.fanId === me.id).map((s) => s.teamId);
+              const names = savedTeams.filter((t) => mine.includes(t.id)).map((t) => (t.name || "").trim().toLowerCase());
+              if (names.length === 0) return [];
+              return matches.filter((m) => m.published && m.status === "Scheduled" && m.date && m.time &&
+                new Date(`${m.date}T${m.time}`).getTime() > now &&
+                (names.includes((m.teamA.name || "").trim().toLowerCase()) || names.includes((m.teamB.name || "").trim().toLowerCase())))
+                .sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
+            })()}
             stats={me.role === "Captain"
-              ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["🔔 Followers", followerCounts[me.id] || 0], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
-              : { a: ["🔔 Captains followed", follows.length], b: ["💛 Likes given", myLikes.length], c: ["🏁 Results seen", results.length] }}
+              ? { a: ["Matches created", matches.filter((x) => x.createdBy === me.id).length], b: ["Teams", savedTeams.filter((t) => t.captainId === me.id).length], c: ["Live now", matches.filter((x) => x.createdBy === me.id && x.status === "Live").length] }
+              : { a: ["Captains followed", follows.length], b: ["Teams backed", teamSupporters.filter((s) => s.fanId === me.id).length], c: ["Member since", me.joined || "—"] }}
             onSave={updateProfile}
             notify={notify}
           />
@@ -2814,62 +2876,235 @@ export default function App() {
             ) : (
               (() => {
                 const c = users.find((u) => u.id === viewCaptain);
+                if (!c) return null;
                 const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
+                const allTheirs = matches.filter((x) => x.createdBy === c.id && x.published);
+                const finished = allTheirs.filter((x) => x.status === "ResultPublished" || x.status === "AwaitingScore");
+                const publishedCount = allTheirs.filter((x) => x.status === "ResultPublished").length;
+                const publishRate = finished.length > 0 ? Math.round((publishedCount / finished.length) * 100) : null;
+                const streamed = allTheirs.filter((x) => x.streamUrl).length;
+                const theirTeams = savedTeams.filter((t) => t.captainId === c.id);
+                const followerCount = users.filter((u) => u.role === "Fan").length && follows.includes(c.id) ? 1 : 0;
+                const liveNowMatch = allTheirs.find((x) => x.status === "Live");
+                const upcoming = allTheirs.filter((x) => x.status === "Scheduled" && x.date && x.time &&
+                  new Date(x.date + "T" + x.time).getTime() > now)
+                  .sort((a, b) => new Date(a.date + "T" + a.time) - new Date(b.date + "T" + b.time));
+                const venueMap = {};
+                allTheirs.forEach((x) => { if (x.location) venueMap[x.location] = (venueMap[x.location] || 0) + 1; });
+                const venues = Object.entries(venueMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                const topPlayers = users
+                  .filter((u) => u.role === "Player" && u.rosterName && theirTeams.some((t) => t.id === u.teamId))
+                  .map((u) => ({ u, st: playerStats(u) }))
+                  .filter((x) => x.st.goals > 0)
+                  .sort((a, b) => b.st.goals - a.st.goals)
+                  .slice(0, 5);
+                const enoughForReliability = finished.length >= 5;
+                const Lbl = ({ children, style }) => (
+                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 12, ...style }}>{children}</div>
+                );
+
                 return (
-                  <>
-                    <button className="btn btn-ghost" style={{ marginBottom: 14, padding: "8px 14px", fontSize: 13 }} onClick={() => setViewCaptain(null)}>← All captains</button>
-                    <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
-                      <div style={{ width: 60, height: 60, borderRadius: "50%", background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 26, color: T.floodlight }}>
-                        {c.name.slice(0, 1).toUpperCase()}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div className="display" style={{ fontSize: 24 }}>{c.name}</div>
-                        <div style={{ fontSize: 13, color: T.muted }}>{theirs.length} published match{theirs.length === 1 ? "" : "es"} · 🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</div>
-                        {c.contactInfo && <div style={{ fontSize: 13, color: T.floodlight, marginTop: 4 }}>📞 Want to join the team? Contact: {c.contactInfo}</div>}
-                        {(() => { const a = annes.find((x) => x.captain_id === c.id); return a ? (
-                          <div style={{ fontSize: 13, background: "#1c1509", border: "1px solid #E6B31E", borderRadius: 10, padding: "8px 12px", marginTop: 8 }}>
-                            📣 <b style={{ color: T.floodlight }}>Announcement:</b> {a.message}
-                          </div>
-                        ) : null; })()}
-                      </div>
-                      {me.role === "Fan" && c.id !== me.id && (
-                        <button className={`btn ${follows.includes(c.id) ? "btn-turf" : "btn-gold"}`} onClick={() => toggleFollow(c.id)}>
-                          {follows.includes(c.id) ? "✓ Following" : "🔔 Follow"}
-                        </button>
-                      )}
-                    </div>
-                    {savedTeams.filter((t) => t.captainId === c.id).length > 0 && (
-                      <>
-                        <SectionTitle color={T.floodlight}>Teams</SectionTitle>
-                        <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
-                          {savedTeams.filter((t) => t.captainId === c.id).map((t) => (
-                            <div key={t.id} className="card" style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => openTeamProfile(t.id)}>
-                              <MiniLogo team={t} badge={t.badge} size={40} />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{t.name}</div>
-                                {(() => { const rec = teamRecord(t); return rec.ratingReady
-                                  ? <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{[1,2,3,4,5].map((i) => <span key={i} style={{ color: i <= Math.round(rec.rating) ? T.floodlight : "#3a4a3e" }}>★</span>)} {rec.rating} · {rec.total} matches</div>
-                                  : <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>Building record</div>;
-                                })()}
-                              </div>
-                              <span style={{ color: T.muted }}>›</span>
-                            </div>
-                          ))}
+                  <div style={{ maxWidth: 430 }}>
+                    <button className="btn btn-ghost tappable" style={{ marginBottom: 14, padding: "8px 14px", fontSize: 13 }} onClick={() => setViewCaptain(null)}>← All captains</button>
+
+                    <div style={{ position: "relative", overflow: "hidden", marginBottom: 2 }}>
+                      <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+                      <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
+                        <div style={{ width: 54, height: 54, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 21, color: "#D6A81D", flexShrink: 0 }}>
+                          {c.name.slice(0, 2).toUpperCase()}
                         </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 23, lineHeight: 1.05, color: "#F7F4EA" }}>{c.name}</div>
+                          <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6 }}>
+                            Captain{c.state ? " · " + c.state : ""}
+                          </div>
+                          {enoughForReliability && publishRate !== null && publishRate >= 90 && (
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, background: "rgba(214,168,29,.10)", border: "1px solid rgba(214,168,29,.28)", borderRadius: 6, padding: "3px 9px", fontSize: 10, fontWeight: 600, color: "#D6A81D", letterSpacing: ".4px" }}>
+                              ◆ ACTIVE ORGANISER
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ position: "relative", display: "flex", marginTop: 18, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
+                        {[[allTheirs.length, "Matches hosted", true], [theirTeams.length, "Teams", false], [venues.length, "Venues", false]].map(([n, l, gold], i) => (
+                          <div key={l} style={{ flex: 1, padding: "13px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
+                            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: gold ? "#D6A81D" : "#F7F4EA" }}>{n}</div>
+                            <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{l}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ position: "relative", display: "flex", gap: 8, padding: "13px 0" }}>
+                        {me.role === "Fan" && (
+                          <button className="tappable" onClick={() => toggleFollow(c.id)}
+                            style={{ flex: 1, borderRadius: 8, padding: 9, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
+                              background: follows.includes(c.id) ? "none" : "#D6A81D",
+                              border: follows.includes(c.id) ? "1px solid #1f2921" : 0,
+                              color: follows.includes(c.id) ? "#B9C7BC" : "#12160f" }}>
+                            {follows.includes(c.id) ? "✓ Following" : "Follow"}
+                          </button>
+                        )}
+                        {c.contactInfo && (
+                          <a href={"https://wa.me/" + (c.contactInfo || "").replace(/\D/g, "")} target="_blank" rel="noreferrer"
+                            style={{ flex: 1, borderRadius: 8, padding: 9, fontSize: 11.5, fontWeight: 600, textAlign: "center", background: "none", border: "1px solid #1f2921", color: "#B9C7BC", textDecoration: "none" }}>
+                            Contact
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 22, marginBottom: 17 }}>
+                      {[["overview", "Overview"], ["teams", "Teams"], ["matches", "Matches"]].map(([key, lbl]) => (
+                        <button key={key} onClick={() => setCaptainTab(key)}
+                          style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: captainTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: captainTab === key ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: "1.5px solid " + (captainTab === key ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+
+                    {captainTab === "overview" && (
+                      <>
+                        {liveNowMatch && (
+                          <div className="tappable" onClick={() => openMatchDetail(liveNowMatch.id)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #E8442E", borderRadius: "0 10px 10px 0", marginBottom: 18, cursor: "pointer" }}>
+                            <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#E8442E" }} />
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600 }}>Hosting live now</div>
+                              <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {liveNowMatch.teamA.name} vs {liveNowMatch.teamB.name}
+                              </div>
+                            </div>
+                            <div style={{ marginLeft: "auto", fontFamily: "'Anton', sans-serif", fontSize: 15 }}>{liveNowMatch.liveA}–{liveNowMatch.liveB}</div>
+                          </div>
+                        )}
+
+                        <Lbl>Reliability</Lbl>
+                        {enoughForReliability ? (
+                          <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 14, marginBottom: 20, display: "flex", gap: 14 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: "#D6A81D" }}>{publishRate}%</div>
+                              <div style={{ fontSize: 9, color: "#5a6a5f", marginTop: 3, lineHeight: 1.35 }}>Results<br />published</div>
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: "#F7F4EA" }}>{finished.length}</div>
+                              <div style={{ fontSize: 9, color: "#5a6a5f", marginTop: 3, lineHeight: 1.35 }}>Matches<br />completed</div>
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: "#F7F4EA" }}>{streamed}</div>
+                              <div style={{ fontSize: 9, color: "#5a6a5f", marginTop: 3, lineHeight: 1.35 }}>Streamed<br />live</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center", marginBottom: 20 }}>
+                            <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>Building reputation</div>
+                            <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Reliability shows once a captain has completed a few more matches.</div>
+                          </div>
+                        )}
+
+                        {upcoming.length > 0 && (
+                          <>
+                            <Lbl>Upcoming</Lbl>
+                            {upcoming.slice(0, 3).map((m) => {
+                              const d = new Date(m.date + "T" + m.time);
+                              return (
+                                <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
+                                  style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                                  <div style={{ width: 40, textAlign: "center", flexShrink: 0 }}>
+                                    <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 13 }}>{d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}</div>
+                                    <div style={{ fontSize: 8, color: "#4e5c53", marginTop: 2 }}>{d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div>
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                                    <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{m.location}</div>
+                                  </div>
+                                  <div style={{ fontSize: 9.5, color: "#7d8f83", flexShrink: 0 }}>{m.time}</div>
+                                </div>
+                              );
+                            })}
+                          </>
+                        )}
+
+                        {venues.length > 0 && (
+                          <>
+                            <Lbl style={{ marginTop: 20 }}>Venues used</Lbl>
+                            {venues.map((v) => (
+                              <div key={v[0]} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14" }}>
+                                <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v[0]}</div>
+                                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#D6A81D" }}>{v[1]}</div>
+                              </div>
+                            ))}
+                          </>
+                        )}
                       </>
                     )}
-                    {theirs.length === 0 && <div className="card" style={{ color: T.muted }}>This captain hasn't published any matches yet.</div>}
-                    {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <SectionTitle color={T.floodlight}>Current & Upcoming</SectionTitle>}
-                    <div className="feedgrid" style={{ marginBottom: 20 }}>
-                      {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
-                    </div>
-                    <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
-                    {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <SectionTitle color={T.chalk}>Past Games Record</SectionTitle>}
-                    <div className="feedgrid">
-                      {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
-                    </div>
-                    <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
-                  </>
+
+                    {captainTab === "teams" && (
+                      <>
+                        <Lbl>Teams managed</Lbl>
+                        {theirTeams.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams created yet.</div>}
+                        {theirTeams.map((t) => {
+                          const rec = teamRecord(t);
+                          const sup = teamSupporters.filter((s) => s.teamId === t.id).length;
+                          return (
+                            <div key={t.id} className="tappable" onClick={() => openTeamProfile(t.id)}
+                              style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                              <MiniLogo team={t} badge={t.badge} size={30} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+                                <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>
+                                  {rec.ratingReady ? "★ " + rec.rating + " · " : ""}{sup} supporter{sup === 1 ? "" : "s"}
+                                </div>
+                                {rec.results.length > 0 && (
+                                  <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                                    {rec.results.slice(0, 4).reverse().map((r, i) => (
+                                      <div key={i} style={{ width: 18, height: 18, borderRadius: 4, fontSize: 8.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
+                                        background: r.outcome === "W" ? "rgba(63,163,91,.16)" : r.outcome === "L" ? "rgba(198,80,63,.14)" : "rgba(140,150,145,.14)",
+                                        color: r.outcome === "W" ? "#5fcf87" : r.outcome === "L" ? "#e08a7d" : "#93a099" }}>{r.outcome}</div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{ fontSize: 10, color: "#4e5c53" }}>›</span>
+                            </div>
+                          );
+                        })}
+
+                        {topPlayers.length > 0 && (
+                          <>
+                            <Lbl style={{ marginTop: 22 }}>Top players across teams</Lbl>
+                            {topPlayers.map((tp, i) => (
+                              <div key={tp.u.id} className="tappable" onClick={() => openPlayerProfile(tp.u.id)}
+                                style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                                <div style={{ width: 15, fontFamily: "'Anton', sans-serif", fontSize: 12, color: "#D6A81D", flexShrink: 0 }}>{i + 1}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12.5, fontWeight: 500, color: "#D6A81D", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tp.u.name} ›</div>
+                                  <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{tp.st.team ? tp.st.team.name : ""}</div>
+                                </div>
+                                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#D6A81D" }}>{tp.st.goals}</div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
+
+                    {captainTab === "matches" && (
+                      <>
+                        {theirs.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>This captain hasn't published any matches yet.</div>}
+                        {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <Lbl>Current &amp; upcoming</Lbl>}
+                        <div className="feedgrid" style={{ marginBottom: 20 }}>
+                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                        </div>
+                        <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
+                        {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <Lbl>Past results</Lbl>}
+                        <div className="feedgrid">
+                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                        </div>
+                        <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
+                      </>
+                    )}
+                  </div>
                 );
               })()
             )}
@@ -3233,11 +3468,16 @@ export default function App() {
       )}
       {viewTeamId && savedTeams.find((t) => t.id === viewTeamId) && (
         <TeamProfileModal
-          team={savedTeams.find((t) => t.id === viewTeamId)}
+          team={(() => {
+            const t = savedTeams.find((x) => x.id === viewTeamId);
+            return { ...t, captainName: (users.find((u) => u.id === t.captainId) || {}).name || "" };
+          })()}
           record={teamRecord(savedTeams.find((t) => t.id === viewTeamId))}
           linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
           onOpenPlayer={(id) => openPlayerProfile(id)}
           me={me}
+          playerAwards={playerAwards}
+          allMatches={matches}
           supporterCount={teamSupporters.filter((s) => s.teamId === viewTeamId).length}
           isSupporting={teamSupporters.some((s) => s.fanId === me.id && s.teamId === viewTeamId)}
           onToggleSupport={toggleSupportTeam}
@@ -3675,122 +3915,232 @@ function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playe
   );
 }
 
-function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPlayer, me, supporterCount = 0, isSupporting = false, onToggleSupport }) {
-  const [seeMore, setSeeMore] = useState(false);
-  const shown = seeMore ? record.results : record.results.slice(0, 2);
+/* ---------- TEAM PROFILE — tabbed, stats-led, matching the player profile language ---------- */
+function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPlayer, me, supporterCount = 0, isSupporting = false, onToggleSupport, playerAwards = [], allMatches = [] }) {
+  const [tab, setTab] = useState("overview");
+  const [squadView, setSquadView] = useState("list");
+  if (!team) return null;
+
+  const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
+  const linkFor = (name) => linkedPlayers.find((pl) =>
+    pl.rosterName.trim().toLowerCase() === name.trim().toLowerCase() &&
+    (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase());
+
+  const results = record.results || [];
+  const winRate = record.total > 0 ? Math.round((record.wins / record.total) * 100) : null;
+  const goalsFor = results.reduce((a, r) => a + (r.us || 0), 0);
+  const perMatch = record.total > 0 ? (goalsFor / record.total).toFixed(1) : "0.0";
+
+  /* Longest winning run across their history */
+  let bestRun = 0, run = 0;
+  [...results].reverse().forEach((r) => { if (r.outcome === "W") { run++; bestRun = Math.max(bestRun, run); } else run = 0; });
+
+  /* Biggest win — largest margin, tie-broken by goals scored */
+  const biggestWin = results.filter((r) => r.outcome === "W")
+    .sort((a, b) => ((b.us - b.them) - (a.us - a.them)) || (b.us - a.us))[0] || null;
+
+  /* Awards won by players registered to this team */
+  const squadAwards = playerAwards.filter((a) => a.teamId === team.id).length;
+  const newTeam = record.total < 3;
+
+  const Label = ({ children, style }) => (
+    <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 12, ...style }}>{children}</div>
+  );
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 90, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
-        <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</div>
-        <span style={{ width: 34 }} />
+    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 90, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
+        <button onClick={onClose} style={{ width: 28, height: 28, border: "1px solid #1f2921", borderRadius: 8, background: "none", color: "#7d8f83", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, cursor: "pointer" }}>‹</button>
+        <div style={{ flex: 1 }} />
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 16, maxWidth: 420, width: "100%", margin: "0 auto" }}>
-        <div style={{ background: "linear-gradient(160deg, #173d24, #0D3A1F)", border: "1px solid rgba(230,179,30,.2)", borderRadius: 16, padding: "22px 18px", textAlign: "center", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><MiniLogo team={team} badge={team.badge} size={56} /></div>
-          <div className="display" style={{ fontSize: 24 }}>{team.name}</div>
-          {record.ratingReady ? (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 22, letterSpacing: 2 }}>
-                {[1, 2, 3, 4, 5].map((i) => <span key={i} style={{ color: i <= Math.round(record.rating) ? "#E6B31E" : "#3a4a3e" }}>★</span>)}
+
+      <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto" }}>
+        {/* Hero */}
+        <div style={{ position: "relative", padding: "4px 16px 0", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+          <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
+            <MiniLogo team={team} badge={team.badge} size={52} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 24, lineHeight: 1.03, color: "#F7F4EA" }}>{team.name}</div>
+              <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6 }}>
+                {team.captainName ? <>Captained by <b style={{ color: "#B9C7BC", fontWeight: 600 }}>{team.captainName}</b></> : "Community team"}
               </div>
-              <div style={{ fontSize: 12, color: "#8FA396", marginTop: 4 }}>{record.rating} / 5.0 · {record.total} matches</div>
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: "#8FA396", marginTop: 10 }}>Building record — {3 - record.total} more match{3 - record.total === 1 ? "" : "es"} needed for a rating</div>
-          )}
-          <div style={{ display: "flex", gap: 1, marginTop: 16, borderRadius: 10, overflow: "hidden" }}>
-            <div style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
-              <div className="display" style={{ fontSize: 19, color: "#3FA35B" }}>{record.wins}</div>
-              <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Wins</div>
-            </div>
-            <div style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
-              <div className="display" style={{ fontSize: 19 }}>{record.draws}</div>
-              <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Draws</div>
-            </div>
-            <div style={{ flex: 1, background: "rgba(0,0,0,.25)", padding: "11px 4px", textAlign: "center" }}>
-              <div className="display" style={{ fontSize: 19, color: "#C6503F" }}>{record.losses}</div>
-              <div style={{ fontSize: 8.5, color: "rgba(245,240,225,.6)", letterSpacing: 1, textTransform: "uppercase", marginTop: 2 }}>Losses</div>
+              {record.ratingReady && (
+                <div style={{ fontSize: 13, letterSpacing: 1.5, marginTop: 8, color: "#D6A81D" }}>
+                  {"★".repeat(Math.round(record.rating))}<span style={{ color: "#2a3630" }}>{"★".repeat(Math.max(0, 5 - Math.round(record.rating)))}</span>
+                  <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 12, marginLeft: 6 }}>{record.rating}</span>
+                </div>
+              )}
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 14 }}>
-            <span style={{ fontSize: 12, color: "#8FA396" }}>❤️ {supporterCount} supporter{supporterCount === 1 ? "" : "s"}</span>
-            {me && me.role === "Fan" && onToggleSupport && (
-              <button onClick={() => onToggleSupport(team.id)}
-                style={{ background: isSupporting ? "#E6B31E" : "none", color: isSupporting ? "#1a1405" : "#F5F0E1", border: `1px solid ${isSupporting ? "#E6B31E" : "rgba(245,240,225,.3)"}`, borderRadius: 99, padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>
-                {isSupporting ? "✓ Supporting" : "❤️ Support this team"}
+
+          <div style={{ position: "relative", display: "flex", marginTop: 18, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
+            {[[winRate !== null ? `${winRate}%` : "—", "Win rate", true], [perMatch, "Goals / match", false], [record.total, "Played", false]].map(([n, l, gold], i) => (
+              <div key={l} style={{ flex: 1, padding: "13px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: gold ? "#D6A81D" : "#F7F4EA" }}>{n}</div>
+                <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "13px 0" }}>
+            <div style={{ fontSize: 11.5, color: "#7d8f83" }}><b style={{ color: "#F7F4EA", fontWeight: 600 }}>{supporterCount}</b> supporter{supporterCount === 1 ? "" : "s"}</div>
+            {me && me.role !== "Captain" && onToggleSupport && (
+              <button className="tappable" onClick={() => onToggleSupport(team.id)}
+                style={{ marginLeft: "auto", border: `1px solid ${isSupporting ? "#D6A81D" : "#2a3d31"}`, background: isSupporting ? "#D6A81D" : "none", color: isSupporting ? "#12160f" : "#EDEAE0", borderRadius: 99, padding: "6px 13px", fontSize: 11, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                {isSupporting ? "✓ Supporting" : "Support"}
               </button>
             )}
           </div>
         </div>
 
-        <div className="card" style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Formation</div>
-          {team.formation && team.positions && Object.keys(team.positions).length > 0 ? (
-            <div style={{ position: "relative", width: "100%", aspectRatio: "0.72", borderRadius: 12, overflow: "hidden", background: "repeating-linear-gradient(0deg, #1c6b3a 0 20px, #17602f 20px 40px)", border: "2px solid rgba(245,240,225,.4)" }}>
-              <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1.5, background: "rgba(245,240,225,.4)" }} />
-              <div style={{ position: "absolute", width: "22%", aspectRatio: "1", border: "1.5px solid rgba(245,240,225,.4)", borderRadius: "50%", left: "50%", top: "50%", transform: "translate(-50%,-50%)" }} />
-              {(FORMATIONS[team.formation] || []).map((slot) => {
-                const filled = team.positions[slot.key];
-                if (!filled) return null;
-                return (
-                  <div key={slot.key} style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                    <svg width="60%" viewBox="0 0 100 116">
-                      <path d={JERSEY_PATH} fill="#E6B31E" stroke="#0f3620" strokeWidth="4" />
-                    </svg>
-                    <div style={{ fontSize: 7.5, textAlign: "center", lineHeight: 1.1, color: "#F5F0E1", fontWeight: 700, marginTop: 2, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {filled}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: "#8FA396", textAlign: "center", padding: "10px 0" }}>{team.name} hasn't set a formation yet.</div>
-          )}
+        {/* Tabs */}
+        <div style={{ display: "flex", padding: "0 16px", borderBottom: "1px solid #151c16", gap: 22 }}>
+          {[["overview", "Overview"], ["squad", "Squad"], ["record", "Record"]].map(([key, lbl]) => (
+            <button key={key} onClick={() => setTab(key)}
+              style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: tab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: tab === key ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: `1.5px solid ${tab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
+              {lbl}
+            </button>
+          ))}
         </div>
 
-        <div className="card" style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>Squad</div>
-          {(() => {
-            const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
-            if (roster.length === 0) return <div style={{ fontSize: 13, color: "#8FA396" }}>Squad to be announced.</div>;
-            return roster.map((p, j) => {
-              const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase());
-              if (!linked) return <div key={j} style={{ fontSize: 13, padding: "6px 0", color: T.chalk, borderBottom: j < roster.length - 1 ? "1px solid #243128" : "none" }}>{p}</div>;
-              return (
-                <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
-                  style={{ fontSize: 13, padding: "6px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, borderBottom: j < roster.length - 1 ? "1px solid #243128" : "none", display: "flex", alignItems: "center", gap: 6 }}>
-                  <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={16} />
-                  {p} ›
+        <div style={{ padding: "17px 16px 24px" }}>
+          {/* ---------- OVERVIEW ---------- */}
+          {tab === "overview" && (
+            <>
+              {results.length > 0 && (
+                <>
+                  <Label>Recent form</Label>
+                  <div style={{ display: "flex", gap: 5, marginBottom: 20 }}>
+                    {results.slice(0, 5).reverse().map((r, i) => (
+                      <div key={i} style={{ width: 22, height: 22, borderRadius: 5, fontSize: 9.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
+                        background: r.outcome === "W" ? "rgba(63,163,91,.16)" : r.outcome === "L" ? "rgba(198,80,63,.14)" : "rgba(140,150,145,.14)",
+                        color: r.outcome === "W" ? "#5fcf87" : r.outcome === "L" ? "#e08a7d" : "#93a099",
+                        border: `1px solid ${r.outcome === "W" ? "rgba(63,163,91,.3)" : r.outcome === "L" ? "rgba(198,80,63,.28)" : "rgba(140,150,145,.25)"}` }}>{r.outcome}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {biggestWin && (
+                <>
+                  <Label>Biggest win</Label>
+                  <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 14, marginBottom: 20 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1.2px", textTransform: "uppercase", color: "#D6A81D" }}>{biggestWin.us}–{biggestWin.them}</div>
+                    <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 16, marginTop: 8, color: "#F7F4EA" }}>vs {biggestWin.opponent}</div>
+                    <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 3 }}>{biggestWin.match.date}{biggestWin.match.location ? ` · ${biggestWin.match.location}` : ""}</div>
+                  </div>
+                </>
+              )}
+
+              <Label>Team honours</Label>
+              {newTeam ? (
+                <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>Building their record</div>
+                  <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>
+                    Honours appear once this team has played a few more matches.
+                  </div>
                 </div>
-              );
-            });
-          })()}
-        </div>
-          {record.results.length > 0 && (
-          <div className="card" style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Recent Form</div>
-            <div style={{ display: "flex", gap: 5 }}>
-              {record.results.slice(0, 5).map((r, i) => (
-                <div key={i} style={{ width: 20, height: 20, borderRadius: 4, background: r.outcome === "W" ? "#3FA35B" : r.outcome === "D" ? "#54615a" : "#C6503F", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{r.outcome}</div>
+              ) : (
+                <>
+                  {[
+                    ["Longest winning run", bestRun > 0 ? `${bestRun} in a row` : "None yet", bestRun],
+                    ["Goals scored", `Across ${record.total} matches`, goalsFor],
+                    ["Player awards won", "Across the squad", squadAwards],
+                  ].map(([name, sub, val]) => (
+                    <div key={name} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14" }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: "#141c16", border: "1px solid #1f2a22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <TrophyIcon art="motm" size={17} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500 }}>{name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{sub}</div>
+                      </div>
+                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#D6A81D" }}>{val}</div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+
+          {/* ---------- SQUAD ---------- */}
+          {tab === "squad" && (
+            <>
+              {team.formation && team.positions && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+                  {[["list", "List"], ["pitch", "Pitch"]].map(([key, lbl]) => (
+                    <button key={key} onClick={() => setSquadView(key)}
+                      style={{ fontSize: 10.5, padding: "5px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer",
+                        background: squadView === key ? "#16211a" : "none",
+                        border: `1px solid ${squadView === key ? "#2a3d31" : "#1b241c"}`,
+                        color: squadView === key ? "#EDEAE0" : "#5a6a5f", fontWeight: squadView === key ? 600 : 500 }}>{lbl}</button>
+                  ))}
+                </div>
+              )}
+
+              {squadView === "pitch" && team.formation && team.positions ? (
+                <>
+                  <Label>Formation · {team.formation}</Label>
+                  <div style={{ position: "relative", width: "100%", aspectRatio: "0.78", borderRadius: 10, background: "repeating-linear-gradient(0deg,#16301d 0 18px,#123018 18px 36px)", border: "1px solid #223a29" }}>
+                    <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(245,240,225,.2)" }} />
+                    {(FORMATIONS[team.formation] || []).map((slot) => {
+                      const filled = team.positions[slot.key];
+                      if (!filled) return null;
+                      return (
+                        <div key={slot.key} style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "16%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <svg width="60%" viewBox="0 0 100 116"><path d={JERSEY_PATH} fill="#D6A81D" stroke="#0f3620" strokeWidth="4" /></svg>
+                          <div style={{ fontSize: 7, textAlign: "center", lineHeight: 1.1, color: "#EDEAE0", fontWeight: 600, marginTop: 2, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{filled}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Label>Squad · {roster.length} player{roster.length === 1 ? "" : "s"}</Label>
+                  {roster.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No squad listed yet.</div>}
+                  {roster.map((name, i) => {
+                    const linked = linkFor(name);
+                    const g = linked ? (linked._goals !== undefined ? linked._goals : null) : null;
+                    return (
+                      <div key={i} className={linked ? "tappable" : ""}
+                        onClick={() => linked && onOpenPlayer && onOpenPlayer(linked.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14", cursor: linked ? "pointer" : "default" }}>
+                        {linked && <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={18} />}
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500, color: linked ? "#D6A81D" : "#EDEAE0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {name}{linked ? " ›" : ""}
+                          </div>
+                          {!linked && <div style={{ fontSize: 9, color: "#3f4b43", marginTop: 2 }}>not on Area Match</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </>
+          )}
+
+          {/* ---------- RECORD ---------- */}
+          {tab === "record" && (
+            <>
+              <Label>{record.total} match{record.total === 1 ? "" : "es"} · {record.wins}W {record.draws}D {record.losses}L</Label>
+              {results.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No published results yet.</div>}
+              {results.map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14" }}>
+                  <div style={{ width: 19, height: 19, borderRadius: 4, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    background: r.outcome === "W" ? "rgba(63,163,91,.16)" : r.outcome === "L" ? "rgba(198,80,63,.14)" : "rgba(140,150,145,.14)",
+                    color: r.outcome === "W" ? "#5fcf87" : r.outcome === "L" ? "#e08a7d" : "#93a099",
+                    border: `1px solid ${r.outcome === "W" ? "rgba(63,163,91,.3)" : r.outcome === "L" ? "rgba(198,80,63,.28)" : "rgba(140,150,145,.25)"}` }}>{r.outcome}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.opponent}</div>
+                    <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{r.match.date}{r.match.location ? ` · ${r.match.location}` : ""}</div>
+                  </div>
+                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#7d8f83", width: 34, textAlign: "right", flexShrink: 0 }}>{r.us}–{r.them}</div>
+                </div>
               ))}
-            </div>
-          </div>
-        )}
-        <div className="card">
-          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 6 }}>Match History</div>
-          {record.results.length === 0 && <div style={{ fontSize: 13, color: "#8FA396" }}>No published results yet.</div>}
-          {shown.map((r, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < shown.length - 1 ? "1px solid #243128" : "none", fontSize: 12.5 }}>
-              <div><div>vs {r.opponent}</div><div style={{ fontSize: 10, color: "#8FA396", marginTop: 1 }}>{r.match.date}</div></div>
-              <span className="display" style={{ color: "#E6B31E" }}>{r.us}–{r.them}</span>
-            </div>
-          ))}
-          {record.results.length > 2 && (
-            <div style={{ textAlign: "center", fontSize: 11, color: "#8FA396", paddingTop: 8, cursor: "pointer" }} onClick={() => setSeeMore(!seeMore)}>
-              {seeMore ? "See less" : `See more (${record.results.length - 2} more)`}
-            </div>
+            </>
           )}
         </div>
       </div>
@@ -4295,7 +4645,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                                 const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase());
                                 if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
                                 return (
-                                  <div key={j} onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
+                                  <div key={j} className="tappable" onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
                                     style={{ fontSize: 12.5, padding: "4px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                     {p} ›
                                   </div>
@@ -5185,7 +5535,8 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
 }
 
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain }) {
+function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch }) {
+  const [selfTab, setSelfTab] = useState("overview");
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
   const [curPin, setCurPin] = useState("");
@@ -5210,33 +5561,130 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
   };
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <div className="display" style={{ fontSize: 24, marginBottom: 16 }}>My Profile</div>
-
-      {/* Identity card */}
-      <div className="card" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
-        <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#14532D", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 28, color: "#E6B31E", border: "2px solid rgba(255,212,71,.4)", flexShrink: 0 }}>
-          {me.name.slice(0, 1).toUpperCase()}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 18 }}>{me.name}</div>
-          <div style={{ fontSize: 13, color: "#8FA396" }}>{me.contact}</div>
-          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-            <span className="chip" style={{ background: "#14532D", color: "#E6B31E" }}>{me.role}</span>
-            <span className="chip" style={{ background: "#243128", color: "#F5F0E1" }}>Joined {me.joined}</span>
+    <div style={{ maxWidth: 430 }}>
+      {/* Hero — matches the player/captain/team profile language */}
+      <div style={{ position: "relative", overflow: "hidden", marginBottom: 2 }}>
+        <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+        <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
+          <div style={{ width: 54, height: 54, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 21, color: me.role === "Fan" ? "#7ab0cf" : "#D6A81D", flexShrink: 0 }}>
+            {me.name.slice(0, 2).toUpperCase()}
           </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 23, lineHeight: 1.05, color: "#F7F4EA" }}>{me.name}</div>
+            <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6 }}>
+              {me.role}{me.state ? ` · ${me.state}` : ""}{me.joined ? ` · Since ${me.joined}` : ""}
+            </div>
+            {me.role === "Fan" && supportedTeams.length > 0 && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8, background: "rgba(74,125,156,.10)", border: "1px solid rgba(74,125,156,.3)", borderRadius: 6, padding: "3px 9px", fontSize: 10, fontWeight: 600, color: "#7ab0cf", letterSpacing: ".4px" }}>
+                ◆ TRUE SUPPORTER
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ position: "relative", display: "flex", marginTop: 18, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
+          {[stats.a, stats.b, stats.c].map(([label, val], i) => (
+            <div key={label} style={{ flex: 1, padding: "13px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: i === 0 ? "#D6A81D" : "#F7F4EA" }}>{val}</div>
+              <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{label}</div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="feedgrid" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 14 }}>
-        {[stats.a, stats.b, stats.c].map(([label, val]) => (
-          <div key={label} className="card" style={{ textAlign: "center", padding: 12 }}>
-            <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".05em", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
-            <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>{val}</div>
-          </div>
+      {/* Tabs */}
+      <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 22, marginTop: 13, marginBottom: 17 }}>
+        {[["overview", "Overview"], ["following", "Following"], ["settings", "Settings"]].map(([key, lbl]) => (
+          <button key={key} onClick={() => setSelfTab(key)}
+            style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: selfTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: selfTab === key ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: `1.5px solid ${selfTab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
+            {lbl}
+          </button>
         ))}
       </div>
+
+      {/* ---------- OVERVIEW ---------- */}
+      {selfTab === "overview" && (
+        <>
+          {supportedTeams.length > 0 ? (
+            <>
+              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 12 }}>My teams</div>
+              {supportedTeams.map((t) => (
+                <div key={t.id} className="tappable" onClick={() => onOpenTeam && onOpenTeam(t.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                  <MiniLogo team={t} badge={t.badge} size={30} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+                    <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{t.formLine || "Supporting"}</div>
+                  </div>
+                  <span style={{ fontSize: 10, color: "#4e5c53" }}>›</span>
+                </div>
+              ))}
+            </>
+          ) : (
+            <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center", marginBottom: 18 }}>
+              <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>No teams backed yet</div>
+              <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Tap “Support” on any team profile to follow their season here.</div>
+            </div>
+          )}
+
+          {myUpcoming.length > 0 && (
+            <>
+              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "22px 0 12px" }}>Your teams play next</div>
+              {myUpcoming.slice(0, 4).map((m) => {
+                const d = new Date(`${m.date}T${m.time}`);
+                return (
+                  <div key={m.id} className="tappable" onClick={() => onOpenMatch && onOpenMatch(m.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                    <div style={{ width: 40, textAlign: "center", flexShrink: 0 }}>
+                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#D6A81D" }}>{d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}</div>
+                      <div style={{ fontSize: 8, color: "#4e5c53", marginTop: 2 }}>{d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                      <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{m.location} · {m.time}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </>
+      )}
+
+      {/* ---------- FOLLOWING ---------- */}
+      {selfTab === "following" && (
+        <>
+          <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 12 }}>
+            Captains I follow{follows.length > 0 ? ` · ${follows.length}` : ""}
+          </div>
+          {follows.length === 0 && (
+            <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center" }}>
+              <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>Not following anyone yet</div>
+              <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Follow a captain to see their matches first in your feed.</div>
+            </div>
+          )}
+          {follows.map((id) => {
+            const cap = users.find((u) => u.id === id);
+            if (!cap) return null;
+            return (
+              <div key={id} className="tappable" onClick={() => onOpenCaptain && onOpenCaptain(id)}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 12, color: "#D6A81D", flexShrink: 0 }}>
+                  {cap.name.slice(0, 1).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cap.name}</div>
+                  {cap.state && <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{cap.state}</div>}
+                </div>
+                <span style={{ fontSize: 10, color: "#4e5c53" }}>›</span>
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {/* ---------- SETTINGS ---------- */}
+      <div style={{ display: selfTab === "settings" ? "block" : "none" }}>
 
       {/* Captain team-join contact */}
       {me.role === "Captain" && (
@@ -5293,22 +5741,7 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
         <input className="input" type="password" inputMode="numeric" placeholder="Confirm new PIN" maxLength={4} value={confirmPin} onChange={(e) => setConfirmPin(digits(e.target.value))} />
         <button className="btn btn-gold" onClick={savePin}>{me.pin ? "Change PIN" : "Set PIN"}</button>
       </div>
-      {me.role === "Fan" && follows.length > 0 && (
-        <div className="card" style={{ display: "grid", gap: 8, marginTop: 14 }}>
-          <div style={{ fontSize: 11, color: "#8FA396", textTransform: "uppercase", letterSpacing: ".1em" }}>Captains I Follow ({follows.length})</div>
-          {follows.map((id) => {
-            const c = users.find((u) => u.id === id);
-            if (!c) return null;
-            return (
-              <div key={id} onClick={() => onOpenCaptain && onOpenCaptain(id)}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #243128", cursor: "pointer" }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#14532D", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#E6B31E" }}>{c.name.slice(0, 1).toUpperCase()}</div>
-                <span style={{ flex: 1, fontSize: 13, color: "#E6B31E", textDecoration: "underline", textUnderlineOffset: 2 }}>{c.name} ›</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -5605,8 +6038,8 @@ function PlayerCardModal({ player, stats, onClose, notify, awards = [], level })
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = 1000; canvas.height = 1240;
-      canvas.getContext("2d").drawImage(img, 0, 0, 1000, 1240);
+      canvas.width = 1000; canvas.height = 1410;
+      canvas.getContext("2d").drawImage(img, 0, 0, 1000, 1410);
       canvas.toBlob((png) => {
         URL.revokeObjectURL(url);
         const a = document.createElement("a");
@@ -5618,6 +6051,14 @@ function PlayerCardModal({ player, stats, onClose, notify, awards = [], level })
     };
     img.src = url;
   };
+
+  const perMatch = stats && stats.matches > 0 ? (stats.goals / stats.matches).toFixed(2) : "0.00";
+  const nameParts = (player.name || "").trim().split(/\s+/);
+  const line1 = nameParts[0] || "";
+  const line2 = nameParts.slice(1).join(" ");
+  const nameSize = (s) => (s.length > 12 ? 30 : s.length > 9 ? 36 : 43);
+  const roleLine = [player.positionPlayed, stats && stats.team ? stats.team.name : null].filter(Boolean).join(" · ").toUpperCase();
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
@@ -5627,72 +6068,114 @@ function PlayerCardModal({ player, stats, onClose, notify, awards = [], level })
             {player.contactPublic && player.contactInfo && <span>📞 {player.contactInfo}</span>}
           </div>
         )}
-        {level && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, color: "#E6B31E", fontWeight: 700 }}>
-            {level.tier.icon} {level.tier.name}
-          </div>
-        )}
-        {awards.length > 0 && (
-          <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
-            {awards.slice(0, 6).map((a) => {
-              const info = AWARD_TYPES[a.awardType] || { icon: "🏆", label: a.awardType };
-              return <span key={a.id} title={info.label} style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 99, padding: "5px 7px", display: "inline-flex" }}><TrophyIcon art={info.art} size={18} /></span>;
-            })}
-          </div>
-        )}
-        <svg ref={svgRef} viewBox="0 0 500 620" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
+        <svg ref={svgRef} viewBox="0 0 500 705" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 14 }}>
           <defs>
-            <radialGradient id="pcSpot" cx="50%" cy="30%" r="75%">
-              <stop offset="0%" stopColor="#1c6b3a" /><stop offset="55%" stopColor="#0D3A1F" /><stop offset="100%" stopColor="#050805" />
-            </radialGradient>
-            <linearGradient id="pcDiag" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#E6B31E" stopOpacity="0.25" /><stop offset="45%" stopColor="#E6B31E" stopOpacity="0" />
+            <linearGradient id="pcBase" x1="0.2" y1="0" x2="0.8" y2="1">
+              <stop offset="0%" stopColor="#16241b" /><stop offset="38%" stopColor="#0f1a14" />
+              <stop offset="72%" stopColor="#0a110d" /><stop offset="100%" stopColor="#070c09" />
             </linearGradient>
-            <linearGradient id="pcGlow" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#E6B31E" stopOpacity="0.35" /><stop offset="100%" stopColor="#E6B31E" stopOpacity="0" />
-            </linearGradient>
-            <radialGradient id="pcVig" cx="50%" cy="45%" r="75%">
-              <stop offset="60%" stopColor="#000" stopOpacity="0" /><stop offset="100%" stopColor="#000" stopOpacity="0.55" />
+            <radialGradient id="pcHalo" cx="50%" cy="30%" r="46%">
+              <stop offset="0%" stopColor="#D6A81D" stopOpacity=".22" />
+              <stop offset="55%" stopColor="#D6A81D" stopOpacity=".05" />
+              <stop offset="100%" stopColor="#D6A81D" stopOpacity="0" />
             </radialGradient>
-            <filter id="pcBlur"><feGaussianBlur stdDeviation="18" /></filter>
-            <clipPath id="pcJersey"><path d={JERSEY_PATH} transform="translate(174,110) scale(1.9)" /></clipPath>
+            <linearGradient id="pcMetal" x1="0.1" y1="0" x2="0.9" y2="1">
+              <stop offset="0%" stopColor="#FBEFC0" /><stop offset="22%" stopColor="#E3BC42" />
+              <stop offset="46%" stopColor="#C4941A" /><stop offset="64%" stopColor="#E8C860" />
+              <stop offset="82%" stopColor="#A87C12" /><stop offset="100%" stopColor="#6d4f0b" />
+            </linearGradient>
+            <linearGradient id="pcSheen" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#fff" stopOpacity=".38" />
+              <stop offset="38%" stopColor="#fff" stopOpacity=".04" />
+              <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="pcRule" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#D6A81D" stopOpacity="0" />
+              <stop offset="50%" stopColor="#D6A81D" stopOpacity=".6" />
+              <stop offset="100%" stopColor="#D6A81D" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="pcEdge" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#D6A81D" stopOpacity=".55" />
+              <stop offset="35%" stopColor="#D6A81D" stopOpacity=".12" />
+              <stop offset="70%" stopColor="#D6A81D" stopOpacity=".12" />
+              <stop offset="100%" stopColor="#D6A81D" stopOpacity=".55" />
+            </linearGradient>
+            <filter id="pcBlur"><feGaussianBlur stdDeviation="16" /></filter>
+            <filter id="pcDrop"><feDropShadow dx="0" dy="7" stdDeviation="11" floodColor="#000" floodOpacity=".55" /></filter>
+            <clipPath id="pcClip"><rect width="500" height="705" rx="22" /></clipPath>
           </defs>
 
-          <rect width="500" height="620" fill="url(#pcSpot)" />
-          <polygon points="0,0 500,0 500,180 0,340" fill="url(#pcDiag)" />
-          <g opacity="0.12">
-            <polygon points="100,0 160,0 40,620 -20,620" fill="#F5F0E1" />
-            <polygon points="220,0 260,0 180,620 140,620" fill="#F5F0E1" />
-            <polygon points="380,0 430,0 480,620 430,620" fill="#F5F0E1" />
-          </g>
-          <ellipse cx="250" cy="230" rx="150" ry="150" fill="url(#pcGlow)" filter="url(#pcBlur)" />
-          <rect width="500" height="620" fill="url(#pcVig)" />
+          <g clipPath="url(#pcClip)">
+            <rect width="500" height="705" fill="url(#pcBase)" />
 
-          <text x="250" y="46" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="20" letterSpacing="4">AREA MATCH</text>
-
-          <g clipPath="url(#pcJersey)">
-            <rect x="150" y="100" width="200" height="240" fill={player.jerseyMain || "#E6B31E"} />
-            {player.jerseyPattern === "vstripes" && [10, 38, 66, 94].map((x) => <rect key={x} x={174 + x * 1.9} y="100" width={14 * 1.9} height="240" fill={player.jerseyTrim} />)}
-            {player.jerseyPattern === "hstripes" && [26, 54, 82].map((y) => <rect key={y} x="150" y={110 + y * 1.9} width="200" height={14 * 1.9} fill={player.jerseyTrim} />)}
-            {player.jerseyPattern === "halves" && <rect x="250" y="100" width="100" height="240" fill={player.jerseyTrim} />}
-          </g>
-          <path d={JERSEY_PATH} transform="translate(174,110) scale(1.9)" fill="none" stroke="rgba(0,0,0,.4)" strokeWidth="2" />
-
-          <polygon points="0,330 500,290 500,360 0,400" fill="#0C120E" opacity="0.85" />
-          <text x="250" y="352" textAnchor="middle" fill="#F5F0E1" fontFamily="Anton, sans-serif" fontSize={player.name.length > 14 ? 30 : 40} transform="rotate(-4 250 345)">{player.name.toUpperCase()}</text>
-          <text x="250" y="412" textAnchor="middle" fill="#E6B31E" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="12" letterSpacing="2">
-            {stats.team ? stats.team.name.toUpperCase() : "FREE AGENT"}{player.positionPlayed ? ` · ${player.positionPlayed.toUpperCase()}` : ""}
-          </text>
-
-          {[[60, stats.goals, "GOALS"], [190, stats.hatTricks, "HAT-TRICKS"], [320, stats.matches, "MATCHES"]].map(([x, val, label]) => (
-            <g key={label} transform={`translate(${x},450)`}>
-              <polygon points="0,0 120,0 108,70 -12,70" fill="#14532D" stroke="#E6B31E" strokeWidth="1.5" />
-              <text x="54" y="42" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="34">{val}</text>
-              <text x="54" y="60" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="9" letterSpacing="1">{label}</text>
+            {/* concentric pitch arcs */}
+            <g fill="none" stroke="#F5F0E1" opacity="0.045">
+              <circle cx="250" cy="248" r="112" strokeWidth="1" />
+              <circle cx="250" cy="248" r="158" strokeWidth="1" />
+              <circle cx="250" cy="248" r="206" strokeWidth="1" />
+              <circle cx="250" cy="248" r="258" strokeWidth="1" />
             </g>
-          ))}
+            {/* turf mow lines */}
+            <g opacity="0.028">
+              <rect x="40" width="26" height="705" fill="#F5F0E1" />
+              <rect x="132" width="26" height="705" fill="#F5F0E1" />
+              <rect x="224" width="26" height="705" fill="#F5F0E1" />
+              <rect x="316" width="26" height="705" fill="#F5F0E1" />
+              <rect x="408" width="26" height="705" fill="#F5F0E1" />
+            </g>
 
-          <text x="250" y="592" textAnchor="middle" fill="#8FA396" opacity="0.7" fontFamily="Space Grotesk, sans-serif" fontSize="10" letterSpacing="3">HOSTED ON AREA MATCH</text>
+            <ellipse cx="250" cy="252" rx="190" ry="180" fill="url(#pcHalo)" filter="url(#pcBlur)" />
+
+            <text x="38" y="48" fill="#D6A81D" fontFamily="Anton, sans-serif" fontSize="13.5" letterSpacing="3.6">AREA MATCH</text>
+            <text x="462" y="48" textAnchor="end" fill="#55655c" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="10" letterSpacing="2">PLAYER CARD</text>
+            <line x1="38" y1="64" x2="462" y2="64" stroke="#1d2a22" />
+
+            {level && (
+              <>
+                <rect x="199" y="88" width="102" height="23" rx="4" fill="#D6A81D" fillOpacity="0.10" stroke="#D6A81D" strokeOpacity="0.34" />
+                <text x="250" y="104" textAnchor="middle" fill="#EBC65C" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="10.5" letterSpacing="2.4">
+                  {level.tier.name.toUpperCase()}
+                </text>
+              </>
+            )}
+
+            <g transform="translate(178,132) scale(1.44)" filter="url(#pcDrop)">
+              <path d={JERSEY_PATH} fill="url(#pcMetal)" />
+              <path d={JERSEY_PATH} fill="url(#pcSheen)" />
+              <path d={JERSEY_PATH} fill="none" stroke="#4a3608" strokeWidth="1.4" />
+              <path d="M38 2 Q50 12 62 2" fill="none" stroke="#3a2b06" strokeWidth="4.2" strokeLinecap="round" />
+              <path d="M28 40 L28 100" stroke="#fff" strokeOpacity="0.12" strokeWidth="2" />
+            </g>
+
+            <text x="250" y={line2 ? 342 : 364} textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize={nameSize(line1)} letterSpacing=".6">{line1.toUpperCase()}</text>
+            {line2 && <text x="250" y="385" textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize={nameSize(line2)} letterSpacing=".6">{line2.toUpperCase()}</text>}
+
+            <line x1="112" y1="408" x2="228" y2="408" stroke="url(#pcRule)" />
+            <line x1="272" y1="408" x2="388" y2="408" stroke="url(#pcRule)" />
+            <path d="M250 402 L256 408 L250 414 L244 408 Z" fill="#D6A81D" />
+            <text x="250" y="434" textAnchor="middle" fill="#93a89a" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize={roleLine.length > 32 ? 8.5 : 10.5} letterSpacing="3">
+              {roleLine.length > 42 ? roleLine.slice(0, 40) + "…" : roleLine}
+            </text>
+
+            <text x="250" y="508" textAnchor="middle" fill="#D6A81D" fontFamily="Anton, sans-serif" fontSize="58">{perMatch}</text>
+            <text x="250" y="530" textAnchor="middle" fill="#6f8377" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="9.5" letterSpacing="3">GOALS PER MATCH</text>
+
+            <line x1="38" y1="562" x2="462" y2="562" stroke="#1a241d" />
+            <line x1="179" y1="576" x2="179" y2="634" stroke="#1a241d" />
+            <line x1="321" y1="576" x2="321" y2="634" stroke="#1a241d" />
+            <line x1="38" y1="646" x2="462" y2="646" stroke="#1a241d" />
+
+            <text x="108" y="608" textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize="28">{stats ? stats.goals : 0}</text>
+            <text x="108" y="628" textAnchor="middle" fill="#55655c" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="8.5" letterSpacing="1.8">GOALS</text>
+            <text x="250" y="608" textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize="28">{stats ? stats.matches : 0}</text>
+            <text x="250" y="628" textAnchor="middle" fill="#55655c" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="8.5" letterSpacing="1.8">MATCHES</text>
+            <text x="392" y="608" textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize="28">{awards.length}</text>
+            <text x="392" y="628" textAnchor="middle" fill="#55655c" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="8.5" letterSpacing="1.8">AWARDS</text>
+
+            <text x="250" y="678" textAnchor="middle" fill="#3f4d45" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="9" letterSpacing="3">AREAMATCH.COM.NG</text>
+
+            <rect x="1" y="1" width="498" height="703" rx="21" fill="none" stroke="url(#pcEdge)" strokeWidth="1.5" />
+          </g>
         </svg>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
