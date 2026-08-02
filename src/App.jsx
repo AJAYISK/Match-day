@@ -2052,8 +2052,8 @@ export default function App() {
               )}
             </div>
 
-            <div className="hero-carousel" style={{ position: "relative", overflow: "hidden", borderRadius: 16, marginBottom: 20, height: heroSlide === 0 ? "auto" : 280 }}>
-              <div className="hero" style={{ opacity: heroSlide === 0 ? 1 : 0, transition: "opacity 1s ease", position: heroSlide === 0 ? "static" : "absolute", inset: 0, pointerEvents: heroSlide === 0 ? "auto" : "none" }}>
+            <div className="hero-carousel" style={{ position: "relative", overflow: "hidden", borderRadius: 16, marginBottom: 20, height: 280 }}>
+              <div className="hero" style={{ opacity: heroSlide === 0 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 0 ? "auto" : "none", display: "flex", flexDirection: "column", justifyContent: "center", overflow: "hidden", marginBottom: 0 }}>
                 <div className="display hero-title">
                   Your community.<br /><span style={{ color: T.floodlight }}>Your matches. Live.</span>
                 </div>
