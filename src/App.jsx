@@ -1242,6 +1242,85 @@ export default function App() {
   };
   /* Cache team records for the life of this data — teamRecord gets called repeatedly
      (leaderboards, milestones, every team card) and each call used to re-scan matches. */
+  /* These two must live ABOVE the booting/splash early return — React requires the
+     same number of hooks on every render, and an early return between them would
+     change that count and crash the app (React error #310). */
+  const leaderboards = useMemo(() => {
+    const scoped = matches.filter((m) => m.status === "ResultPublished" &&
+      (feedState === "All" || captainState(m) === feedState));
+    /* Goals per player name, resolved per team so identical names on different teams stay separate */
+    const tally = {};
+    scoped.forEach((m) => {
+      [["A", m.teamA.name, m.scorersA], ["B", m.teamB.name, m.scorersB]].forEach(([, teamName, str]) => {
+        (str || "").split(",").forEach((chunk) => {
+          const part = chunk.trim();
+          if (!part) return;
+          const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+          const nm = (mm ? mm[1] : part).trim();
+          if (!nm) return;
+          const n = mm ? parseInt(mm[2], 10) : 1;
+          const key = `${nm.toLowerCase()}|${teamName.toLowerCase()}`;
+          if (!tally[key]) tally[key] = { name: nm, team: teamName, goals: 0 };
+          tally[key].goals += n;
+        });
+      });
+    });
+    const topScorers = Object.values(tally).sort((a, b) => b.goals - a.goals).slice(0, 5);
+    const teamForm = savedTeams
+      .map((t) => ({ team: t, rec: teamRecord(t) }))
+      .filter((x) => x.rec.ratingReady)
+      .sort((a, b) => b.rec.rating - a.rec.rating)
+      .slice(0, 5);
+    const mostSupported = savedTeams
+      .map((t) => ({ team: t, count: teamSupporters.filter((s) => s.teamId === t.id).length }))
+      .filter((x) => x.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    return { topScorers, teamForm, mostSupported };
+  }, [matches, savedTeams, teamSupporters, feedState, matchIndex]);
+
+  /* Milestones — notable things that happened recently, phrased as news */
+  const milestones = useMemo(() => {
+    const out = [];
+    const registered = users.filter((u) => u.role === "Player" && u.teamId && u.rosterName);
+    /* Goal milestones at meaningful thresholds */
+    registered.forEach((p) => {
+      const st = playerStats(p);
+      if (!st.ready) return;
+      const threshold = [50, 25, 15, 10, 5].find((t) => st.goals >= t);
+      if (threshold) out.push({
+        id: `g-${p.id}`, accent: "#D6A81D", weight: threshold,
+        head: `${p.name} reached ${threshold} goals`,
+        sub: st.team ? st.team.name : "",
+        playerId: p.id,
+      });
+    });
+    /* Team winning runs */
+    savedTeams.forEach((t) => {
+      const rec = teamRecord(t);
+      let run = 0;
+      for (const r of rec.results) { if (r.outcome === "W") run++; else break; }
+      if (run >= 3) out.push({
+        id: `w-${t.id}`, accent: "#3FA35B", weight: run * 4,
+        head: `${t.name} on a ${run}-match winning run`,
+        sub: "Unbeaten in their last " + run,
+        teamId: t.id,
+      });
+    });
+    /* Supporter milestones */
+    savedTeams.forEach((t) => {
+      const c = teamSupporters.filter((s) => s.teamId === t.id).length;
+      const threshold = [100, 50, 25, 10].find((x) => c >= x);
+      if (threshold) out.push({
+        id: `s-${t.id}`, accent: "#4a7d9c", weight: threshold / 4,
+        head: `${t.name} passed ${threshold} supporters`,
+        sub: `${c} fans backing them`,
+        teamId: t.id,
+      });
+    });
+    return out.sort((a, b) => b.weight - a.weight).slice(0, 6);
+  }, [users, savedTeams, teamSupporters, matchIndex]);
+
   const teamRecordCache = useMemo(() => new Map(), [matches, savedTeams]);
   const teamRecord = (team) => {
     if (!team) return { wins: 0, draws: 0, losses: 0, total: 0, rating: 0, ratingReady: false, results: [] };
@@ -1580,81 +1659,6 @@ export default function App() {
     .slice(0, 6);
 
   /* Leaderboards — scoped to the same state/follow filter the rest of the feed uses */
-  const leaderboards = useMemo(() => {
-    const scoped = matches.filter((m) => m.status === "ResultPublished" &&
-      (feedState === "All" || captainState(m) === feedState));
-    /* Goals per player name, resolved per team so identical names on different teams stay separate */
-    const tally = {};
-    scoped.forEach((m) => {
-      [["A", m.teamA.name, m.scorersA], ["B", m.teamB.name, m.scorersB]].forEach(([, teamName, str]) => {
-        (str || "").split(",").forEach((chunk) => {
-          const part = chunk.trim();
-          if (!part) return;
-          const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
-          const nm = (mm ? mm[1] : part).trim();
-          if (!nm) return;
-          const n = mm ? parseInt(mm[2], 10) : 1;
-          const key = `${nm.toLowerCase()}|${teamName.toLowerCase()}`;
-          if (!tally[key]) tally[key] = { name: nm, team: teamName, goals: 0 };
-          tally[key].goals += n;
-        });
-      });
-    });
-    const topScorers = Object.values(tally).sort((a, b) => b.goals - a.goals).slice(0, 5);
-    const teamForm = savedTeams
-      .map((t) => ({ team: t, rec: teamRecord(t) }))
-      .filter((x) => x.rec.ratingReady)
-      .sort((a, b) => b.rec.rating - a.rec.rating)
-      .slice(0, 5);
-    const mostSupported = savedTeams
-      .map((t) => ({ team: t, count: teamSupporters.filter((s) => s.teamId === t.id).length }))
-      .filter((x) => x.count > 0)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-    return { topScorers, teamForm, mostSupported };
-  }, [matches, savedTeams, teamSupporters, feedState, matchIndex]);
-
-  /* Milestones — notable things that happened recently, phrased as news */
-  const milestones = useMemo(() => {
-    const out = [];
-    const registered = users.filter((u) => u.role === "Player" && u.teamId && u.rosterName);
-    /* Goal milestones at meaningful thresholds */
-    registered.forEach((p) => {
-      const st = playerStats(p);
-      if (!st.ready) return;
-      const threshold = [50, 25, 15, 10, 5].find((t) => st.goals >= t);
-      if (threshold) out.push({
-        id: `g-${p.id}`, accent: "#D6A81D", weight: threshold,
-        head: `${p.name} reached ${threshold} goals`,
-        sub: st.team ? st.team.name : "",
-        playerId: p.id,
-      });
-    });
-    /* Team winning runs */
-    savedTeams.forEach((t) => {
-      const rec = teamRecord(t);
-      let run = 0;
-      for (const r of rec.results) { if (r.outcome === "W") run++; else break; }
-      if (run >= 3) out.push({
-        id: `w-${t.id}`, accent: "#3FA35B", weight: run * 4,
-        head: `${t.name} on a ${run}-match winning run`,
-        sub: "Unbeaten in their last " + run,
-        teamId: t.id,
-      });
-    });
-    /* Supporter milestones */
-    savedTeams.forEach((t) => {
-      const c = teamSupporters.filter((s) => s.teamId === t.id).length;
-      const threshold = [100, 50, 25, 10].find((x) => c >= x);
-      if (threshold) out.push({
-        id: `s-${t.id}`, accent: "#4a7d9c", weight: threshold / 4,
-        head: `${t.name} passed ${threshold} supporters`,
-        sub: `${c} fans backing them`,
-        teamId: t.id,
-      });
-    });
-    return out.sort((a, b) => b.weight - a.weight).slice(0, 6);
-  }, [users, savedTeams, teamSupporters, matchIndex]);
 
   const capped = (key, list) => (seeMore[key] ? list : list.slice(0, 2));
   const SeeMoreBtn = ({ k, list }) => {
