@@ -1242,6 +1242,31 @@ export default function App() {
   };
   /* Cache team records for the life of this data — teamRecord gets called repeatedly
      (leaderboards, milestones, every team card) and each call used to re-scan matches. */
+  const teamRecordCache = useMemo(() => new Map(), [matches, savedTeams]);
+  const teamRecord = (team) => {
+    if (!team) return { wins: 0, draws: 0, losses: 0, total: 0, rating: 0, ratingReady: false, results: [] };
+    const cached = teamRecordCache.get(team.id);
+    if (cached) return cached;
+    const played = matchIndex.byTeam.get(`${team.captainId}|${(team.name || "").trim().toLowerCase()}`) || [];
+    const results = played.map((m) => {
+      const isA = m.teamA.name === team.name;
+      const us = isA ? m.finalA : m.finalB, them = isA ? m.finalB : m.finalA;
+      const outcome = m.shootout && m.pensWinner ? (m.pensWinner === (isA ? "A" : "B") ? "W" : "L") : us > them ? "W" : us < them ? "L" : "D";
+      const opponent = isA ? m.teamB.name : m.teamA.name;
+      return { match: m, outcome, us, them, opponent };
+    });
+    const wins = results.filter((r) => r.outcome === "W").length;
+    const draws = results.filter((r) => r.outcome === "D").length;
+    const losses = results.filter((r) => r.outcome === "L").length;
+    const total = results.length;
+    /* Weighted points formula: Win=3, Draw=1, Loss=0, scaled to a 5-star rating */
+    const points = wins * 3 + draws * 1;
+    const rating = total > 0 ? Math.round((points / (total * 3)) * 5 * 10) / 10 : 0;
+    const out = { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
+    teamRecordCache.set(team.id, out);
+    return out;
+  };
+
   /* These two must live ABOVE the booting/splash early return — React requires the
      same number of hooks on every render, and an early return between them would
      change that count and crash the app (React error #310). */
@@ -1321,30 +1346,6 @@ export default function App() {
     return out.sort((a, b) => b.weight - a.weight).slice(0, 6);
   }, [users, savedTeams, teamSupporters, matchIndex]);
 
-  const teamRecordCache = useMemo(() => new Map(), [matches, savedTeams]);
-  const teamRecord = (team) => {
-    if (!team) return { wins: 0, draws: 0, losses: 0, total: 0, rating: 0, ratingReady: false, results: [] };
-    const cached = teamRecordCache.get(team.id);
-    if (cached) return cached;
-    const played = matchIndex.byTeam.get(`${team.captainId}|${(team.name || "").trim().toLowerCase()}`) || [];
-    const results = played.map((m) => {
-      const isA = m.teamA.name === team.name;
-      const us = isA ? m.finalA : m.finalB, them = isA ? m.finalB : m.finalA;
-      const outcome = m.shootout && m.pensWinner ? (m.pensWinner === (isA ? "A" : "B") ? "W" : "L") : us > them ? "W" : us < them ? "L" : "D";
-      const opponent = isA ? m.teamB.name : m.teamA.name;
-      return { match: m, outcome, us, them, opponent };
-    });
-    const wins = results.filter((r) => r.outcome === "W").length;
-    const draws = results.filter((r) => r.outcome === "D").length;
-    const losses = results.filter((r) => r.outcome === "L").length;
-    const total = results.length;
-    /* Weighted points formula: Win=3, Draw=1, Loss=0, scaled to a 5-star rating */
-    const points = wins * 3 + draws * 1;
-    const rating = total > 0 ? Math.round((points / (total * 3)) * 5 * 10) / 10 : 0;
-    const out = { results, wins, draws, losses, total, rating, ratingReady: total >= 3 };
-    teamRecordCache.set(team.id, out);
-    return out;
-  };
   const createSavedTeam = async (data) => {
     const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions, jersey_pattern: data.jerseyPattern, jersey_trim: data.jerseyTrim });
     if (error) return notify(error.message);
