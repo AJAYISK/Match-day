@@ -399,6 +399,9 @@ export default function App() {
   const goalAlertIdsRef = useRef([]);
   useEffect(() => { goalAlertIdsRef.current = goalAlertIds; }, [goalAlertIds]);
   const [viewCaptain, setViewCaptain] = useState(null);
+  /* Remembers which page opened the captain profile, so "back" returns where you came
+     from rather than always dumping you in the captains directory. */
+  const [captainCameFrom, setCaptainCameFrom] = useState(null);
   const [captainTab, setCaptainTab] = useState("overview");
   const [capStateFilter, setCapStateFilter] = useState("All");
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
@@ -410,6 +413,8 @@ export default function App() {
   const [teamSearch, setTeamSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
   const [showLeaderboards, setShowLeaderboards] = useState(false);
+  const [showFixtures, setShowFixtures] = useState(false);
+  const [fixState, setFixState] = useState("All");
   const [lbTab, setLbTab] = useState("scorers");
   const [dreamTeamInput, setDreamTeamInput] = useState("");
   const [dreamTeamSlide, setDreamTeamSlide] = useState(0);
@@ -1652,12 +1657,15 @@ export default function App() {
   /* ---------- FEED INTELLIGENCE ----------
      Upcoming fixtures, auto-generated milestones and leaderboards — all derived from
      match results and profiles already in the database. No new tables needed. */
-  const upcomingFixtures = matches
+  /* Full fixture list — the feed shows a preview, the fixtures page shows all of it */
+  const allUpcomingFixtures = matches
     .filter((m) => m.published && m.status === "Scheduled" && m.date && m.time &&
-      new Date(`${m.date}T${m.time}`).getTime() > now &&
-      (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)))
-    .sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`))
-    .slice(0, 6);
+      new Date(`${m.date}T${m.time}`).getTime() > now)
+    .sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
+
+  const upcomingFixtures = allUpcomingFixtures
+    .filter((m) => (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)))
+    .slice(0, 4);
 
   /* Leaderboards — scoped to the same state/follow filter the rest of the feed uses */
 
@@ -2021,7 +2029,7 @@ export default function App() {
           </div>
           <nav className="topnav">
             <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
-            {me.role === "Fan" && <button className={page === "captains" ? "on" : ""} onClick={() => { setPage("captains"); setViewCaptain(null); }}>Captains</button>}
+            {me.role === "Fan" && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             {me.role === "Player" && <button className={page === "myplayer" ? "on" : ""} onClick={() => setPage("myplayer")}>My Profile</button>}
@@ -2181,8 +2189,14 @@ export default function App() {
 
             {upcomingFixtures.length > 0 && (
               <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>
-                  Coming up{feedState !== "All" ? ` in ${feedState}` : " near you"}
+                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Coming up{feedState !== "All" ? ` in ${feedState}` : " near you"}</span>
+                  {allUpcomingFixtures.length > upcomingFixtures.length && (
+                    <span className="tappable" onClick={() => { setFixState(feedState); setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); }}
+                      style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
+                      All {allUpcomingFixtures.length} ›
+                    </span>
+                  )}
                 </div>
                 {upcomingFixtures.map((m) => {
                   const kickoff = new Date(`${m.date}T${m.time}`).getTime();
@@ -2799,7 +2813,7 @@ export default function App() {
             me={me}
             follows={follows}
             users={users}
-            onOpenCaptain={(id) => { setPage("captains"); setViewCaptain(id); }}
+            onOpenCaptain={(id) => { setCaptainCameFrom("profile"); setPage("captains"); setViewCaptain(id); }}
             onOpenTeam={(id) => openTeamProfile(id)}
             onOpenMatch={(id) => openMatchDetail(id)}
             supportedTeams={savedTeams
@@ -2847,7 +2861,7 @@ export default function App() {
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
                     const publishedToday = theirs.filter((x) => x.date === today).length;
                     return (
-                      <div key={c.id} className="card" style={{ cursor: "pointer", display: "grid", gap: 10 }} onClick={() => setViewCaptain(c.id)}>
+                      <div key={c.id} className="card" style={{ cursor: "pointer", display: "grid", gap: 10 }} onClick={() => { setCaptainCameFrom(null); setViewCaptain(c.id); }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                           <div style={{ width: 48, height: 48, borderRadius: "50%", background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 20, color: T.floodlight }}>
                             {c.name.slice(0, 1).toUpperCase()}
@@ -2910,7 +2924,13 @@ export default function App() {
 
                 return (
                   <div style={{ maxWidth: 430 }}>
-                    <button className="btn btn-ghost tappable" style={{ marginBottom: 14, padding: "8px 14px", fontSize: 13 }} onClick={() => setViewCaptain(null)}>← All captains</button>
+                    <button className="btn btn-ghost tappable" style={{ marginBottom: 14, padding: "8px 14px", fontSize: 13 }}
+                      onClick={() => {
+                        if (captainCameFrom === "profile") { setViewCaptain(null); setCaptainCameFrom(null); setPage("profile"); }
+                        else setViewCaptain(null);
+                      }}>
+                      {captainCameFrom === "profile" ? "← Back to my profile" : "← All captains"}
+                    </button>
 
                     <div style={{ position: "relative", overflow: "hidden", marginBottom: 2 }}>
                       <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
@@ -3342,6 +3362,86 @@ export default function App() {
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
+      {showFixtures && (() => {
+        const list = allUpcomingFixtures.filter((m) => fixState === "All" || captainState(m) === fixState);
+        const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+        const today0 = startOfDay(now);
+        const groupOf = (m) => {
+          const k = startOfDay(new Date(m.date + "T" + m.time).getTime());
+          const days = Math.round((k - today0) / 86400000);
+          if (days <= 0) return "Today";
+          if (days === 1) return "Tomorrow";
+          if (days <= 7) return "This week";
+          return "Later";
+        };
+        const order = ["Today", "Tomorrow", "This week", "Later"];
+        const grouped = {};
+        list.forEach((m) => { const g = groupOf(m); (grouped[g] = grouped[g] || []).push(m); });
+        const statesWithFixtures = Array.from(new Set(allUpcomingFixtures.map((m) => captainState(m)).filter(Boolean)));
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
+              <button onClick={goBackPage} style={{ width: 29, height: 29, border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#7d8f83", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, cursor: "pointer" }}>‹</button>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Fixtures</div>
+            </div>
+            {statesWithFixtures.length > 1 && (
+              <div style={{ padding: "0 17px 12px", display: "flex", gap: 6, overflowX: "auto", flexShrink: 0 }}>
+                {["All"].concat(statesWithFixtures).map((st) => (
+                  <button key={st} onClick={() => setFixState(st)}
+                    style={{ flexShrink: 0, fontSize: 10.5, padding: "5px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap",
+                      background: fixState === st ? "#16211a" : "none",
+                      border: "1px solid " + (fixState === st ? "#2a3d31" : "#1b241c"),
+                      color: fixState === st ? "#EDEAE0" : "#5a6a5f", fontWeight: fixState === st ? 600 : 500 }}>
+                    {st === "All" ? "All states" : st}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ height: 1, background: "#151c16", flexShrink: 0 }} />
+            <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "6px 17px 24px" }}>
+              {list.length === 0 && (
+                <div style={{ fontSize: 12.5, color: "#7d8f83", textAlign: "center", padding: "30px 0" }}>
+                  No scheduled fixtures{fixState !== "All" ? " in " + fixState : ""} right now.
+                </div>
+              )}
+              {order.filter((g) => grouped[g]).map((g) => (
+                <div key={g}>
+                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700, margin: "18px 0 10px" }}>{g}</div>
+                  {grouped[g].map((m) => {
+                    const kickoff = new Date(m.date + "T" + m.time).getTime();
+                    const hoursOut = (kickoff - now) / 3600000;
+                    const d = new Date(kickoff);
+                    const soon = hoursOut < 24;
+                    return (
+                      <div key={m.id} className="tappable" onClick={() => { setShowFixtures(false); openMatchDetail(m.id); }}
+                        style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                        <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
+                          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, lineHeight: 1, color: soon ? "#D6A81D" : "#F7F4EA" }}>
+                            {soon ? Math.max(1, Math.round(hoursOut)) : d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}
+                          </div>
+                          <div style={{ fontSize: 8, color: "#4e5c53", textTransform: "uppercase", marginTop: 3 }}>
+                            {soon ? "hrs" : d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                          </div>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                          <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
+                        </div>
+                        <div style={{ fontSize: 9.5, color: soon ? "#D6A81D" : "#7d8f83", fontWeight: 600, flexShrink: 0 }}>{m.time}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+              {list.length > 0 && (
+                <div style={{ textAlign: "center", fontSize: 10.5, color: "#4e5c53", paddingTop: 16 }}>
+                  {list.length} fixture{list.length === 1 ? "" : "s"}{fixState !== "All" ? " in " + fixState : " across all states"}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {showLeaderboards && (
         <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
