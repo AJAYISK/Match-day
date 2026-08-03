@@ -1871,7 +1871,7 @@ export default function App() {
                     </div>
                   ))}
                   <div className="feedgrid" style={{ marginTop: 12 }}>
-                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               )}
@@ -2174,12 +2174,12 @@ export default function App() {
           <>
             {/* LIVE TICKER */}
             {events.length > 0 && (
-              <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: T.live, letterSpacing: ".1em" }}>⚡ LIVE UPDATES</div>
+              <div style={{ background: P.surfaceAlt, border: `1px solid ${P.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: P.live, letterSpacing: ".1em" }}>⚡ LIVE UPDATES</div>
                 {events.slice(0, 3).map((e) => (
                   <div key={e.id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
                     <span style={{ flex: 1 }}>{e.message}</span>
-                    <span style={{ color: T.muted, fontSize: 11, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                    <span style={{ color: P.textFaint, fontSize: 11, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                   </div>
                 ))}
               </div>
@@ -2201,27 +2201,27 @@ export default function App() {
             <div className="hero-carousel" style={{ position: "relative", overflow: "hidden", borderRadius: 16, marginBottom: 20, height: 280 }}>
               <div className="hero" style={{ opacity: heroSlide === 0 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 0 ? "auto" : "none", display: "flex", flexDirection: "column", justifyContent: "center", overflow: "hidden", marginBottom: 0 }}>
                 <div className="display hero-title">
-                  Your community.<br /><span style={{ color: T.floodlight }}>Your matches. Live.</span>
+                  Your community.<br /><span style={{ color: P.accent }}>Your matches. Live.</span>
                 </div>
-                <div style={{ color: T.muted, marginTop: 10, maxWidth: 520 }}>
+                <div style={{ color: P.textFaint, marginTop: 10, maxWidth: 520 }}>
                   Follow published matches from local captains, and catch every score update the moment it happens on 🔴 Live. Results go live the moment the captain submits the final score.
                 </div>
               </div>
               <div style={{ opacity: heroSlide === 1 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 1 ? "auto" : "none", backgroundImage: "url('/hero-photo.jpeg')", backgroundSize: "cover", backgroundPosition: "center", borderRadius: 16 }}>
                 <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(6,9,7,.15) 0%, rgba(6,9,7,.2) 55%, rgba(6,9,7,.9) 100%)", borderRadius: 16 }} />
                 <div style={{ position: "absolute", bottom: 20, left: 0, right: 0, textAlign: "center" }}>
-                  <div className="display" style={{ fontSize: 22, color: T.chalk, lineHeight: 1.1 }}>YOUR COMMUNITY</div>
-                  <div className="display" style={{ fontSize: 22, color: T.floodlight, lineHeight: 1.1 }}>FOOTBALL LIVE</div>
+                  <div className="display" style={{ fontSize: 22, color: P.text, lineHeight: 1.1 }}>YOUR COMMUNITY</div>
+                  <div className="display" style={{ fontSize: 22, color: P.accent, lineHeight: 1.1 }}>FOOTBALL LIVE</div>
                 </div>
               </div>
             </div>
 
             {/* Admin announcements */}
             {adminPosts.length > 0 && adminPosts.slice(0, 3).map((p) => (
-              <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#E6B31E", borderWidth: 1.5 }}>
+              <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: P.accent, borderWidth: 1.5 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                  <span className="chip" style={{ background: T.floodlight, color: T.night }}>📢 Area Match</span>
-                  <span style={{ fontSize: 11, color: T.muted }}>{(p.created_at || "").slice(0, 10)}</span>
+                  <span className="chip" style={{ background: P.accent, color: P.bg }}>📢 Area Match</span>
+                  <span style={{ fontSize: 11, color: P.textFaint }}>{(p.created_at || "").slice(0, 10)}</span>
                 </div>
                 <div style={{ fontSize: 14, lineHeight: 1.5 }}>{p.message}</div>
               </div>
@@ -2232,9 +2232,9 @@ export default function App() {
               const followed = published.filter((m) => follows.includes(m.createdBy) && m.status !== "ResultPublished");
               return followed.length > 0 ? (
                 <>
-                  <SectionTitle color={T.floodlight}>🔔 From Captains You Follow</SectionTitle>
+                  <SectionTitle color={P.accent}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               ) : null;
@@ -2242,17 +2242,17 @@ export default function App() {
 
             {milestones.length > 0 && (
               <div style={{ marginBottom: 24 }}>
-                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between" }}>
+                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: P.textGhost, fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between" }}>
                   <span>This week</span>
-                  {milestones.length > 1 && <span style={{ color: "#4e5c53", letterSpacing: 0, textTransform: "none", fontSize: 10 }}>swipe →</span>}
+                  {milestones.length > 1 && <span style={{ color: P.textGhost, letterSpacing: 0, textTransform: "none", fontSize: 10 }}>swipe →</span>}
                 </div>
                 <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, scrollbarWidth: "none" }}>
                   {milestones.map((ms) => (
                     <div key={ms.id}
                       className="tappable" onClick={() => { if (ms.playerId) openPlayerProfile(ms.playerId); else if (ms.teamId) openTeamProfile(ms.teamId); }}
-                      style={{ flexShrink: 0, width: 186, background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${ms.accent}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer" }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.3, color: "#F7F4EA" }}>{ms.head}</div>
-                      {ms.sub && <div style={{ fontSize: 9.5, color: "#6b7d72", marginTop: 3 }}>{ms.sub}</div>}
+                      style={{ flexShrink: 0, width: 186, background: P.surface, border: `1px solid ${P.line}`, borderLeft: `2px solid ${ms.accent}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer" }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 600, lineHeight: 1.3, color: P.textStrong }}>{ms.head}</div>
+                      {ms.sub && <div style={{ fontSize: 9.5, color: P.textFaint, marginTop: 3 }}>{ms.sub}</div>}
                     </div>
                   ))}
                 </div>
@@ -2261,29 +2261,29 @@ export default function App() {
 
             {liveNow.length > 0 && (
               <>
-                <SectionTitle color={T.live}>● Live Now</SectionTitle>
+                <SectionTitle color={P.live}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
 
             {awaitingResults.length > 0 && (
               <>
-                <SectionTitle color={T.floodlight}>⏳ Awaiting Results</SectionTitle>
+                <SectionTitle color={P.accent}>⏳ Awaiting Results</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
 
             {upcomingFixtures.length > 0 && (
               <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: P.textGhost, fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span>Coming up{feedState !== "All" ? ` in ${feedState}` : " near you"}</span>
                   {allUpcomingFixtures.length > upcomingFixtures.length && (
                     <span className="tappable" onClick={() => { setFixState(feedState); setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); }}
-                      style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
+                      style={{ color: P.accentSoft, letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
                       All {allUpcomingFixtures.length} ›
                     </span>
                   )}
@@ -2295,20 +2295,20 @@ export default function App() {
                   const soon = hoursOut < 24;
                   return (
                     <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                      style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: `1px solid ${P.lineSoft}`, cursor: "pointer" }}>
                       <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
-                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, lineHeight: 1, color: soon ? "#D6A81D" : "#F7F4EA" }}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, lineHeight: 1, color: soon ? P.accentSoft : P.textStrong }}>
                           {soon ? Math.max(1, Math.round(hoursOut)) : d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}
                         </div>
-                        <div style={{ fontSize: 8, color: "#4e5c53", letterSpacing: ".8px", textTransform: "uppercase", marginTop: 3 }}>
+                        <div style={{ fontSize: 8, color: P.textGhost, letterSpacing: ".8px", textTransform: "uppercase", marginTop: 3 }}>
                           {soon ? "hrs" : d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}
                         </div>
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
-                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
+                        <div style={{ fontSize: 9.5, color: P.textGhost, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
                       </div>
-                      <div style={{ fontSize: 9.5, color: "#D6A81D", fontWeight: 600, flexShrink: 0 }}>{m.time}</div>
+                      <div style={{ fontSize: 9.5, color: P.accentSoft, fontWeight: 600, flexShrink: 0 }}>{m.time}</div>
                     </div>
                   );
                 })}
@@ -2319,43 +2319,43 @@ export default function App() {
               <div className="card" style={{ marginBottom: 20, textAlign: "center", padding: 22 }}>
                 <div style={{ fontSize: 28, marginBottom: 6 }}>📍</div>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>No matches in {feedState} yet</div>
-                <div style={{ fontSize: 13, color: T.muted }}>No captain has published a match in {feedState}. Check back soon, or switch to 🌍 All states to see everything.</div>
+                <div style={{ fontSize: 13, color: P.textFaint }}>No captain has published a match in {feedState}. Check back soon, or switch to 🌍 All states to see everything.</div>
               </div>
             )}
 
             {inMyState.length > 0 && feedState === "All" && !feedFollowedOnly && (
               <>
-                <SectionTitle color={T.floodlight}>📍 Matches in {me.state}</SectionTitle>
+                <SectionTitle color={P.accent}>📍 Matches in {me.state}</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
                 <SeeMoreBtn k="mystate" list={inMyState} />
               </>
             )}
 
-            <SectionTitle color={T.floodlight}>Upcoming Matches</SectionTitle>
-            {upcoming.length === 0 && <div className="card" style={{ color: T.muted, marginBottom: 28 }}>No upcoming published matches yet.</div>}
+            <SectionTitle color={P.accent}>Upcoming Matches</SectionTitle>
+            {upcoming.length === 0 && <div className="card" style={{ color: P.textFaint, marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
 
             <SeeMoreBtn k="upcoming" list={upcoming} />
 
-            <SectionTitle color={T.chalk}>Results</SectionTitle>
-            {results.length === 0 && <div className="card" style={{ color: T.muted }}>No results published yet. Results appear here once captains submit final scores.</div>}
+            <SectionTitle color={P.text}>Results</SectionTitle>
+            {results.length === 0 && <div className="card" style={{ color: P.textFaint }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
 
             {(leaderboards.topScorers.length > 0 || leaderboards.teamForm.length > 0) && (
               <div className="tappable" onClick={() => { setShowLeaderboards(true); pushCloseable(() => setShowLeaderboards(false)); }}
-                style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 10, padding: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 20 }}>
+                style={{ background: P.surface, border: `1px solid ${P.line}`, borderRadius: 10, padding: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 20 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA" }}>Leaderboards</div>
-                  <div style={{ fontSize: 9.5, color: "#6b7d72", marginTop: 2 }}>Top scorers · team form · most supported</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: P.textStrong }}>Leaderboards</div>
+                  <div style={{ fontSize: 9.5, color: P.textFaint, marginTop: 2 }}>Top scorers · team form · most supported</div>
                 </div>
-                <div style={{ color: "#D6A81D", fontSize: 11 }}>View ›</div>
+                <div style={{ color: P.accentSoft, fontSize: 11 }}>View ›</div>
               </div>
             )}
           </>
@@ -2373,7 +2373,7 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
+              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
             </div>
             <SeeMoreBtn k="mymatches" list={mine} />
           </>
@@ -3213,12 +3213,12 @@ export default function App() {
                         {theirs.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>This captain hasn't published any matches yet.</div>}
                         {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <Lbl>Current &amp; upcoming</Lbl>}
                         <div className="feedgrid" style={{ marginBottom: 20 }}>
-                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
                         {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <Lbl>Past results</Lbl>}
                         <div className="feedgrid">
-                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
                       </>
@@ -3256,7 +3256,7 @@ export default function App() {
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
               {capped("live", liveForUser).map((m) => (
-                <MatchCard key={"lv" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
+                <MatchCard key={"lv" + m.id} m={m} P={P} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
               ))}
             </div>
             <SeeMoreBtn k="live" list={liveForUser} />
@@ -3876,16 +3876,16 @@ function Toast({ msg }) {
   );
 }
 
-function StatusChip({ m }) {
+function StatusChip({ m, P = PALETTES.night }) {
   const map = {
-    Scheduled: { bg: "#243128", c: "#F5F0E1", t: "Scheduled" },
-    Live: { bg: "#E8442E", c: "#fff", t: "● LIVE" },
-    AwaitingScore: { bg: "#3a3320", c: "#E6B31E", t: "Result Awaiting" },
-    ResultPublished: { bg: "#14532D", c: "#E6B31E", t: "Result" },
-    Cancelled: { bg: "#3a1f1a", c: "#E8442E", t: "❌ Cancelled" },
+    Scheduled: { bg: P.line, c: P.text, t: "Scheduled" },
+    Live: { bg: P.live, c: P.liveInk, t: "● LIVE" },
+    AwaitingScore: { bg: P.surfaceAlt, c: P.accent, t: "Result Awaiting" },
+    ResultPublished: { bg: P.crest, c: P.accent, t: "Result" },
+    Cancelled: { bg: P.lossBg, c: P.live, t: "❌ Cancelled" },
   };
   const ht = m.status === "Live" && (m.halfPrompt || m.onBreak);
-  const s = ht ? { bg: "#3a3320", c: "#E6B31E", t: "⏸ Half Time" } : map[m.status];
+  const s = ht ? { bg: P.surfaceAlt, c: P.accent, t: "⏸ Half Time" } : map[m.status];
   return <span className={`chip ${m.status === "Live" && !ht ? "pulse" : ""}`} style={{ background: s.bg, color: s.c }}>{s.t}</span>;
 }
 
@@ -4633,13 +4633,13 @@ function MiniLogo({ team, badge, size = 42 }) {
   );
 }
 
-function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
+function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, P = PALETTES.night }) {
   const showScore = m.status === "ResultPublished";
   return (
     <div className="card" style={{ display: "grid", gap: 12, cursor: "pointer", alignContent: "start" }} onClick={onOpen}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <StatusChip m={m} />
-        {m.postponed && m.status === "Scheduled" && <span className="chip" style={{ background: "#3a3320", color: "#E6B31E" }}>📅 Rescheduled</span>}
+        <StatusChip m={m} P={P} />
+        {m.postponed && m.status === "Scheduled" && <span className="chip" style={{ background: P.surfaceAlt, color: P.accent }}>📅 Rescheduled</span>}
       </div>
       <div className="scoreboard">
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
@@ -4648,32 +4648,32 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
         </div>
         <div className="sb-center">
           {showScore ? (
-            <div className="display" style={{ fontSize: 26, color: "#E6B31E" }}>{m.finalA} – {m.finalB}</div>
+            <div className="display" style={{ fontSize: 26, color: P.accent }}>{m.finalA} – {m.finalB}</div>
           ) : m.status === "Live" && (m.halfPrompt || m.onBreak) ? (
             <>
-              <div className="display" style={{ fontSize: 22, color: "#E6B31E" }}>HT</div>
-              <div style={{ fontSize: 11, color: "#E6B31E", fontWeight: 700 }}>
+              <div className="display" style={{ fontSize: 22, color: P.accent }}>HT</div>
+              <div style={{ fontSize: 11, color: P.accent, fontWeight: 700 }}>
                 {m.onBreak ? `Break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")}` : "Half-time break"}
               </div>
             </>
           ) : m.status === "Live" && !m.running ? (
             <>
-              <div className="display" style={{ fontSize: 24, color: "#F5F0E1" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
-              <div style={{ fontSize: 11, color: "#E6B31E", fontWeight: 700 }}>⏸ {m.pauseReason || "Paused"}</div>
+              <div className="display" style={{ fontSize: 24, color: P.text }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
+              <div style={{ fontSize: 11, color: P.accent, fontWeight: 700 }}>⏸ {m.pauseReason || "Paused"}</div>
             </>
           ) : m.status === "Live" ? (
             <>
-              <div className="display" style={{ fontSize: 24, color: "#E8442E" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
-              <div className="pulse" style={{ fontSize: 12, color: "#E8442E", fontWeight: 700 }}>LIVE {minute(m)}'</div>
-              {m.streamUrl && <div className="chip pulse" style={{ background: "#E8442E", color: "#fff", fontSize: 9, marginTop: 2 }}>🔴 LIVE STREAM</div>}
+              <div className="display" style={{ fontSize: 24, color: P.live }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
+              <div className="pulse" style={{ fontSize: 12, color: P.live, fontWeight: 700 }}>LIVE {minute(m)}'</div>
+              {m.streamUrl && <div className="chip pulse" style={{ background: P.live, color: P.liveInk, fontSize: 9, marginTop: 2 }}>🔴 LIVE STREAM</div>}
             </>
           ) : m.status === "AwaitingScore" ? (
             <>
-              <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>FT</div>
-              <div style={{ fontSize: 11, color: "#8FA396", fontWeight: 700 }}>Result awaiting</div>
+              <div className="display" style={{ fontSize: 20, color: P.accent }}>FT</div>
+              <div style={{ fontSize: 11, color: P.textFaint, fontWeight: 700 }}>Result awaiting</div>
             </>
           ) : (
-            <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>{m.time}</div>
+            <div className="display" style={{ fontSize: 18, color: P.accent }}>{m.time}</div>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, justifyContent: "flex-end" }}>
@@ -4681,7 +4681,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
           <MiniLogo team={m.teamB} badge={m.badgeB} />
         </div>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#8FA396", flexWrap: "wrap", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: P.textFaint, flexWrap: "wrap", gap: 8 }}>
         <span>📍 {m.location} · {m.date} · ⏱ {m.duration || 90}'</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onPoster(); }}>🎨 Artwork</button>
@@ -4768,7 +4768,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
         <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
         <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
-        <StatusChip m={m} />
+        <StatusChip m={m} P={P} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 14, maxWidth: 560, width: "100%", margin: "0 auto" }}>
         <div style={{ textAlign: "center", padding: "4px 0 6px" }}>
