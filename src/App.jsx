@@ -4699,7 +4699,8 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             } else if (m.status === "Cancelled") {
               chipText = "CANCELLED"; chipColor = "#e08a7d"; chipBg = "rgba(198,80,63,.12)"; chipBorder = "rgba(198,80,63,.3)";
             } else {
-              chipText = untilKickoff ? String(untilKickoff).toUpperCase() : "SCHEDULED"; chipColor = "#7d8f83"; chipBg = "#141c16"; chipBorder = "#24302a";
+              const untilText = typeof untilKickoff === "function" ? untilKickoff(m) : null;
+              chipText = untilText ? String(untilText).toUpperCase() + " TO GO" : "SCHEDULED"; chipColor = "#7d8f83"; chipBg = "#141c16"; chipBorder = "#24302a";
             }
             const scoreText = m.status === "ResultPublished" ? (m.finalA + "\u2013" + m.finalB)
               : live ? ((m.liveA ?? 0) + "\u2013" + (m.liveB ?? 0))
