@@ -117,54 +117,61 @@ const T = {
 };
 
 /* ---------- DAY / NIGHT PALETTES ----------
-   Night is what the app has always been. Day is built for direct sunlight at the
-   pitch: a near-white surface leaves glare far less to wash out, and the accent
-   moves from gold to deep green because gold goes muddy on white.
-   Keys are shared, so a screen written against these swaps cleanly. */
+   Two complete palettes keyed by the same names, so a screen written against
+   these tokens works in both modes. Day mode isn't "night inverted" — gold goes
+   muddy on white, so the accent becomes deep green, and red darkens so it
+   doesn't vibrate. Built for direct sunlight at the pitch, where a bright
+   screen has far less for glare to wash out. */
 const PALETTES = {
   night: {
-    name: "night",
-    bg: "#0A0D0A",          // page background
-    surface: "#161E19",     // cards
-    surfaceAlt: "#0E140F",  // panels inside cards
-    line: "#243128",        // dividers and borders
-    lineSoft: "#151c16",    // hairlines
-    text: "#F5F0E1",        // primary text
-    textStrong: "#F7F4EA",  // headings
-    textSoft: "#B9C7BC",    // secondary text
-    textMuted: "#8FA396",   // labels
-    textFaint: "#5a6a5f",   // least important
-    accent: "#E6B31E",      // primary accent (gold)
-    accentInk: "#1a1405",   // text on top of accent
-    live: "#E8442E",        // live red
-    liveInk: "#ffffff",
-    win: "#3FA35B", draw: "#54615a", loss: "#C6503F",
-    winBg: "rgba(63,163,91,.16)", drawBg: "rgba(140,150,145,.14)", lossBg: "rgba(198,80,63,.14)",
-    winText: "#5fcf87", drawText: "#93a099", lossText: "#e08a7d",
+    bg: "#0A0D0A",           // page background
+    surface: "#0E140F",      // cards and panels
+    surfaceAlt: "#141c16",   // crest wells, insets
+    line: "#243128",         // visible dividers
+    lineSoft: "#151c16",     // hairline dividers
+    text: "#F5F0E1",         // primary text
+    textStrong: "#F7F4EA",   // headings
+    textDim: "#B9C7BC",      // secondary text
+    textFaint: "#7d8f83",    // tertiary
+    textGhost: "#4e5c53",    // labels
+    accent: "#E6B31E",       // primary accent
+    accentSoft: "#D6A81D",   // accent on quieter elements
+    onAccent: "#12160f",     // text on an accent-filled button
+    live: "#E8442E",
+    liveText: "#e8776a",
+    win: "#5fcf87", winBg: "rgba(63,163,91,.16)", winLine: "rgba(63,163,91,.3)",
+    draw: "#93a099", drawBg: "rgba(140,150,145,.14)", drawLine: "rgba(140,150,145,.25)",
+    loss: "#e08a7d", lossBg: "rgba(198,80,63,.14)", lossLine: "rgba(198,80,63,.28)",
     crest: "#14532D",
   },
   day: {
-    name: "day",
     bg: "#FBFAF5",
     surface: "#FFFFFF",
-    surfaceAlt: "#F4F2E9",
+    surfaceAlt: "#F1EFE4",
     line: "#ddd8c8",
     lineSoft: "#e6e1d2",
     text: "#0d1a12",
     textStrong: "#0a140e",
-    textSoft: "#3d4a42",
-    textMuted: "#4a5a50",
-    textFaint: "#6b7a70",
-    accent: "#0f5c2e",      // deep green — gold is unreadable on white
-    accentInk: "#ffffff",
-    live: "#B8121B",        // deeper red; bright red vibrates on white
-    liveInk: "#ffffff",
-    win: "#0d7a3a", draw: "#5c6b61", loss: "#a8161f",
-    winBg: "rgba(13,122,58,.12)", drawBg: "rgba(92,107,97,.12)", lossBg: "rgba(168,22,31,.10)",
-    winText: "#0a5c2c", drawText: "#48564d", lossText: "#8f1219",
+    textDim: "#3d4a42",
+    textFaint: "#4a5a50",
+    textGhost: "#6b7a70",
+    accent: "#0f5c2e",
+    accentSoft: "#0d7a3a",
+    onAccent: "#FFFFFF",
+    live: "#B8121B",
+    liveText: "#B8121B",
+    win: "#0d6b33", winBg: "rgba(13,107,51,.12)", winLine: "rgba(13,107,51,.35)",
+    draw: "#5a6a60", drawBg: "rgba(90,106,96,.10)", drawLine: "rgba(90,106,96,.3)",
+    loss: "#a01620", lossBg: "rgba(160,22,32,.10)", lossLine: "rgba(160,22,32,.3)",
     crest: "#0f5c2e",
   },
 };
+
+/* ---------- DAY / NIGHT PALETTES ----------
+   Night is what the app has always been. Day is built for direct sunlight at the
+   pitch: a near-white surface leaves glare far less to wash out, and the accent
+   moves from gold to deep green because gold goes muddy on white.
+   Keys are shared, so a screen written against these swaps cleanly. */
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;700&display=swap');`;
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -518,6 +525,8 @@ export default function App() {
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
   const [booting, setBooting] = useState(true);
+  /* Appearance: "night" | "day" | "auto". Day mode exists for direct sunlight at
+     the pitch, where a bright screen survives glare far better than a dark one. */
   const [splashHeld, setSplashHeld] = useState(true); // keeps the full-bleed splash up for a minimum time, even on a fast connection
   useEffect(() => {
     const t = setTimeout(() => setSplashHeld(false), 1700);
@@ -5971,6 +5980,25 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
 
       {/* SETTINGS */}
       <div style={{ display: selfTab === "settings" ? "block" : "none" }}>
+
+      {/* Appearance — day mode is for direct sunlight at the pitch */}
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 10 }}>Appearance</div>
+        <div style={{ display: "flex", gap: 5 }}>
+          {[["night", "Night"], ["day", "Day"], ["auto", "Auto"]].map((t) => (
+            <button key={t[0]} onClick={() => onSetTheme(t[0])}
+              style={{ flex: 1, textAlign: "center", fontSize: 11.5, padding: 9, borderRadius: 8, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
+                background: themeMode === t[0] ? "#D6A81D" : "none",
+                border: themeMode === t[0] ? 0 : "1px solid #1f2921",
+                color: themeMode === t[0] ? "#12160f" : "#B9C7BC" }}>
+              {t[1]}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 10, lineHeight: 1.5 }}>
+          Day mode is built for bright sunlight at the pitch. Auto follows your phone's setting.
+        </div>
+      </div>
 
       {/* Captain team-join contact */}
       {me.role === "Captain" && (
