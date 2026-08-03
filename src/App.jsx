@@ -2816,17 +2816,19 @@ export default function App() {
             onOpenCaptain={(id) => { setCaptainCameFrom("profile"); setPage("captains"); setViewCaptain(id); }}
             onOpenTeam={(id) => openTeamProfile(id)}
             onOpenMatch={(id) => openMatchDetail(id)}
-            supportedTeams={savedTeams
-              .filter((t) => teamSupporters.some((s) => s.fanId === me.id && s.teamId === t.id))
-              .map((t) => {
-                const rec = teamRecord(t);
-                const last = rec.results.slice(0, 3).map((r) => r.outcome).join("");
-                return { ...t, formLine: rec.total > 0 ? "Last 3: " + (last || "—") + " · " + rec.wins + "W " + rec.draws + "D " + rec.losses + "L" : "No results yet" };
-              })}
+            supportedTeams={(me.role === "Captain"
+              ? savedTeams.filter((t) => t.captainId === me.id)
+              : savedTeams.filter((t) => teamSupporters.some((s) => s.fanId === me.id && s.teamId === t.id))
+            ).map((t) => {
+              const rec = teamRecord(t);
+              const last = rec.results.slice(0, 3).map((r) => r.outcome).join("");
+              return { ...t, formLine: rec.total > 0 ? "Last 3: " + (last || "—") + " · " + rec.wins + "W " + rec.draws + "D " + rec.losses + "L" : "No results yet" };
+            })}
             myUpcoming={(() => {
-              const names = savedTeams
-                .filter((t) => teamSupporters.some((s) => s.fanId === me.id && s.teamId === t.id))
-                .map((t) => (t.name || "").trim().toLowerCase());
+              const mine = me.role === "Captain"
+                ? savedTeams.filter((t) => t.captainId === me.id)
+                : savedTeams.filter((t) => teamSupporters.some((s) => s.fanId === me.id && s.teamId === t.id));
+              const names = mine.map((t) => (t.name || "").trim().toLowerCase());
               if (names.length === 0) return [];
               return matches.filter((m) => m.published && m.status === "Scheduled" && m.date && m.time &&
                 new Date(m.date + "T" + m.time).getTime() > now &&
@@ -4675,33 +4677,60 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
         <StatusChip m={m} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 14, maxWidth: 560, width: "100%", margin: "0 auto" }}>
-        <div className="scoreboard" style={{ padding: 18 }}>
-          <div style={{ textAlign: "center", flex: 1 }}>
-            <MiniLogo team={m.teamA} badge={m.badgeA} size={54} />
-            <div style={{ fontWeight: 700, marginTop: 6, fontSize: 13 }}>{m.teamA.name}</div>
-          </div>
-          <div className="sb-center">
-            <div className="display" style={{ fontSize: 38, color: m.status === "Live" ? (m.halfPrompt || m.onBreak ? "#E6B31E" : "#E8442E") : "#E6B31E" }}>
-              {m.status === "ResultPublished" ? `${m.finalA} – ${m.finalB}` : m.status === "Live" ? (m.halfPrompt || m.onBreak ? `HT ${m.liveA ?? 0}–${m.liveB ?? 0}` : `${m.liveA ?? 0} – ${m.liveB ?? 0}`) : m.status === "AwaitingScore" ? "FT" : m.status === "Cancelled" ? "❌" : "VS"}
-            </div>
-            {m.status === "Live" && (m.halfPrompt || m.onBreak) && (
-              <div style={{ color: "#E6B31E", fontWeight: 700, fontSize: 13 }}>
-                {m.onBreak ? `Half-time break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")} left` : "Half-time break"}
-              </div>
-            )}
-            {m.status === "Live" && ctrlTab === "score" && !m.halfPrompt && !m.onBreak && (m.running
-              ? <div className="pulse" style={{ color: "#E8442E", fontWeight: 700 }}>LIVE · {minute(m)}'</div>
-              : <div style={{ color: "#E6B31E", fontWeight: 700, fontSize: 13 }}>⏸ Paused{m.pauseReason ? ` — ${m.pauseReason}` : ""}</div>)}
-            {m.status === "AwaitingScore" && <div style={{ color: "#8FA396", fontWeight: 700, fontSize: 12 }}>Result awaiting</div>}
-          </div>
-          <div style={{ textAlign: "center", flex: 1 }}>
-            <MiniLogo team={m.teamB} badge={m.badgeB} size={54} />
-            <div style={{ fontWeight: 700, marginTop: 6, fontSize: 13 }}>{m.teamB.name}</div>
-          </div>
+        <div style={{ textAlign: "center", padding: "4px 0 6px" }}>
+          {(() => {
+            const live = m.status === "Live";
+            const onBreakNow = live && (m.halfPrompt || m.onBreak);
+            const paused = live && !m.running && !onBreakNow;
+            let chipText, chipColor, chipBg, chipBorder;
+            if (onBreakNow) {
+              chipText = m.onBreak ? "HALF TIME · " + Math.floor(breakLeft(m) / 60) + ":" + String(breakLeft(m) % 60).padStart(2, "0") : "HALF TIME";
+              chipColor = "#EBC65C"; chipBg = "rgba(214,168,29,.12)"; chipBorder = "rgba(214,168,29,.35)";
+            } else if (paused) {
+              chipText = "PAUSED"; chipColor = "#EBC65C"; chipBg = "rgba(214,168,29,.12)"; chipBorder = "rgba(214,168,29,.35)";
+            } else if (live) {
+              chipText = "LIVE · " + minute(m) + "\u2032"; chipColor = "#e8776a"; chipBg = "rgba(232,68,46,.12)"; chipBorder = "rgba(232,68,46,.35)";
+            } else if (m.status === "ResultPublished") {
+              chipText = "FULL TIME"; chipColor = "#7d8f83"; chipBg = "#141c16"; chipBorder = "#24302a";
+            } else if (m.status === "AwaitingScore") {
+              chipText = "AWAITING RESULT"; chipColor = "#EBC65C"; chipBg = "rgba(214,168,29,.10)"; chipBorder = "rgba(214,168,29,.3)";
+            } else if (m.status === "Cancelled") {
+              chipText = "CANCELLED"; chipColor = "#e08a7d"; chipBg = "rgba(198,80,63,.12)"; chipBorder = "rgba(198,80,63,.3)";
+            } else {
+              chipText = untilKickoff ? String(untilKickoff).toUpperCase() : "SCHEDULED"; chipColor = "#7d8f83"; chipBg = "#141c16"; chipBorder = "#24302a";
+            }
+            const scoreText = m.status === "ResultPublished" ? (m.finalA + "\u2013" + m.finalB)
+              : live ? ((m.liveA ?? 0) + "\u2013" + (m.liveB ?? 0))
+              : m.status === "AwaitingScore" ? "FT" : m.status === "Cancelled" ? "\u2014" : "VS";
+            return (
+              <>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: chipBg, border: "1px solid " + chipBorder, borderRadius: 5, padding: "3px 10px", fontSize: 9.5, fontWeight: 700, color: chipColor, letterSpacing: "1.4px", marginBottom: 14 }}>
+                  {live && !onBreakNow && !paused && <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#E8442E", display: "inline-block" }} />}
+                  {chipText}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+                    <MiniLogo team={m.teamA} badge={m.badgeA} size={30} />
+                    <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
+                  </div>
+                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 36, color: live ? "#D6A81D" : "#F7F4EA", flexShrink: 0 }}>{scoreText}</div>
+                  <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+                    <MiniLogo team={m.teamB} badge={m.badgeB} size={30} />
+                    <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 12, letterSpacing: ".4px" }}>
+                  {m.location}{m.date ? " \u00b7 " + m.date : ""}{m.time ? " at " + m.time : ""}
+                </div>
+                {captainName && (
+                  <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 4, letterSpacing: ".4px" }}>
+                    Hosted by <span style={{ color: "#B9C7BC", fontWeight: 600 }}>{captainName}</span>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
-
-        <div style={{ fontSize: 13, color: "#8FA396" }}>📍 {m.location} · {m.date} at {m.time}</div>
-        {captainName && <div style={{ fontSize: 13, color: "#8FA396" }}>🧢 Hosted by Captain <span style={{ color: "#E6B31E", fontWeight: 700 }}>{captainName}</span></div>}
 
         {/* TEAM SHEETS — swipeable: card 1 rosters, card 2 form & past games */}
         {(() => {
@@ -4748,11 +4777,12 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                           {names.length > 0
                             ? names.map((p, j) => {
                                 const linked = linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === p.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase());
-                                if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "4px 0", color: "#F5F0E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
+                                if (!linked) return <div key={j} style={{ fontSize: 12.5, padding: "6px 0", color: "#8FA396", borderBottom: "1px solid #121a14", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</div>;
                                 return (
                                   <div key={j} className="tappable" onClick={() => onOpenPlayer && onOpenPlayer(linked.id)}
-                                    style={{ fontSize: 12.5, padding: "4px 0", color: "#E6B31E", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {p} ›
+                                    style={{ fontSize: 12.5, padding: "6px 0", color: "#F7F4EA", fontWeight: 600, cursor: "pointer", borderBottom: "1px solid #121a14", display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p}</span>
+                                    <span style={{ marginLeft: "auto", fontSize: 9, color: "#4e5c53", flexShrink: 0 }}>›</span>
                                   </div>
                                 );
                               })
@@ -5699,7 +5729,7 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
 
       {/* Tabs */}
       <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 22, marginTop: 13, marginBottom: 17 }}>
-        {[["overview", "Overview"], ["following", "Following"], ["settings", "Settings"]].map((t) => (
+        {[["overview", "Overview"]].concat(me.role === "Fan" ? [["following", "Following"]] : []).concat([["settings", "Settings"]]).map((t) => (
           <button key={t[0]} onClick={() => setSelfTab(t[0])}
             style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: selfTab === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: selfTab === t[0] ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: "1.5px solid " + (selfTab === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
             {t[1]}
@@ -5727,8 +5757,14 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
             </>
           ) : (
             <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center", marginBottom: 18 }}>
-              <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>No teams backed yet</div>
-              <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Tap Support on any team profile to follow their season here.</div>
+              <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>
+                {me.role === "Captain" ? "No teams created yet" : "No teams backed yet"}
+              </div>
+              <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>
+                {me.role === "Captain"
+                  ? "Create a team from My Teams to reuse the same squad across matches."
+                  : "Tap Support on any team profile to follow their season here."}
+              </div>
             </div>
           )}
 
