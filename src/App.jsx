@@ -403,6 +403,84 @@ function BadgeIconPaths({ name }) {
 }
 
 
+/* ---------- STATE PICKER — one component behind every state selector.
+   Replaces the native <select>, whose dropdown is drawn by the OS and so can't
+   be styled. Shows match counts where they're supplied, and a search box because
+   37 states is too many to scroll comfortably. ---------- */
+function StatePicker({ value, onChange, counts = null, allLabel = "All states", label = "Showing", disabled = false, placeholder = "Select your state…" }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+
+  const options = allLabel ? ["All"].concat(NG_STATES) : NG_STATES;
+  const shown = options.filter((st) => {
+    if (!q.trim()) return true;
+    const name = st === "All" ? allLabel : st;
+    return name.toLowerCase().includes(q.trim().toLowerCase());
+  });
+  const display = value === "All" ? allLabel : (value || placeholder);
+  const isPlaceholder = !value && !allLabel;
+
+  const close = () => { setOpen(false); setQ(""); };
+
+  return (
+    <>
+      <button type="button" disabled={disabled} onClick={() => !disabled && setOpen(true)}
+        style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", fontFamily: "inherit",
+          background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 10, padding: "9px 12px",
+          opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer" }}>
+        <span style={{ width: 22, height: 22, borderRadius: 6, background: "rgba(230,179,30,.12)", border: "1px solid rgba(230,179,30,.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, flexShrink: 0 }}>📍</span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 8, letterSpacing: "1.2px", textTransform: "uppercase", color: "#5a6a5f", fontWeight: 700 }}>{label}</span>
+          <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: isPlaceholder ? "#5a6a5f" : "#F5F0E1", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{display}</span>
+        </span>
+        <span style={{ color: "#8FA396", fontSize: 10, flexShrink: 0 }}>⌄</span>
+      </button>
+
+      {open && (
+        <>
+          <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 96 }} />
+          <div style={{ position: "fixed", left: 12, right: 12, bottom: 12, maxWidth: 430, margin: "0 auto", maxHeight: "72vh", display: "flex", flexDirection: "column", background: "#0E140F", border: "1px solid #243128", borderRadius: 14, overflow: "hidden", zIndex: 97, boxShadow: "0 -10px 30px rgba(0,0,0,.5)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 13px", borderBottom: "1px solid #1b241c", flexShrink: 0 }}>
+              <div style={{ fontSize: 9.5, letterSpacing: "1.4px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700 }}>
+                {allLabel ? "Filter by state" : "Select your state"}
+              </div>
+              <button type="button" onClick={close} style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 11, color: "#D6A81D", cursor: "pointer", fontWeight: 600, padding: 0 }}>Done</button>
+            </div>
+
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search states…"
+              style={{ margin: "10px 13px", background: "#131a15", border: "1px solid #243128", borderRadius: 8, padding: "9px 11px", fontSize: 12, color: "#F5F0E1", fontFamily: "inherit", outline: "none", flexShrink: 0 }} />
+
+            <div style={{ overflowY: "auto", flex: 1 }}>
+              {shown.length === 0 && (
+                <div style={{ padding: "22px 14px", textAlign: "center", fontSize: 11.5, color: "#5a6a5f" }}>No state matches "{q}"</div>
+              )}
+              {shown.map((st, i) => {
+                const active = value === st;
+                const n = counts && st !== "All" ? (counts[st] || 0) : null;
+                return (
+                  <button type="button" key={st} className="tappable"
+                    onClick={() => { onChange(st); close(); }}
+                    style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+                      padding: "10px 13px", border: 0, borderBottom: i < shown.length - 1 ? "1px solid #121a14" : "none",
+                      background: active ? "rgba(230,179,30,.07)" : "transparent",
+                      color: active ? "#F7F4EA" : "#EDEAE0", fontSize: 12, fontWeight: active ? 600 : 400 }}>
+                    <span style={{ fontSize: 11 }}>{st === "All" ? "🌍" : "📍"}</span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {st === "All" ? allLabel : st}
+                    </span>
+                    {n !== null && n > 0 && <span style={{ fontSize: 9.5, color: "#4e5c53", flexShrink: 0 }}>{n}</span>}
+                    {active && <span style={{ color: "#E6B31E", fontSize: 11, flexShrink: 0 }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState("auth");
   const screenRef = useRef("auth");
@@ -505,6 +583,21 @@ export default function App() {
   const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
+  /* Notification bell. Read state is persisted per item id, so "mark all read"
+     survives a reload and dismissed items don't come back on the next render. */
+  const [bellOpen, setBellOpen] = useState(false);
+  const [readIds, setReadIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("am-read") || "[]"); } catch (e) { return []; }
+  });
+  const markRead = (ids) => {
+    setReadIds((prev) => {
+      const next = Array.from(new Set(prev.concat(ids)));
+      /* Keep the stored list from growing without bound as matches age out. */
+      const trimmed = next.slice(-400);
+      try { localStorage.setItem("am-read", JSON.stringify(trimmed)); } catch (e) { /* private mode */ }
+      return trimmed;
+    });
+  };
   const [booting, setBooting] = useState(true);
   const [splashHeld, setSplashHeld] = useState(true); // keeps the full-bleed splash up for a minimum time, even on a fast connection
   useEffect(() => {
@@ -1036,6 +1129,37 @@ export default function App() {
   /* Past results older than 30 days are retired from view (and purged nightly by the database) */
   const isFresh = (m) => m.status !== "ResultPublished" || (now - new Date(m.date).getTime()) < 30 * 86400000;
   const pendingScores = me ? matches.filter((m) => m.status === "AwaitingScore" && m.createdBy === me.id) : [];
+
+  /* Bell feed — kick-off reminders and awaiting-score prompts are derived from
+     match state rather than stored, so they stay accurate without extra SQL.
+     Join requests come from real rows. Each needs a stable id so "read" sticks. */
+  const bellItems = useMemo(() => {
+    if (!me || me.role !== "Captain") return [];
+    const out = [];
+    matches.forEach((m) => {
+      if (m.createdBy !== me.id) return;
+      if (m.status === "Scheduled" && isDue(m)) {
+        out.push({ id: "ko-" + m.id, kind: "kickoff", icon: "⏰", title: "Kick-off reached",
+          sub: `${m.teamA.name} vs ${m.teamB.name} · ${m.time}`, matchId: m.id,
+          at: new Date(`${m.date}T${m.time}`).getTime() });
+      }
+      if (m.status === "AwaitingScore") {
+        out.push({ id: "sc-" + m.id, kind: "score", icon: "🏁", title: "Result needed",
+          sub: `${m.teamA.name} vs ${m.teamB.name}`, matchId: m.id,
+          at: m.awaitingSince ? new Date(m.awaitingSince).getTime() : 0 });
+      }
+    });
+    (teamRequests || []).filter((r) => r.status === "pending" &&
+      savedTeams.some((t) => t.id === r.teamId && t.captainId === me.id)).forEach((r) => {
+      const t = savedTeams.find((x) => x.id === r.teamId);
+      out.push({ id: "rq-" + r.id, kind: "request", icon: "👤", title: "Player wants to join",
+        sub: `${r.rosterName || (users.find((u) => u.id === r.playerId) || {}).name || "A player"} · ${t ? t.name : ""}`,
+        at: r.createdAt ? new Date(r.createdAt).getTime() : 0 });
+    });
+    return out.sort((a, b) => b.at - a.at);
+  }, [me, matches, teamRequests, savedTeams, now]);
+
+  const unreadBell = bellItems.filter((n) => !readIds.includes(n.id));
   /* Hero card drifts on its own between the text card and the photo, no tap needed —
      randomized pace (3.5-6.5s) so it doesn't feel mechanical. Only runs while the feed
      is actually on screen; otherwise it would re-render the whole app for nothing. */
@@ -1654,10 +1778,9 @@ export default function App() {
                   </div>
                   <div>
                     <div style={{ fontSize: 12, color: T.muted, marginBottom: 4, fontWeight: 700 }}>📍 Your state (so we can show you matches near you)</div>
-                    <select className="input" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })}>
-                      <option value="">Select your state…</option>
-                      {NG_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
-                    </select>
+                    <StatePicker value={form.state} allLabel={null} label="Your state"
+                      placeholder="Select your state…"
+                      onChange={(st) => setForm({ ...form, state: st })} />
                   </div>
                   <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
                     ⚽ <b>Captains</b> host matches, run the timer, and publish the official scores. 📣 <b>Fans</b> follow matches, like the big moments, and vote Man of the Match.
@@ -1710,6 +1833,19 @@ export default function App() {
     return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
   };
   const captainState = (m) => (users.find((u) => u.id === m.createdBy) || {}).state || "";
+
+  /* How many published matches sit in each state — shown beside the state name
+     so people can see where the activity actually is. Deliberately a plain
+     function call, not a hook: it sits below an early return. */
+  const stateCounts = (() => {
+    const out = {};
+    matches.forEach((m) => {
+      if (!m.published) return;
+      const st = captainState(m);
+      if (st) out[st] = (out[st] || 0) + 1;
+    });
+    return out;
+  })();
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
   const published = publishedAll.filter((m) => m.status !== "AwaitingScore" &&
     (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
@@ -2077,6 +2213,23 @@ export default function App() {
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
             <div className="display brand-title" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
+            {me.role === "Captain" && (
+              <div style={{ position: "relative", marginLeft: "auto", marginRight: 8 }}>
+                <button title="Notifications"
+                  onClick={() => { setBellOpen((v) => !v); }}
+                  style={{ position: "relative", width: 34, height: 34, borderRadius: 10, cursor: "pointer",
+                    background: bellOpen ? "rgba(230,179,30,.12)" : "none",
+                    border: `1px solid ${bellOpen || unreadBell.length > 0 ? "#E6B31E" : "#2A3A2E"}`,
+                    color: "#F5F0E1", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  🔔
+                  {unreadBell.length > 0 && (
+                    <span style={{ position: "absolute", top: -6, right: -6, background: "#E8442E", color: "#fff", fontSize: 9, fontWeight: 700, minWidth: 17, height: 17, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", border: "2px solid #0C120E" }}>
+                      {unreadBell.length > 9 ? "9+" : unreadBell.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
             <div className={`user-pill ${me.role !== "Admin" ? "user-pill-clickable" : ""}`} title="View profile" onClick={() => me.role !== "Admin" && setPage("profile")}>
               <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
@@ -2105,15 +2258,28 @@ export default function App() {
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px 60px" }}>
 
         {/* KICK-OFF PERMISSION BANNER — scheduled time is due, captain decides */}
-        {me.role === "Captain" && matches.filter((m) => m.status === "Scheduled" && m.createdBy === me.id && isDue(m)).map((m) => (
-          <div key={"ko-" + m.id} className="banner" style={{ marginBottom: 16, background: "#14532D" }}>
-            <span>⚽ Kick-off time reached: {m.teamA.name} vs {m.teamB.name} ({m.time}). The match starts only when you say so.</span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn btn-gold" style={{ padding: "8px 14px" }} onClick={() => startMatch(m)}>▶ Start match</button>
-              <button className="btn btn-ghost" style={{ padding: "8px 14px", borderColor: "rgba(255,255,255,.35)", color: "#fff" }} onClick={() => openMatchDetail(m.id)}>📅 Postpone</button>
+        {me.role === "Captain" && (() => {
+          const due = matches.filter((m) => m.status === "Scheduled" && m.createdBy === me.id && isDue(m));
+          if (due.length === 0) return null;
+          /* One compact line however many are due — the bell holds the detail. */
+          return (
+            <div className="tappable" onClick={() => setBellOpen(true)}
+              style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 11px 11px 0", padding: 12, marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 9, letterSpacing: "1.3px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>
+                  {due.length === 1 ? "1 match ready" : `${due.length} matches ready`}
+                </div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 6, color: "#F7F4EA" }}>Kick-off time reached</div>
+                <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 3, lineHeight: 1.45 }}>
+                  {due.length === 1
+                    ? `${due[0].teamA.name} vs ${due[0].teamB.name} — tap to start or postpone.`
+                    : "Tap to start them, or postpone."}
+                </div>
+              </div>
+              <span style={{ fontSize: 11, color: "#4e5c53", flexShrink: 0 }}>›</span>
             </div>
-          </div>
-        ))}
+          );
+        })()}
 
         {/* SCORE REQUEST BANNER — carousel when a captain has more than one overdue score */}
         {pendingScores.length > 0 && (() => {
@@ -2160,11 +2326,10 @@ export default function App() {
 
             {/* FILTERS */}
             <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13, opacity: feedFollowedOnly ? 0.4 : 1 }} value={feedState} disabled={feedFollowedOnly}
-                onChange={(e) => { setFeedFollowedOnly(false); setFeedState(e.target.value); }}>
-                <option value="All">🌍 All states</option>
-                {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
-              </select>
+              <div style={{ minWidth: 190, flex: "1 1 190px" }}>
+                <StatePicker value={feedState} counts={stateCounts} disabled={feedFollowedOnly}
+                  onChange={(st) => { setFeedFollowedOnly(false); setFeedState(st); }} />
+              </div>
               {me.role === "Fan" && follows.length > 0 && (
                 <button className={`btn ${feedFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
                   onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setFeedState("All"); }}>🔔 Captains I follow</button>
@@ -2912,10 +3077,10 @@ export default function App() {
             {!viewCaptain ? (
               <>
               <div style={{ marginBottom: 14 }}>
-                <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13 }} value={capStateFilter} onChange={(e) => setCapStateFilter(e.target.value)}>
-                  <option value="All">🌍 Captains in all states</option>
-                  {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
-                </select>
+                <div style={{ maxWidth: 260 }}>
+                  <StatePicker value={capStateFilter} allLabel="Captains in all states"
+                    onChange={(st) => setCapStateFilter(st)} />
+                </div>
               </div>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
@@ -3210,11 +3375,10 @@ export default function App() {
               Every live match — filter by state, or just the captains you follow.
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
-              <select className="input" style={{ width: "auto", padding: "9px 12px", fontSize: 13, opacity: liveFollowedOnly ? 0.4 : 1 }} value={liveStateFilter} disabled={liveFollowedOnly}
-                onChange={(e) => { setLiveFollowedOnly(false); setLiveStateFilter(e.target.value); }}>
-                <option value="All">🌍 All states</option>
-                {NG_STATES.map((st) => <option key={st} value={st}>📍 {st}</option>)}
-              </select>
+              <div style={{ minWidth: 190, flex: "1 1 190px" }}>
+                <StatePicker value={liveStateFilter} counts={stateCounts} disabled={liveFollowedOnly}
+                  onChange={(st) => { setLiveFollowedOnly(false); setLiveStateFilter(st); }} />
+              </div>
               {me.role === "Fan" && follows.length > 0 && (
                 <button className={`btn ${liveFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
                   onClick={() => { setLiveFollowedOnly(!liveFollowedOnly); if (!liveFollowedOnly) setLiveStateFilter("All"); }}>🔔 Captains I follow</button>
@@ -3428,6 +3592,67 @@ export default function App() {
       {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
+      {/* NOTIFICATION PANEL — tap-outside closes it */}
+      {bellOpen && me.role === "Captain" && (
+        <>
+          <div onClick={() => setBellOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 78, background: "transparent" }} />
+          <div style={{ position: "fixed", top: 62, right: 12, width: 288, maxWidth: "calc(100vw - 24px)", maxHeight: "70vh", overflowY: "auto", background: "#0E140F", border: "1px solid #243128", borderRadius: 13, boxShadow: "0 14px 34px rgba(0,0,0,.6)", zIndex: 79 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 12px", borderBottom: "1px solid #1b241c", position: "sticky", top: 0, background: "#0E140F" }}>
+              <div style={{ fontSize: 9.5, letterSpacing: "1.4px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700 }}>Notifications</div>
+              {unreadBell.length > 0 && (
+                <button onClick={() => markRead(bellItems.map((n) => n.id))}
+                  style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 10, color: "#D6A81D", cursor: "pointer", padding: 0 }}>
+                  Mark all read
+                </button>
+              )}
+            </div>
+
+            {bellItems.length === 0 && (
+              <div style={{ padding: "26px 14px", textAlign: "center" }}>
+                <div style={{ fontSize: 11.5, color: "#B9C7BC", fontWeight: 600 }}>You're all caught up</div>
+                <div style={{ fontSize: 9.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Kick-off reminders and join requests will show here.</div>
+              </div>
+            )}
+
+            {bellItems.map((n, i) => {
+              const unread = !readIds.includes(n.id);
+              return (
+                <div key={n.id}
+                  style={{ display: "flex", gap: 9, padding: "10px 12px", borderBottom: i < bellItems.length - 1 ? "1px solid #121a14" : "none",
+                    background: unread ? "rgba(214,168,29,.05)" : "transparent",
+                    borderLeft: unread ? "2px solid #D6A81D" : "2px solid transparent" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, background: "#141c16", border: "1px solid #1f2a22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, flexShrink: 0 }}>{n.icon}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA", lineHeight: 1.35 }}>{n.title}</div>
+                    <div style={{ fontSize: 9.5, color: "#5a6a5f", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.sub}</div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
+                      {n.kind === "kickoff" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); const m = matches.find((x) => x.id === n.matchId); if (m) startMatch(m); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Start match</button>
+                      )}
+                      {(n.kind === "kickoff" || n.kind === "score") && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openMatchDetail(n.matchId); }}
+                          style={{ fontSize: 9.5, background: "none", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>
+                          {n.kind === "score" ? "Submit result" : "Open"}
+                        </button>
+                      )}
+                      {n.kind === "request" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); setPage("myteams"); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Review</button>
+                      )}
+                      {unread && (
+                        <button className="tappable" onClick={() => markRead([n.id])}
+                          style={{ fontSize: 9.5, background: "none", color: "#4e5c53", padding: "4px 8px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer", marginLeft: "auto" }}>Mark read</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
       {showFixtures && (() => {
         const list = allUpcomingFixtures.filter((m) => fixState === "All" || captainState(m) === fixState);
         const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
