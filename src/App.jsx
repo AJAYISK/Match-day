@@ -3196,6 +3196,7 @@ export default function App() {
           onOpenPlayer={(id) => openPlayerProfile(id)}
           allMatches={matches}
           onPosterLineup={() => setLineupPosterFor(openMatch)}
+          matchAwards={playerAwards.filter((a) => a.matchId === openMatch)}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -4598,7 +4599,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -4615,6 +4616,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   const [reqOpen, setReqOpen] = useState(false);
   const [streamInput, setStreamInput] = useState("");
   const [ctrlTab, setCtrlTab] = useState("score"); // score | stats | commentary | stream — captain's live-match control tabs
+  const [detailTab, setDetailTab] = useState("summary"); // summary | lineups | form — what fans and captains browse
   const [commentaryInput, setCommentaryInput] = useState("");
   const shareStream = async (m) => {
     const text = `🔴 Watch ${m.teamA.name} vs ${m.teamB.name} live: ${m.streamUrl}`;
@@ -4732,6 +4734,65 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
           })()}
         </div>
 
+        {/* GOALS — who scored, readable at a glance. Published results only. */}
+        {m.status === "ResultPublished" && (m.scorersA || m.scorersB) && (() => {
+          const parse = (str, teamName, isOurs) => (str || "").split(",").map((c) => c.trim()).filter(Boolean).map((part) => {
+            const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+            return { name: (mm ? mm[1] : part).trim(), n: mm ? parseInt(mm[2], 10) : 1, teamName, isOurs };
+          });
+          const goals = parse(m.scorersA, m.teamA.name, true).concat(parse(m.scorersB, m.teamB.name, false));
+          if (goals.length === 0) return null;
+          return (
+            <div>
+              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>Goals</div>
+              {goals.map((g, i) => {
+                const linked = linkedPlayers.find((pl) =>
+                  pl.rosterName.trim().toLowerCase() === g.name.trim().toLowerCase() &&
+                  (pl.teamName || "").trim().toLowerCase() === (g.teamName || "").trim().toLowerCase());
+                return (
+                  <div key={i} className={linked ? "tappable" : ""}
+                    onClick={() => linked && onOpenPlayer && onOpenPlayer(linked.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #121a14", cursor: linked ? "pointer" : "default" }}>
+                    <span style={{ fontSize: 13, flexShrink: 0 }}>⚽</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: linked ? 600 : 500, color: g.isOurs ? "#F7F4EA" : "#B9C7BC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {g.name}{g.n > 1 ? ` ×${g.n}` : ""}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{g.teamName}</div>
+                    </div>
+                    {linked && <span style={{ fontSize: 9, color: "#4e5c53", flexShrink: 0 }}>›</span>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* MAN OF THE MATCH — only the award a captain actually gave for this match */}
+        {matchAwards.length > 0 && (
+          <div>
+            <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>Awarded this match</div>
+            {matchAwards.map((a) => {
+              const info = AWARD_TYPES[a.awardType] || { label: a.awardType, art: "motm" };
+              const player = linkedPlayers.find((pl) => pl.id === a.playerId);
+              return (
+                <div key={a.id} className={player ? "tappable" : ""}
+                  onClick={() => player && onOpenPlayer && onOpenPlayer(player.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 0", borderBottom: "1px solid #121a14", cursor: player ? "pointer" : "default" }}>
+                  <TrophyIcon art={info.art} size={26} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: "#F7F4EA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {player ? player.name : "Player"}
+                    </div>
+                    <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{info.label}</div>
+                  </div>
+                  {player && <span style={{ fontSize: 9, color: "#4e5c53", flexShrink: 0 }}>›</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* TEAM SHEETS — swipeable: card 1 rosters, card 2 form & past games */}
         {(() => {
           const teamGames = (teamName) => allMatches
@@ -4746,15 +4807,13 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
           };
           return (
             <div className="card" style={{ fontSize: 13, padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 8 }}>
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: sheetCard === 0 ? "#E6B31E" : "#3a4a3e" }} />
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: sheetCard === 1 ? "#E6B31E" : "#3a4a3e" }} />
-              </div>
-              <div style={{ fontSize: 10, color: "#8FA396", textAlign: "center", marginBottom: 10 }}>
-                {sheetCard === 0 ? "← swipe for form & past games" : "← swipe back for rosters →"}
-              </div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#8FA396", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10, textAlign: "center" }}>
-                {sheetCard === 0 ? "Team Sheets" : "Form & Past Games"}
+              <div style={{ display: "flex", gap: 20, borderBottom: "1px solid #151c16", marginBottom: 14 }}>
+                {[[0, "Line-ups"], [1, "Form"]].map((t) => (
+                  <button key={t[0]} onClick={() => setSheetCard(t[0])}
+                    style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12, color: sheetCard === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: sheetCard === t[0] ? 600 : 500, padding: "10px 0", cursor: "pointer", borderBottom: "1.5px solid " + (sheetCard === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
+                    {t[1]}
+                  </button>
+                ))}
               </div>
               <div style={{ display: "flex" }}
                 onTouchStart={(e) => { sheetTouchX.current = e.touches[0].clientX; }}
@@ -4802,7 +4861,10 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                           <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                             {games.slice(0, 5).map((g, k) => {
                               const o = outcome(g, team.name);
-                              return <div key={k} style={{ width: 18, height: 18, borderRadius: 4, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", background: o === "W" ? "#3FA35B" : o === "L" ? "#C6503F" : "#54615a" }}>{o}</div>;
+                              return <div key={k} style={{ width: 19, height: 19, borderRadius: 4, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center",
+                                background: o === "W" ? "rgba(63,163,91,.16)" : o === "L" ? "rgba(198,80,63,.14)" : "rgba(140,150,145,.14)",
+                                color: o === "W" ? "#5fcf87" : o === "L" ? "#e08a7d" : "#93a099",
+                                border: "1px solid " + (o === "W" ? "rgba(63,163,91,.3)" : o === "L" ? "rgba(198,80,63,.28)" : "rgba(140,150,145,.25)") }}>{o}</div>;
                             })}
                           </div>
                         )}
@@ -4825,26 +4887,6 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             </div>
           );
         })()}
-
-        {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
-        {isOwner && me.role === "Captain" && (m.status === "Scheduled" || (m.status === "Live" && ctrlTab === "stream")) && (
-          <div className="card" style={{ display: "grid", gap: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>🔴 Live Stream</div>
-              <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => setStreamHelpOpen(true)}>📖 How to go live — step by step</button>
-            </div>
-            <input className="input" maxLength={300} placeholder="Paste your Facebook live video link here"
-              value={streamInput} onChange={(e) => setStreamInput(e.target.value.slice(0, 300))} />
-            <div style={{ display: "flex", gap: 8 }}>
-              {m.streamUrl && (
-                <button className="btn btn-ghost" style={{ flex: 1, color: "#E8442E", borderColor: "#3a1f1a", fontSize: 13 }}
-                  onClick={() => { onSetStream(m, null); setStreamInput(""); }}>Remove</button>
-              )}
-              <button className="btn btn-gold" style={{ flex: 2, fontSize: 13, opacity: streamInput.trim() ? 1 : .5 }} disabled={!streamInput.trim()}
-                onClick={() => onSetStream(m, streamInput.trim())}>{m.streamUrl ? "Update stream link" : "Save stream link"}</button>
-            </div>
-          </div>
-        )}
 
         {/* STREAM INSTRUCTIONS MODAL */}
         {streamHelpOpen && <StreamHelpModal onClose={() => setStreamHelpOpen(false)} />}
@@ -4928,6 +4970,25 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                 ))}
               </div>
             )}
+          {/* LIVE STREAM — captain attaches a Facebook/YouTube live link */}
+          {isOwner && me.role === "Captain" && (m.status === "Scheduled" || (m.status === "Live" && ctrlTab === "stream")) && (
+            <div className="card" style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#E6B31E", letterSpacing: ".12em", textTransform: "uppercase" }}>🔴 Live Stream</div>
+                <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => setStreamHelpOpen(true)}>📖 How to go live — step by step</button>
+              </div>
+              <input className="input" maxLength={300} placeholder="Paste your Facebook live video link here"
+                value={streamInput} onChange={(e) => setStreamInput(e.target.value.slice(0, 300))} />
+              <div style={{ display: "flex", gap: 8 }}>
+                {m.streamUrl && (
+                  <button className="btn btn-ghost" style={{ flex: 1, color: "#E8442E", borderColor: "#3a1f1a", fontSize: 13 }}
+                    onClick={() => { onSetStream(m, null); setStreamInput(""); }}>Remove</button>
+                )}
+                <button className="btn btn-gold" style={{ flex: 2, fontSize: 13, opacity: streamInput.trim() ? 1 : .5 }} disabled={!streamInput.trim()}
+                  onClick={() => onSetStream(m, streamInput.trim())}>{m.streamUrl ? "Update stream link" : "Save stream link"}</button>
+              </div>
+            </div>
+          )}
             {m.status === "Scheduled" && (isDue(m) ? (
               <>
                 <button className="btn btn-live" onClick={() => onStart(m)}>▶ Start Match (90-min timer)</button>
