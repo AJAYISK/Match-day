@@ -4964,21 +4964,27 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
               )
             )}
             {m.status === "Live" && ctrlTab === "score" && m.halfPrompt && (
-              <div style={{ display: "grid", gap: 10, background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14 }}>
-                <div style={{ fontWeight: 700, color: "#E6B31E" }}>⏱ HALF TIME — the second half only starts when you say so.</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => onHalfTime(m, true)}>☕ 10-min break</button>
-                  <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => onHalfTime(m, false)}>▶ Start second half</button>
+              <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 11px 11px 0", padding: 14 }}>
+                <div style={{ fontSize: 9, letterSpacing: "1.4px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>Half time</div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginTop: 7, color: "#F7F4EA" }}>Ready for the second half?</div>
+                <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 4, lineHeight: 1.45 }}>Take a break or restart the clock when both teams are back on the pitch.</div>
+                <div style={{ display: "flex", gap: 7, marginTop: 12 }}>
+                  <button className="tappable" onClick={() => onHalfTime(m, false)}
+                    style={{ flex: 1, borderRadius: 8, padding: 10, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", background: "#D6A81D", color: "#12160f", border: 0, cursor: "pointer" }}>Start second half</button>
+                  <button className="tappable" onClick={() => onHalfTime(m, true)}
+                    style={{ flex: 1, borderRadius: 8, padding: 10, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", background: "none", border: "1px solid #1f2921", color: "#B9C7BC", cursor: "pointer" }}>10-min break</button>
                 </div>
               </div>
             )}
             {m.status === "Live" && ctrlTab === "score" && m.onBreak && (
-              <div style={{ background: "#1c1509", border: "1.5px solid #E6B31E", borderRadius: 12, padding: 14, textAlign: "center" }}>
-                <div style={{ fontWeight: 700, color: "#E6B31E" }}>☕ Half-time break</div>
-                <div className="display" style={{ fontSize: 30, color: "#F5F0E1" }}>
+              <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 11px 11px 0", padding: 14 }}>
+                <div style={{ fontSize: 9, letterSpacing: "1.4px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>Break in progress</div>
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 26, color: "#D6A81D", margin: "10px 0 4px" }}>
                   {Math.floor(breakLeft(m) / 60)}:{String(breakLeft(m) % 60).padStart(2, "0")}
                 </div>
-                <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }} onClick={() => onHalfTime(m, false)}>Skip break — start second half now</button>
+                <div style={{ fontSize: 10, color: "#7d8f83", lineHeight: 1.45 }}>Second half starts when you're ready — the clock stays paused until then.</div>
+                <button className="tappable" onClick={() => onHalfTime(m, false)}
+                  style={{ width: "100%", marginTop: 12, borderRadius: 8, padding: 10, fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", background: "#D6A81D", color: "#12160f", border: 0, cursor: "pointer" }}>Start second half now</button>
               </div>
             )}
             {m.status === "Live" && ctrlTab === "score" && !m.halfPrompt && !m.onBreak && (
