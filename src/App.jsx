@@ -1462,6 +1462,21 @@ export default function App() {
   /* These two must live ABOVE the booting/splash early return — React requires the
      same number of hooks on every render, and an early return between them would
      change that count and crash the app (React error #310). */
+  const captainState = (m) => (users.find((u) => u.id === m.createdBy) || {}).state || "";
+
+  /* How many published matches sit in each state — shown beside the state name
+     so people can see where the activity actually is. Deliberately a plain
+     function call, not a hook: it sits below an early return. */
+  const stateCounts = (() => {
+    const out = {};
+    matches.forEach((m) => {
+      if (!m.published) return;
+      const st = captainState(m);
+      if (st) out[st] = (out[st] || 0) + 1;
+    });
+    return out;
+  })();
+
   const leaderboards = useMemo(() => {
     const scoped = matches.filter((m) => m.status === "ResultPublished" &&
       (feedState === "All" || captainState(m) === feedState));
@@ -1832,20 +1847,6 @@ export default function App() {
     const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
     return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
   };
-  const captainState = (m) => (users.find((u) => u.id === m.createdBy) || {}).state || "";
-
-  /* How many published matches sit in each state — shown beside the state name
-     so people can see where the activity actually is. Deliberately a plain
-     function call, not a hook: it sits below an early return. */
-  const stateCounts = (() => {
-    const out = {};
-    matches.forEach((m) => {
-      if (!m.published) return;
-      const st = captainState(m);
-      if (st) out[st] = (out[st] || 0) + 1;
-    });
-    return out;
-  })();
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
   const published = publishedAll.filter((m) => m.status !== "AwaitingScore" &&
     (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
