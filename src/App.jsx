@@ -116,6 +116,56 @@ const T = {
   muted: "#8FA396",
 };
 
+/* ---------- DAY / NIGHT PALETTES ----------
+   Night is what the app has always been. Day is built for direct sunlight at the
+   pitch: a near-white surface leaves glare far less to wash out, and the accent
+   moves from gold to deep green because gold goes muddy on white.
+   Keys are shared, so a screen written against these swaps cleanly. */
+const PALETTES = {
+  night: {
+    name: "night",
+    bg: "#0A0D0A",          // page background
+    surface: "#161E19",     // cards
+    surfaceAlt: "#0E140F",  // panels inside cards
+    line: "#243128",        // dividers and borders
+    lineSoft: "#151c16",    // hairlines
+    text: "#F5F0E1",        // primary text
+    textStrong: "#F7F4EA",  // headings
+    textSoft: "#B9C7BC",    // secondary text
+    textMuted: "#8FA396",   // labels
+    textFaint: "#5a6a5f",   // least important
+    accent: "#E6B31E",      // primary accent (gold)
+    accentInk: "#1a1405",   // text on top of accent
+    live: "#E8442E",        // live red
+    liveInk: "#ffffff",
+    win: "#3FA35B", draw: "#54615a", loss: "#C6503F",
+    winBg: "rgba(63,163,91,.16)", drawBg: "rgba(140,150,145,.14)", lossBg: "rgba(198,80,63,.14)",
+    winText: "#5fcf87", drawText: "#93a099", lossText: "#e08a7d",
+    crest: "#14532D",
+  },
+  day: {
+    name: "day",
+    bg: "#FBFAF5",
+    surface: "#FFFFFF",
+    surfaceAlt: "#F4F2E9",
+    line: "#ddd8c8",
+    lineSoft: "#e6e1d2",
+    text: "#0d1a12",
+    textStrong: "#0a140e",
+    textSoft: "#3d4a42",
+    textMuted: "#4a5a50",
+    textFaint: "#6b7a70",
+    accent: "#0f5c2e",      // deep green — gold is unreadable on white
+    accentInk: "#ffffff",
+    live: "#B8121B",        // deeper red; bright red vibrates on white
+    liveInk: "#ffffff",
+    win: "#0d7a3a", draw: "#5c6b61", loss: "#a8161f",
+    winBg: "rgba(13,122,58,.12)", drawBg: "rgba(92,107,97,.12)", lossBg: "rgba(168,22,31,.10)",
+    winText: "#0a5c2c", drawText: "#48564d", lossText: "#8f1219",
+    crest: "#0f5c2e",
+  },
+};
+
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;700&display=swap');`;
 const uid = () => Math.random().toString(36).slice(2, 9);
 
@@ -438,6 +488,31 @@ export default function App() {
   const [feedState, setFeedState] = useState("All");
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
+  /* Appearance — "night" (default), "day" for sunlight at the pitch, or "auto"
+     which follows the phone's own setting. Persisted locally so it survives reloads. */
+  const [themeMode, setThemeMode] = useState(() => {
+    try { return localStorage.getItem("am_theme") || "night"; } catch (e) { return "night"; }
+  });
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
+    try { return !window.matchMedia || window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { return true; }
+  });
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e) => setSystemPrefersDark(e.matches);
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
+      else if (mq.removeListener) mq.removeListener(onChange);
+    };
+  }, []);
+  const activeTheme = themeMode === "auto" ? (systemPrefersDark ? "night" : "day") : themeMode;
+  const P = PALETTES[activeTheme] || PALETTES.night;
+  const setTheme = (mode) => {
+    setThemeMode(mode);
+    try { localStorage.setItem("am_theme", mode); } catch (e) { /* private mode — session only */ }
+  };
   const [liveStateFilter, setLiveStateFilter] = useState("All");
   const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
@@ -1375,34 +1450,34 @@ export default function App() {
   const css = `
     ${FONT}
     * { box-sizing: border-box; margin: 0; }
-    .md-root { min-height: 100vh; min-height: 100dvh; background: ${T.night}; color: ${T.chalk}; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
+    .md-root { min-height: 100vh; min-height: 100dvh; background: ${P.bg}; color: ${P.text}; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
     input, textarea, select { -webkit-user-select: text; user-select: text; }
     .display { font-family: 'Anton', sans-serif; letter-spacing: .02em; text-transform: uppercase; }
     .btn { border: 0; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-weight: 700; border-radius: 10px; padding: 12px 18px; font-size: 15px; transition: transform .08s; }
     .btn:active { transform: scale(.97); }
-    .btn-gold { background: ${T.floodlight}; color: ${T.night}; }
-    .btn-turf { background: ${T.turf}; color: ${T.chalk}; }
-    .btn-ghost { background: transparent; color: ${T.chalk}; border: 1.5px solid #2A3A2E; }
+    .btn-gold { background: ${P.accent}; color: ${P.accentInk}; }
+    .btn-turf { background: ${P.crest}; color: #fff; }
+    .btn-ghost { background: transparent; color: ${P.text}; border: 1.5px solid ${P.line}; }
     /* Immediate press feedback — without this, tapping a name feels unresponsive
        while the profile page mounts. */
     .tappable { transition: opacity .12s ease, transform .12s ease; -webkit-tap-highlight-color: transparent; }
     .tappable:active { opacity: .55; transform: scale(.985); }
-    .btn-live { background: ${T.live}; color: #fff; }
-    .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #2A3A2E; background: #121814; color: ${T.chalk}; font-size: 15px; font-family: 'Space Grotesk', sans-serif; outline: none; }
-    .input:focus { border-color: ${T.floodlight}; }
-    .card { background: #161E19; border: 1px solid #243128; border-radius: 16px; padding: 18px; }
+    .btn-live { background: ${P.live}; color: ${P.liveInk}; }
+    .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid ${P.line}; background: ${P.surfaceAlt}; color: ${P.text}; font-size: 15px; font-family: 'Space Grotesk', sans-serif; outline: none; }
+    .input:focus { border-color: ${P.accent}; }
+    .card { background: ${P.surface}; border: 1px solid ${P.line}; border-radius: 16px; padding: 18px; }
     .chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
     .scoreboard { background: radial-gradient(circle at 50% -20%, rgba(245,240,225,.10), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.05) 46px 48px), ${T.turfDeep}; border: 2px solid ${T.turf}; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .pulse { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
     .topnav { display: flex; gap: 4px; flex-wrap: wrap; }
-    .topnav button { background: none; border: 0; color: ${T.muted}; font-family: 'Space Grotesk'; font-weight: 700; font-size: 14px; padding: 10px 16px; cursor: pointer; border-radius: 8px; }
-    .topnav button.on { color: ${T.night}; background: ${T.floodlight}; }
-    .topnav button:hover:not(.on) { color: ${T.chalk}; }
+    .topnav button { background: none; border: 0; color: ${P.textMuted}; font-family: 'Space Grotesk'; font-weight: 700; font-size: 14px; padding: 10px 16px; cursor: pointer; border-radius: 8px; }
+    .topnav button.on { color: ${P.accentInk}; background: ${P.accent}; }
+    .topnav button:hover:not(.on) { color: ${P.text}; }
     .feedgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
     .hero { background: radial-gradient(circle at 50% -30%, rgba(245,240,225,.08), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.04) 46px 48px), linear-gradient(160deg, ${T.turfDeep}, ${T.night}); border: 1px solid #243128; border-radius: 20px; padding: 36px; margin-bottom: 24px; }
-    .hero-title { font-size: 38px; line-height: 1.1; color: ${T.chalk}; }
-    .banner { background: ${T.live}; color: #fff; border-radius: 12px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .hero-title { font-size: 38px; line-height: 1.1; color: ${P.textStrong}; }
+    .banner { background: ${P.live}; color: ${P.liveInk}; border-radius: 12px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     @media (prefers-reduced-motion: reduce) { .pulse { animation: none } }
     .md-root { overflow-x: hidden; }
     @keyframes spin { to { transform: rotate(360deg) } }
@@ -1437,8 +1512,8 @@ export default function App() {
     .user-pill-clickable { cursor: pointer; padding: 4px 8px; border-radius: 999px; border: 1px solid #2A3A2E; transition: all .12s; }
     .user-pill-clickable:hover { border-color: ${T.floodlight}; background: #161E19; }
     .user-pill-clickable:active { transform: scale(.97); }
-    .user-avatar-simple { width: 36px; height: 36px; border-radius: 50%; background: ${T.turf}; display: flex; align-items: center; justify-content: center; font-family: 'Anton', sans-serif; font-size: 15px; color: ${T.floodlight}; flex-shrink: 0; border: 1.5px solid rgba(255, 212, 71, .4); }
-    .user-logout { width: 30px; height: 30px; border-radius: 50%; border: 1px solid #2A3A2E; background: transparent; color: ${T.muted}; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .12s; }
+    .user-avatar-simple { width: 36px; height: 36px; border-radius: 50%; background: ${P.crest}; display: flex; align-items: center; justify-content: center; font-family: 'Anton', sans-serif; font-size: 15px; color: ${P.name === "day" ? "#fff" : P.accent}; flex-shrink: 0; border: 1.5px solid rgba(255, 212, 71, .4); }
+    .user-logout { width: 30px; height: 30px; border-radius: 50%; border: 1px solid ${P.line}; background: transparent; color: ${P.textMuted}; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .12s; }
     .user-logout:hover { color: ${T.live}; border-color: ${T.live}; }
     .card { max-width: 100%; min-width: 0; }
     .scoreboard { min-width: 0; }
@@ -2840,6 +2915,8 @@ export default function App() {
               : { a: ["Captains followed", follows.length], b: ["Teams backed", teamSupporters.filter((s) => s.fanId === me.id).length], c: ["Member since", me.joined || "—"] }}
             onSave={updateProfile}
             notify={notify}
+            themeMode={themeMode}
+            onSetTheme={setTheme}
           />
         )}
 
@@ -5738,7 +5815,7 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
 }
 
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch }) {
+function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch, themeMode, onSetTheme }) {
   const [selfTab, setSelfTab] = useState("overview");
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
@@ -5902,6 +5979,27 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
           <div style={{ fontSize: 12, color: "#8FA396" }}>Drop your phone/WhatsApp number so fans who want to join your team can reach you. Shown on your captain profile.</div>
           <input className="input" maxLength={60} placeholder="e.g. WhatsApp 0803 123 4567" value={contactInfo} onChange={(e) => setContactInfo(sanitizeText(e.target.value, 60))} />
           <button className="btn btn-gold" onClick={() => { onSave({ contactInfo }); notify("Team contact updated ✔ Fans can now see it on your profile."); }}>Save contact</button>
+        </div>
+      )}
+
+      {/* Appearance — day mode exists because pitches are sunny */}
+      {onSetTheme && (
+        <div className="card" style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>Appearance</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["night", "Night"], ["day", "Day"], ["auto", "Auto"]].map((o) => (
+              <button key={o[0]} onClick={() => onSetTheme(o[0])}
+                style={{ flex: 1, textAlign: "center", fontSize: 12, padding: 10, borderRadius: 8, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
+                  background: themeMode === o[0] ? "#D6A81D" : "none",
+                  border: themeMode === o[0] ? 0 : "1px solid #1f2921",
+                  color: themeMode === o[0] ? "#12160f" : "#B9C7BC" }}>
+                {o[1]}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 10.5, color: "#8FA396", lineHeight: 1.5 }}>
+            Day mode is built for bright sunlight at the pitch. Auto follows your phone's setting.
+          </div>
         </div>
       )}
 
