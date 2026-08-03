@@ -6691,7 +6691,7 @@ function LineupPosterModal({ m, onClose, notify }) {
             <text key={"a" + i} x="30" y={140 + i * rowH} textAnchor="start" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n.length > 18 ? n.slice(0, 17) + "…" : n}</text>
           ))}
           {namesA.length > maxShown && <text x="30" y={140 + maxShown * rowH} textAnchor="start" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="12" fontStyle="italic">+{namesA.length - maxShown} more</text>}
-
+          
           {namesB.length === 0 && <text x="295" y="140" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontSize="13">Squad TBA</text>}
           {namesB.slice(0, maxShown).map((n, i) => (
             <text key={"b" + i} x="370" y={140 + i * rowH} textAnchor="end" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="14">{n.length > 18 ? n.slice(0, 17) + "…" : n}</text>
