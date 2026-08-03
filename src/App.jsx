@@ -137,6 +137,9 @@ const PALETTES = {
     accent: "#E6B31E",       // primary accent
     accentSoft: "#D6A81D",   // accent on quieter elements
     onAccent: "#12160f",     // text on an accent-filled button
+    accentInk: "#12160f",    // alias used by the stylesheet
+    textMuted: "#8FA396",    // nav and secondary UI text
+    liveInk: "#ffffff",      // text on a live-red fill
     live: "#E8442E",
     liveText: "#e8776a",
     win: "#5fcf87", winBg: "rgba(63,163,91,.16)", winLine: "rgba(63,163,91,.3)",
@@ -158,6 +161,9 @@ const PALETTES = {
     accent: "#0f5c2e",
     accentSoft: "#0d7a3a",
     onAccent: "#FFFFFF",
+    accentInk: "#FFFFFF",
+    textMuted: "#4a5a50",
+    liveInk: "#ffffff",
     live: "#B8121B",
     liveText: "#B8121B",
     win: "#0d6b33", winBg: "rgba(13,107,51,.12)", winLine: "rgba(13,107,51,.35)",
@@ -6007,27 +6013,6 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
           <div style={{ fontSize: 12, color: "#8FA396" }}>Drop your phone/WhatsApp number so fans who want to join your team can reach you. Shown on your captain profile.</div>
           <input className="input" maxLength={60} placeholder="e.g. WhatsApp 0803 123 4567" value={contactInfo} onChange={(e) => setContactInfo(sanitizeText(e.target.value, 60))} />
           <button className="btn btn-gold" onClick={() => { onSave({ contactInfo }); notify("Team contact updated ✔ Fans can now see it on your profile."); }}>Save contact</button>
-        </div>
-      )}
-
-      {/* Appearance — day mode exists because pitches are sunny */}
-      {onSetTheme && (
-        <div className="card" style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-          <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>Appearance</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[["night", "Night"], ["day", "Day"], ["auto", "Auto"]].map((o) => (
-              <button key={o[0]} onClick={() => onSetTheme(o[0])}
-                style={{ flex: 1, textAlign: "center", fontSize: 12, padding: 10, borderRadius: 8, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
-                  background: themeMode === o[0] ? "#D6A81D" : "none",
-                  border: themeMode === o[0] ? 0 : "1px solid #1f2921",
-                  color: themeMode === o[0] ? "#12160f" : "#B9C7BC" }}>
-                {o[1]}
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: 10.5, color: "#8FA396", lineHeight: 1.5 }}>
-            Day mode is built for bright sunlight at the pitch. Auto follows your phone's setting.
-          </div>
         </div>
       )}
 
