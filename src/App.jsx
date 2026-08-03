@@ -501,38 +501,13 @@ export default function App() {
   const [feedState, setFeedState] = useState("All");
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
-  /* Appearance — "night" (default), "day" for sunlight at the pitch, or "auto"
-     which follows the phone's own setting. Persisted locally so it survives reloads. */
-  const [themeMode, setThemeMode] = useState(() => {
-    try { return localStorage.getItem("am_theme") || "night"; } catch (e) { return "night"; }
-  });
-  const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
-    try { return !window.matchMedia || window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { return true; }
-  });
-  useEffect(() => {
-    if (!window.matchMedia) return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (e) => setSystemPrefersDark(e.matches);
-    if (mq.addEventListener) mq.addEventListener("change", onChange);
-    else if (mq.addListener) mq.addListener(onChange);
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
-      else if (mq.removeListener) mq.removeListener(onChange);
-    };
-  }, []);
-  const activeTheme = themeMode === "auto" ? (systemPrefersDark ? "night" : "day") : themeMode;
-  const P = PALETTES[activeTheme] || PALETTES.night;
-  const setTheme = (mode) => {
-    setThemeMode(mode);
-    try { localStorage.setItem("am_theme", mode); } catch (e) { /* private mode — session only */ }
-  };
+  /* Single dark palette — the app is night-mode only. */
+  const P = PALETTES.night;
   const [liveStateFilter, setLiveStateFilter] = useState("All");
   const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
   const [booting, setBooting] = useState(true);
-  /* Appearance: "night" | "day" | "auto". Day mode exists for direct sunlight at
-     the pitch, where a bright screen survives glare far better than a dark one. */
   const [splashHeld, setSplashHeld] = useState(true); // keeps the full-bleed splash up for a minimum time, even on a fast connection
   useEffect(() => {
     const t = setTimeout(() => setSplashHeld(false), 1700);
@@ -2930,8 +2905,6 @@ export default function App() {
               : { a: ["Captains followed", follows.length], b: ["Teams backed", teamSupporters.filter((s) => s.fanId === me.id).length], c: ["Member since", me.joined || "—"] }}
             onSave={updateProfile}
             notify={notify}
-            themeMode={themeMode}
-            onSetTheme={setTheme}
           />
         )}
 
@@ -5830,7 +5803,7 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
 }
 
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch, themeMode, onSetTheme }) {
+function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch }) {
   const [selfTab, setSelfTab] = useState("overview");
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
@@ -5987,24 +5960,6 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
       {/* SETTINGS */}
       <div style={{ display: selfTab === "settings" ? "block" : "none" }}>
 
-      {/* Appearance — day mode is for direct sunlight at the pitch */}
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 10 }}>Appearance</div>
-        <div style={{ display: "flex", gap: 5 }}>
-          {[["night", "Night"], ["day", "Day"], ["auto", "Auto"]].map((t) => (
-            <button key={t[0]} onClick={() => onSetTheme(t[0])}
-              style={{ flex: 1, textAlign: "center", fontSize: 11.5, padding: 9, borderRadius: 8, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
-                background: themeMode === t[0] ? "#D6A81D" : "none",
-                border: themeMode === t[0] ? 0 : "1px solid #1f2921",
-                color: themeMode === t[0] ? "#12160f" : "#B9C7BC" }}>
-              {t[1]}
-            </button>
-          ))}
-        </div>
-        <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 10, lineHeight: 1.5 }}>
-          Day mode is built for bright sunlight at the pitch. Auto follows your phone's setting.
-        </div>
-      </div>
 
       {/* Captain team-join contact */}
       {me.role === "Captain" && (
