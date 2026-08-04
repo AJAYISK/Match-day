@@ -473,6 +473,69 @@ function RoleAvatar({ user, size = 30 }) {
 /* ---------- CREATE A TOURNAMENT — name, format, and which of your teams are in.
    Fixtures aren't generated here: captains tag matches to the tournament as
    they schedule them, which fits how local cups actually get organised. ---------- */
+/* ---------- BULK RESULTS — a host entering a day's scores at once. Live
+   scoring can't cover simultaneous matches, so this is the realistic path for
+   fixtures nobody was assigned. Blank rows are left untouched. ---------- */
+function BulkResultsModal({ tournament, fixtures, onPublish, onClose }) {
+  const [scores, setScores] = useState({});
+  const set = (id, side) => (e) => {
+    const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 2);
+    setScores((s) => ({ ...s, [id]: { ...(s[id] || {}), [side]: v } }));
+  };
+  const filled = fixtures.filter((m) => {
+    const s = scores[m.id];
+    return s && s.a !== undefined && s.a !== "" && s.b !== undefined && s.b !== "";
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 93, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
+        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "0 16px 24px" }}>
+        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 21, color: "#F7F4EA", marginBottom: 4 }}>Enter results</div>
+        <div style={{ fontSize: 11.5, color: "#7d8f83", marginBottom: 18 }}>{tournament.name} · fill in what you know</div>
+
+        {fixtures.length === 0 && (
+          <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center" }}>
+            <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>Nothing to enter</div>
+            <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Every fixture in this tournament already has a result.</div>
+          </div>
+        )}
+
+        {fixtures.map((m) => {
+          const s = scores[m.id] || {};
+          return (
+            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 0", borderBottom: "1px solid #121a14" }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
+              <input inputMode="numeric" value={s.a || ""} onChange={set(m.id, "a")} placeholder="–"
+                style={{ width: 32, height: 30, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 6, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 13, flexShrink: 0, outline: "none" }} />
+              <span style={{ color: "#3f4b43", fontSize: 10, flexShrink: 0 }}>–</span>
+              <input inputMode="numeric" value={s.b || ""} onChange={set(m.id, "b")} placeholder="–"
+                style={{ width: 32, height: 30, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 6, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 13, flexShrink: 0, outline: "none" }} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</span>
+            </div>
+          );
+        })}
+
+        {fixtures.length > 0 && (
+          <>
+            <button className="btn btn-gold" style={{ width: "100%", marginTop: 18, opacity: filled.length ? 1 : 0.4 }}
+              onClick={() => filled.length && onPublish(filled.map((m) => ({ match: m, a: +scores[m.id].a, b: +scores[m.id].b })))}>
+              {filled.length ? `Publish ${filled.length} result${filled.length === 1 ? "" : "s"}` : "Enter a score to publish"}
+            </button>
+            <div style={{ fontSize: 9.5, color: "#3f4b43", marginTop: 10, lineHeight: 1.5, textAlign: "center" }}>
+              Blank fixtures are left alone. Scorers can be added later from each match.
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
   const [name, setName] = useState("");
   const [format, setFormat] = useState("league");
@@ -696,6 +759,7 @@ export default function App() {
   const [tnTab, setTnTab] = useState("table");
   const [tnCreateOpen, setTnCreateOpen] = useState(false);
   const [assignFor, setAssignFor] = useState(null); // match id awaiting a scorer
+  const [bulkFor, setBulkFor] = useState(null); // tournament id for bulk entry
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
@@ -1728,6 +1792,31 @@ export default function App() {
   /* Delegate scoring for one fixture. A captain whose own team is playing can't
      be picked — the UI hides them, and this guards the same rule server-side of
      the UI in case the list is stale. */
+  /* Pull an existing match into a tournament, or set it back to a friendly. */
+  /* Publish several results in one go. Each is written the same way a single
+     result is, so nothing downstream needs to know it came from bulk entry. */
+  const publishBulk = async (entries) => {
+    let ok = 0;
+    for (const e of entries) {
+      const { error } = await supabase.from("matches").update({
+        final_a: e.a, final_b: e.b, status: "ResultPublished", published: true,
+      }).eq("id", e.match.id).select();
+      if (!error) { patchMatch(e.match.id, { finalA: e.a, finalB: e.b, status: "ResultPublished", published: true }); ok++; }
+    }
+    setBulkFor(null);
+    notify(ok === entries.length ? `${ok} result${ok === 1 ? "" : "s"} published 🏁` : `${ok} of ${entries.length} published — some failed`);
+    refreshAll();
+  };
+
+  const setMatchTournament = async (m, tournamentId) => {
+    const { error } = await supabase.from("matches")
+      .update({ tournament_id: tournamentId }).eq("id", m.id).select();
+    if (error) return notify("Couldn't update: " + error.message);
+    patchMatch(m.id, { tournamentId });
+    const tn = tournaments.find((t) => t.id === tournamentId);
+    notify(tn ? `Added to ${tn.name}` : "Set back to a friendly");
+  };
+
   const assignScorer = async (matchId, captainId) => {
     const m = matches.find((x) => x.id === matchId);
     if (!m) return;
@@ -3476,8 +3565,13 @@ export default function App() {
                 )}
 
                 {isHost && (
-                  <div style={{ marginTop: 20, fontSize: 10, color: "#4e5c53", lineHeight: 1.5, borderTop: "1px solid #121a14", paddingTop: 12 }}>
-                    You host this tournament. Add matches to it from the match creation screen.
+                  <div style={{ marginTop: 20, borderTop: "1px solid #121a14", paddingTop: 14 }}>
+                    <button className="btn btn-gold" style={{ width: "100%" }} onClick={() => setBulkFor(tn.id)}>
+                      Enter results in bulk
+                    </button>
+                    <div style={{ marginTop: 10, fontSize: 10, color: "#4e5c53", lineHeight: 1.5 }}>
+                      You host this tournament. Tag matches to it when you create them, or from any match's own page.
+                    </div>
                   </div>
                 )}
               </div>
@@ -3999,6 +4093,8 @@ export default function App() {
           allMatches={matches}
           onPosterLineup={() => setLineupPosterFor(openMatch)}
           matchAwards={playerAwards.filter((a) => a.matchId === openMatch)}
+          myTournaments={tournaments.filter((t) => t.hostId === me.id && t.status === "active")}
+          onSetTournament={setMatchTournament}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -4276,6 +4372,19 @@ export default function App() {
       )}
       {/* ASSIGN A SCORER — captains whose team is playing are shown but blocked,
           which is clearer than hiding them and leaving the host wondering. */}
+      {bulkFor && (() => {
+        const tn = tournaments.find((t) => t.id === bulkFor);
+        if (!tn) return null;
+        return (
+          <BulkResultsModal
+            tournament={tn}
+            fixtures={matches.filter((m) => m.tournamentId === bulkFor && m.status !== "ResultPublished")
+              .sort((a, b) => new Date(`${a.date}T${a.time || "00:00"}`) - new Date(`${b.date}T${b.time || "00:00"}`))}
+            onPublish={publishBulk}
+            onClose={() => setBulkFor(null)}
+          />
+        );
+      })()}
       {assignFor && (() => {
         const m = matches.find((x) => x.id === assignFor);
         if (!m) return null;
@@ -5655,7 +5764,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamen
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -6010,6 +6119,38 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             onClick={() => { if (window.confirm("Delete this match permanently? This can't be undone.")) onDeleteMatch(m); }}>🗑 Delete this match</button>
         )}
 
+        {/* TOURNAMENT — a match can be pulled into a cup after it was created,
+            since captains don't always set the tournament up first. */}
+        {isOwner && myTournaments.length > 0 && m.status !== "ResultPublished" && (
+          <div>
+            <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 10 }}>Tournament</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button className="tappable" onClick={() => onSetTournament && onSetTournament(m, null)}
+                style={{ fontSize: 10.5, padding: "6px 11px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer",
+                  background: !m.tournamentId ? "#E6B31E" : "none",
+                  border: `1px solid ${!m.tournamentId ? "#E6B31E" : "#243128"}`,
+                  color: !m.tournamentId ? "#1a1405" : "#8FA396", fontWeight: !m.tournamentId ? 700 : 500 }}>
+                Friendly
+              </button>
+              {myTournaments.map((t) => {
+                const on = m.tournamentId === t.id;
+                return (
+                  <button className="tappable" key={t.id} onClick={() => onSetTournament && onSetTournament(m, t.id)}
+                    style={{ fontSize: 10.5, padding: "6px 11px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", maxWidth: "100%",
+                      background: on ? "#E6B31E" : "none",
+                      border: `1px solid ${on ? "#E6B31E" : "#243128"}`,
+                      color: on ? "#1a1405" : "#8FA396", fontWeight: on ? 700 : 500,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 10, color: "#5a6a5f", marginTop: 8, lineHeight: 1.45 }}>
+              Adding it to a tournament feeds the table and scorers once the result is published.
+            </div>
+          </div>
+        )}
         {/* ARTWORK — visible to everyone, downloadable from the poster view */}
         <button className="btn btn-turf" onClick={onPoster}>🎨 View match artwork (download inside)</button>
 
