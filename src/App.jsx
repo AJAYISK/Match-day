@@ -38,6 +38,9 @@ const rowToMatchBase = (r) => ({
   badgeB: r.badge_b || "",
   cancelledAt: r.cancelled_at,
   streamUrl: r.stream_url || "",
+  tournamentId: r.tournament_id || null,
+  assignedTo: r.assigned_to || null,
+  assignmentState: r.assignment_state || null,
   shares: r.shares ?? 0,
   timerStartedAt: r.timer_started_at,
   breakEndsAt: r.break_ends_at,
@@ -79,6 +82,9 @@ const matchToRow = (p) => {
   if (p.liveB !== undefined) out.live_b = p.liveB;
   if (p.cancelledAt !== undefined) out.cancelled_at = p.cancelledAt;
   if (p.streamUrl !== undefined) out.stream_url = p.streamUrl;
+  if (p.tournamentId !== undefined) out.tournament_id = p.tournamentId;
+  if (p.assignedTo !== undefined) out.assigned_to = p.assignedTo;
+  if (p.assignmentState !== undefined) out.assignment_state = p.assignmentState;
   if (p.timerStartedAt !== undefined) out.timer_started_at = p.timerStartedAt;
   if (p.breakEndsAt !== undefined) out.break_ends_at = p.breakEndsAt;
   if (p.awaitingSince !== undefined) out.awaiting_since = p.awaitingSince;
@@ -464,6 +470,83 @@ function RoleAvatar({ user, size = 30 }) {
   );
 }
 
+/* ---------- CREATE A TOURNAMENT — name, format, and which of your teams are in.
+   Fixtures aren't generated here: captains tag matches to the tournament as
+   they schedule them, which fits how local cups actually get organised. ---------- */
+function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
+  const [name, setName] = useState("");
+  const [format, setFormat] = useState("league");
+  const [state, setState] = useState(defaultState);
+  const [picked, setPicked] = useState([]);
+  const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.concat(id)));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 93, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
+        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "0 16px 24px" }}>
+        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 22, color: "#F7F4EA", marginBottom: 4 }}>New tournament</div>
+        <div style={{ fontSize: 11.5, color: "#7d8f83", marginBottom: 18 }}>Set it up now, then tag matches to it as you schedule them.</div>
+
+        <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 9 }}>Name</div>
+        <input className="input" maxLength={40} placeholder="e.g. Ikeja Community Cup" value={name}
+          onChange={(e) => setName(sanitizeText(e.target.value, 40))} style={{ marginBottom: 16 }} />
+
+        <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 9 }}>Format</div>
+        <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
+          {[["league", "League", "Everyone plays everyone"], ["knockout", "Knockout", "Lose and you're out"]].map((f) => (
+            <button key={f[0]} onClick={() => setFormat(f[0])}
+              style={{ flex: 1, textAlign: "left", padding: "10px 11px", borderRadius: 9, fontFamily: "inherit", cursor: "pointer",
+                background: format === f[0] ? "rgba(230,179,30,.10)" : "none",
+                border: `1px solid ${format === f[0] ? "#E6B31E" : "#243128"}` }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: format === f[0] ? "#E6B31E" : "#EDEAE0" }}>{f[1]}</div>
+              <div style={{ fontSize: 9, color: "#5a6a5f", marginTop: 3, lineHeight: 1.35 }}>{f[2]}</div>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 9 }}>State</div>
+        <div style={{ marginBottom: 16 }}>
+          <StatePicker value={state} allLabel={null} label="Where it's played"
+            placeholder="Select a state…" onChange={(st) => setState(st)} />
+        </div>
+
+        <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 9 }}>
+          Teams · {picked.length} picked
+        </div>
+        {myTeams.length === 0 && (
+          <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 15, textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "#B9C7BC", fontWeight: 600 }}>No teams yet</div>
+            <div style={{ fontSize: 10, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Create teams under My Matches first, then come back.</div>
+          </div>
+        )}
+        {myTeams.map((t) => {
+          const on = picked.includes(t.id);
+          return (
+            <button key={t.id} className="tappable" onClick={() => toggle(t.id)}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+                padding: "10px 0", borderBottom: "1px solid #121a14", background: "none", border: 0, borderBottomStyle: "solid", borderBottomWidth: 1, borderBottomColor: "#121a14" }}>
+              <MiniLogo team={t} badge={t.badge} size={28} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: on ? 600 : 500, color: on ? "#F7F4EA" : "#B9C7BC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+              <span style={{ width: 19, height: 19, borderRadius: 5, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10,
+                background: on ? "#E6B31E" : "none", border: `1px solid ${on ? "#E6B31E" : "#2a3d31"}`, color: "#12160f", fontWeight: 700 }}>{on ? "✓" : ""}</span>
+            </button>
+          );
+        })}
+
+        <button className="btn btn-gold" style={{ width: "100%", marginTop: 20 }}
+          onClick={() => onCreate(name, format, state, picked)}>Create tournament</button>
+        <div style={{ fontSize: 9.5, color: "#3f4b43", marginTop: 10, lineHeight: 1.5, textAlign: "center" }}>
+          You can add more teams later. Only teams you captain can be entered.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatePicker({ value, onChange, counts = null, allLabel = "All states", label = "Showing", disabled = false, placeholder = "Select your state…" }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -607,6 +690,11 @@ export default function App() {
   const [savedTeams, setSavedTeams] = useState([]);
   const [teamRequests, setTeamRequests] = useState([]);
   const [teamSupporters, setTeamSupporters] = useState([]); // { fanId, teamId }
+  const [tournaments, setTournaments] = useState([]);
+  const [tournamentTeams, setTournamentTeams] = useState([]); // { tournamentId, teamId }
+  const [viewTournament, setViewTournament] = useState(null);
+  const [tnTab, setTnTab] = useState("table");
+  const [tnCreateOpen, setTnCreateOpen] = useState(false);
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
@@ -800,6 +888,15 @@ export default function App() {
     if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, jerseyPattern: t.jersey_pattern || "solid", jerseyTrim: t.jersey_trim || "#F5F0E1", startingNames: t.starting_names || [], createdAt: t.created_at })));
     const { data: trRows } = await supabase.from("team_requests").select("*").order("created_at", { ascending: false });
     if (trRows) setTeamRequests(trRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, captainId: r.captain_id, kind: r.kind, rosterName: r.roster_name || "", status: r.status, createdAt: r.created_at, seenAt: r.seen_at || null })));
+    /* Tournaments load defensively: if SQL-Update-25 hasn't been applied yet the
+       tables won't exist, and the app should carry on rather than fall over. */
+    try {
+      const { data: tnRows } = await supabase.from("tournaments").select("*").order("created_at", { ascending: false });
+      if (tnRows) setTournaments(tnRows.map((r) => ({ id: r.id, name: r.name, hostId: r.host_id, format: r.format || "league",
+        state: r.state || "", status: r.status || "active", startDate: r.start_date, endDate: r.end_date, createdAt: r.created_at })));
+      const { data: ttRows } = await supabase.from("tournament_teams").select("*");
+      if (ttRows) setTournamentTeams(ttRows.map((r) => ({ id: r.id, tournamentId: r.tournament_id, teamId: r.team_id })));
+    } catch (e) { /* tables not created yet — tournaments simply stay empty */ }
     const { data: tsRows } = await supabase.from("team_supporters").select("*");
     if (tsRows) setTeamSupporters(tsRows.map((r) => ({ fanId: r.fan_id, teamId: r.team_id })));
     const { data: paRows } = await supabase.from("player_awards").select("*").order("created_at", { ascending: false });
@@ -1562,6 +1659,65 @@ export default function App() {
   /* How many published matches sit in each state — shown beside the state name
      so people can see where the activity actually is. Deliberately a plain
      function call, not a hook: it sits below an early return. */
+  /* Standings derived from published results — nothing computed is stored, so a
+     table can never drift out of step with the matches behind it.
+     3 points a win, 1 a draw; ties broken on goal difference then goals for. */
+  const tournamentTable = (tid) => {
+    const teamIds = tournamentTeams.filter((tt) => tt.tournamentId === tid).map((tt) => tt.teamId);
+    const teams = savedTeams.filter((t) => teamIds.includes(t.id));
+    const games = matches.filter((m) => m.tournamentId === tid && m.status === "ResultPublished");
+    const rows = teams.map((t) => {
+      const key = (t.name || "").trim().toLowerCase();
+      let w = 0, d = 0, l = 0, gf = 0, ga = 0;
+      games.forEach((m) => {
+        const aName = (m.teamA.name || "").trim().toLowerCase();
+        const bName = (m.teamB.name || "").trim().toLowerCase();
+        if (aName !== key && bName !== key) return;
+        const isA = aName === key;
+        const us = isA ? m.finalA : m.finalB;
+        const them = isA ? m.finalB : m.finalA;
+        gf += us; ga += them;
+        if (us > them) w++; else if (us === them) d++; else l++;
+      });
+      return { team: t, p: w + d + l, w, d, l, gf, ga, gd: gf - ga, pts: w * 3 + d };
+    });
+    return rows.sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf || a.team.name.localeCompare(b.team.name));
+  };
+
+  const tournamentScorers = (tid) => {
+    const games = matches.filter((m) => m.tournamentId === tid && m.status === "ResultPublished");
+    const tally = {};
+    games.forEach((m) => {
+      [[m.scorersA, m.teamA.name], [m.scorersB, m.teamB.name]].forEach(([str, teamName]) => {
+        (str || "").split(",").map((c) => c.trim()).filter(Boolean).forEach((part) => {
+          const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+          const name = (mm ? mm[1] : part).trim();
+          const n = mm ? parseInt(mm[2], 10) : 1;
+          const k = name.toLowerCase() + "|" + (teamName || "").toLowerCase();
+          if (!tally[k]) tally[k] = { name, teamName, goals: 0 };
+          tally[k].goals += n;
+        });
+      });
+    });
+    return Object.values(tally).sort((a, b) => b.goals - a.goals).slice(0, 15);
+  };
+
+  const createTournament = async (name, format, state, teamIds) => {
+    const clean = (name || "").trim();
+    if (clean.length < 3) return notify("Give the tournament a name");
+    if (teamIds.length < 2) return notify("Pick at least two teams");
+    const { data, error } = await supabase.from("tournaments")
+      .insert({ name: clean, host_id: me.id, format, state: state || me.state || null, status: "active" })
+      .select().single();
+    if (error || !data) return notify("Couldn't create it: " + (error ? error.message : "unknown error"));
+    const rows = teamIds.map((tid) => ({ tournament_id: data.id, team_id: tid }));
+    const { error: e2 } = await supabase.from("tournament_teams").insert(rows);
+    if (e2) notify("Tournament made, but teams failed: " + e2.message);
+    else notify("Tournament created 🏆");
+    setTnCreateOpen(false);
+    refreshAll();
+  };
+
   const stateCounts = (() => {
     const out = {};
     matches.forEach((m) => {
@@ -2342,6 +2498,7 @@ export default function App() {
             {(me.role === "Fan" || me.role === "Player") && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
+            <button className={page === "tournaments" ? "on" : ""} onClick={() => { setViewTournament(null); setPage("tournaments"); }}>Tournaments</button>
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
@@ -3092,6 +3249,206 @@ export default function App() {
         {/* ---------- WALLET ---------- */}
         {/* ---------- BETS ---------- */}
         {/* ---------- PROFILE ---------- */}
+        {page === "tournaments" && (() => {
+          const T_LBL = { fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 };
+
+          /* ---------- DETAIL ---------- */
+          if (viewTournament) {
+            const tn = tournaments.find((x) => x.id === viewTournament);
+            if (!tn) return null;
+            const host = users.find((u) => u.id === tn.hostId);
+            const rows = tournamentTable(tn.id);
+            const fixtures = matches.filter((m) => m.tournamentId === tn.id)
+              .sort((a, b) => new Date(`${a.date}T${a.time || "00:00"}`) - new Date(`${b.date}T${b.time || "00:00"}`));
+            const played = fixtures.filter((m) => m.status === "ResultPublished");
+            const upcoming = fixtures.filter((m) => m.status !== "ResultPublished");
+            const scorers = tournamentScorers(tn.id);
+            const isHost = me.id === tn.hostId;
+            /* A supported team is worth highlighting for fans following along */
+            const myTeamIds = savedTeams.filter((t) =>
+              (me.role === "Captain" && t.captainId === me.id) ||
+              teamSupporters.some((s) => s.fanId === me.id && s.teamId === t.id) ||
+              (me.role === "Player" && me.teamId === t.id)).map((t) => t.id);
+
+            return (
+              <div style={{ maxWidth: 430 }}>
+                <button onClick={() => setViewTournament(null)} className="tappable"
+                  style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", marginBottom: 14 }}>
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+                </button>
+
+                <div style={{ position: "relative", overflow: "hidden", textAlign: "center", paddingBottom: 4 }}>
+                  <div style={{ position: "absolute", top: -70, left: "50%", marginLeft: -115, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+                  <div style={{ position: "relative", fontFamily: "'Anton', sans-serif", fontSize: 22, color: "#F7F4EA", lineHeight: 1.1 }}>{tn.name.toUpperCase()}</div>
+                  <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 6 }}>
+                    Hosted by {host ? host.name : "a captain"}{tn.state ? ` · ${tn.state}` : ""}
+                  </div>
+                  <div style={{ display: "inline-block", marginTop: 9, background: "rgba(230,179,30,.12)", border: "1px solid rgba(230,179,30,.3)", color: "#E6B31E", fontSize: 9, fontWeight: 700, letterSpacing: "1.1px", padding: "3px 9px", borderRadius: 5 }}>
+                    {(tn.format || "league").toUpperCase()} · {rows.length} TEAM{rows.length === 1 ? "" : "S"}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", marginTop: 16, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
+                  {[[played.length, "Played", true], [upcoming.length, "To play", false], [rows.length, "Teams", false]].map((f, i) => (
+                    <div key={f[1]} style={{ flex: 1, padding: "12px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
+                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: f[2] ? "#D6A81D" : "#F7F4EA" }}>{f[0]}</div>
+                      <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{f[1]}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 22, marginTop: 13, marginBottom: 16 }}>
+                  {[["table", "Table"], ["fixtures", "Fixtures"], ["scorers", "Scorers"]].map((t) => (
+                    <button key={t[0]} onClick={() => setTnTab(t[0])}
+                      style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: tnTab === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: tnTab === t[0] ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: "1.5px solid " + (tnTab === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
+                      {t[1]}
+                    </button>
+                  ))}
+                </div>
+
+                {tnTab === "table" && (
+                  <>
+                    {rows.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams entered yet.</div>}
+                    {rows.length > 0 && (
+                      <div style={{ display: "flex", gap: 8, padding: "0 0 6px", fontSize: 7.5, color: "#3f4b43", letterSpacing: ".8px", textTransform: "uppercase" }}>
+                        <span style={{ width: 16 }} /><span style={{ flex: 1 }}>Team</span>
+                        <span style={{ width: 16, textAlign: "center" }}>P</span><span style={{ width: 16, textAlign: "center" }}>W</span>
+                        <span style={{ width: 16, textAlign: "center" }}>D</span><span style={{ width: 16, textAlign: "center" }}>L</span>
+                        <span style={{ width: 22, textAlign: "right" }}>Pts</span>
+                      </div>
+                    )}
+                    {rows.map((r, i) => {
+                      const mine = myTeamIds.includes(r.team.id);
+                      return (
+                        <div key={r.team.id} className="tappable" onClick={() => openTeamProfile(r.team.id)}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: "1px solid #121a14", fontSize: 11, cursor: "pointer" }}>
+                          <span style={{ width: 16, fontFamily: "'Anton', sans-serif", fontSize: 12, color: i < 2 ? "#5fcf87" : "#4e5c53" }}>{i + 1}</span>
+                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: mine ? 700 : 500, color: mine ? "#E6B31E" : "#EDEAE0" }}>
+                            {r.team.name}{mine ? " ★" : ""}
+                          </span>
+                          <span style={{ width: 16, textAlign: "center", color: "#7d8f83" }}>{r.p}</span>
+                          <span style={{ width: 16, textAlign: "center", color: "#7d8f83" }}>{r.w}</span>
+                          <span style={{ width: 16, textAlign: "center", color: "#7d8f83" }}>{r.d}</span>
+                          <span style={{ width: 16, textAlign: "center", color: "#7d8f83" }}>{r.l}</span>
+                          <span style={{ width: 22, textAlign: "right", fontFamily: "'Anton', sans-serif", fontSize: 12.5, color: "#E6B31E" }}>{r.pts}</span>
+                        </div>
+                      );
+                    })}
+                    {rows.length > 0 && <div style={{ fontSize: 8.5, color: "#3f4b43", marginTop: 9 }}>Green = top places · ★ your team</div>}
+                  </>
+                )}
+
+                {tnTab === "fixtures" && (
+                  <>
+                    {fixtures.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No matches added to this tournament yet.</div>}
+                    {upcoming.length > 0 && <div style={T_LBL}>To play</div>}
+                    {upcoming.map((m) => (
+                      <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                        <div style={{ width: 38, textAlign: "center", flexShrink: 0 }}>
+                          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 12 }}>{m.date ? new Date(`${m.date}T${m.time || "00:00"}`).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase() : "TBC"}</div>
+                          <div style={{ fontSize: 7.5, color: "#4e5c53", marginTop: 2 }}>{m.date ? new Date(m.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : ""}</div>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                          <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{m.location}{m.time ? ` · ${m.time}` : ""}</div>
+                        </div>
+                      </div>
+                    ))}
+                    {played.length > 0 && <div style={{ ...T_LBL, marginTop: 18 }}>Played</div>}
+                    {played.map((m) => (
+                      <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                          <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{m.date}</div>
+                        </div>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#7d8f83", flexShrink: 0 }}>{m.finalA}–{m.finalB}</div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {tnTab === "scorers" && (
+                  <>
+                    {scorers.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No goals recorded yet.</div>}
+                    {scorers.map((s, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14" }}>
+                        <span style={{ width: 16, fontFamily: "'Anton', sans-serif", fontSize: 12, color: i === 0 ? "#E6B31E" : "#4e5c53" }}>{i + 1}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+                          <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{s.teamName}</div>
+                        </div>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#E6B31E", flexShrink: 0 }}>{s.goals}</div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {isHost && (
+                  <div style={{ marginTop: 20, fontSize: 10, color: "#4e5c53", lineHeight: 1.5, borderTop: "1px solid #121a14", paddingTop: 12 }}>
+                    You host this tournament. Add matches to it from the match creation screen.
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          /* ---------- LIST ---------- */
+          const mine = tournaments.filter((t) => t.hostId === me.id);
+          const others = tournaments.filter((t) => t.hostId !== me.id);
+          const card = (t) => {
+            const rows = tournamentTable(t.id);
+            const played = matches.filter((m) => m.tournamentId === t.id && m.status === "ResultPublished").length;
+            const total = matches.filter((m) => m.tournamentId === t.id).length;
+            const host = users.find((u) => u.id === t.hostId);
+            return (
+              <div key={t.id} className="tappable" onClick={() => { setTnTab("table"); setViewTournament(t.id); }}
+                style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #E6B31E", borderRadius: "0 11px 11px 0", padding: 12, marginBottom: 10, cursor: "pointer" }}>
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", lineHeight: 1.15 }}>{t.name.toUpperCase()}</div>
+                <div style={{ fontSize: 9.5, color: "#7d8f83", marginTop: 4 }}>
+                  {t.state ? `${t.state} · ` : ""}hosted by {host ? host.name : "a captain"}
+                </div>
+                <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
+                  {[[rows.length, "Teams"], [played, "Played"], [Math.max(0, total - played), "Left"]].map((f) => (
+                    <div key={f[1]} style={{ flex: 1, textAlign: "center", background: "rgba(0,0,0,.25)", borderRadius: 7, padding: "7px 3px" }}>
+                      <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#E6B31E" }}>{f[0]}</div>
+                      <div style={{ fontSize: 7, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".7px", marginTop: 2 }}>{f[1]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div style={{ maxWidth: 430 }}>
+              <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>Tournaments</div>
+              <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>Cups and leagues run by captains in your area.</div>
+
+              {me.role === "Captain" && (
+                <button className="btn btn-gold" style={{ width: "100%", marginBottom: 18 }}
+                  onClick={() => setTnCreateOpen(true)}>+ Create a tournament</button>
+              )}
+
+              {tournaments.length === 0 && (
+                <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 18, textAlign: "center" }}>
+                  <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>No tournaments yet</div>
+                  <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>
+                    {me.role === "Captain"
+                      ? "Create one, add your teams, then tag matches to it as you schedule them."
+                      : "When a captain in your area starts one, it'll show up here."}
+                  </div>
+                </div>
+              )}
+
+              {mine.length > 0 && <div style={T_LBL}>Hosted by you</div>}
+              {mine.map(card)}
+              {others.length > 0 && <div style={{ ...T_LBL, marginTop: mine.length > 0 ? 20 : 0 }}>In your area</div>}
+              {others.map(card)}
+            </div>
+          );
+        })()}
         {page === "about" && (
           <div style={{ maxWidth: 640 }}>
             <div className="hero" style={{ marginBottom: 20 }}>
@@ -3806,6 +4163,14 @@ export default function App() {
             })}
           </div>
         </>
+      )}
+      {tnCreateOpen && me.role === "Captain" && (
+        <TournamentCreateModal
+          myTeams={savedTeams.filter((t) => t.captainId === me.id)}
+          defaultState={me.state || ""}
+          onCreate={createTournament}
+          onClose={() => setTnCreateOpen(false)}
+        />
       )}
       {showFixtures && (() => {
         const list = allUpcomingFixtures.filter((m) => fixState === "All" || captainState(m) === fixState);
