@@ -439,7 +439,7 @@ function StatePicker({ value, onChange, counts = null, allLabel = "All states", 
       {open && (
         <>
           <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 96 }} />
-          <div style={{ position: "fixed", left: 12, right: 12, bottom: 12, maxWidth: 430, margin: "0 auto", maxHeight: "72vh", display: "flex", flexDirection: "column", background: "#0E140F", border: "1px solid #243128", borderRadius: 14, overflow: "hidden", zIndex: 97, boxShadow: "0 -10px 30px rgba(0,0,0,.5)" }}>
+          <div style={{ position: "fixed", left: 12, right: 12, bottom: 12, maxWidth: 430, margin: "0 auto", height: "62vh", display: "flex", flexDirection: "column", background: "#0E140F", border: "1px solid #243128", borderRadius: 14, overflow: "hidden", zIndex: 97, boxShadow: "0 -10px 30px rgba(0,0,0,.5)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 13px", borderBottom: "1px solid #1b241c", flexShrink: 0 }}>
               <div style={{ fontSize: 9.5, letterSpacing: "1.4px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700 }}>
                 {allLabel ? "Filter by state" : "Select your state"}
@@ -450,7 +450,7 @@ function StatePicker({ value, onChange, counts = null, allLabel = "All states", 
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search states…"
               style={{ margin: "10px 13px", background: "#131a15", border: "1px solid #243128", borderRadius: 8, padding: "9px 11px", fontSize: 12, color: "#F5F0E1", fontFamily: "inherit", outline: "none", flexShrink: 0 }} />
 
-            <div style={{ overflowY: "auto", flex: 1 }}>
+            <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
               {shown.length === 0 && (
                 <div style={{ padding: "22px 14px", textAlign: "center", fontSize: 11.5, color: "#5a6a5f" }}>No state matches "{q}"</div>
               )}
@@ -589,7 +589,16 @@ export default function App() {
   const [readIds, setReadIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem("am-read") || "[]"); } catch (e) { return []; }
   });
+  const markRequestsSeen = async (ids) => {
+    const reqIds = ids.filter((i) => i.startsWith("rr-")).map((i) => i.slice(3));
+    if (reqIds.length === 0) return;
+    const stamp = new Date().toISOString();
+    setTeamRequests((rs) => rs.map((r) => (reqIds.includes(String(r.id)) ? { ...r, seenAt: stamp } : r)));
+    try { await supabase.from("team_requests").update({ seen_at: stamp }).in("id", reqIds); }
+    catch (e) { /* stays read locally; retried next time it's opened */ }
+  };
   const markRead = (ids) => {
+    markRequestsSeen(ids);
     setReadIds((prev) => {
       const next = Array.from(new Set(prev.concat(ids)));
       /* Keep the stored list from growing without bound as matches age out. */
@@ -729,7 +738,7 @@ export default function App() {
     const { data: savedTeamsRows } = await supabase.from("saved_teams").select("*").order("created_at", { ascending: false });
     if (savedTeamsRows) setSavedTeams(savedTeamsRows.map((t) => ({ id: t.id, captainId: t.captain_id, name: t.name, color: t.color, badge: t.badge || "", players: t.players || "", formation: t.formation || null, positions: t.positions || null, jerseyPattern: t.jersey_pattern || "solid", jerseyTrim: t.jersey_trim || "#F5F0E1", startingNames: t.starting_names || [], createdAt: t.created_at })));
     const { data: trRows } = await supabase.from("team_requests").select("*").order("created_at", { ascending: false });
-    if (trRows) setTeamRequests(trRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, captainId: r.captain_id, kind: r.kind, rosterName: r.roster_name || "", status: r.status, createdAt: r.created_at })));
+    if (trRows) setTeamRequests(trRows.map((r) => ({ id: r.id, playerId: r.player_id, teamId: r.team_id, captainId: r.captain_id, kind: r.kind, rosterName: r.roster_name || "", status: r.status, createdAt: r.created_at, seenAt: r.seen_at || null })));
     const { data: tsRows } = await supabase.from("team_supporters").select("*");
     if (tsRows) setTeamSupporters(tsRows.map((r) => ({ fanId: r.fan_id, teamId: r.team_id })));
     const { data: paRows } = await supabase.from("player_awards").select("*").order("created_at", { ascending: false });
@@ -1134,8 +1143,33 @@ export default function App() {
      match state rather than stored, so they stay accurate without extra SQL.
      Join requests come from real rows. Each needs a stable id so "read" sticks. */
   const bellItems = useMemo(() => {
-    if (!me || me.role !== "Captain") return [];
+    if (!me) return [];
     const out = [];
+
+    /* ---- PLAYER ---- squad decisions and awards won */
+    if (me.role === "Player") {
+      (teamRequests || []).filter((r) => r.playerId === me.id && r.status !== "pending" && !r.seenAt).forEach((r) => {
+        const t = savedTeams.find((x) => x.id === r.teamId);
+        const ok = r.status === "approved";
+        out.push({ id: "rr-" + r.id, kind: ok ? "approved" : "denied", icon: ok ? "✅" : "✕",
+          title: ok ? "You're in the squad" : "Request not accepted",
+          sub: t ? t.name : "Team", teamId: r.teamId, requestId: r.id,
+          at: r.createdAt ? new Date(r.createdAt).getTime() : 0 });
+      });
+      /* Awards from the last 30 days — player_awards already carries the date,
+         so no extra storage is needed for these. */
+      const cutoff = now - 30 * 86400000;
+      (playerAwards || []).filter((a) => a.playerId === me.id && a.createdAt &&
+        new Date(a.createdAt).getTime() > cutoff).forEach((a) => {
+        const info = AWARD_TYPES[a.awardType] || { label: a.awardType };
+        out.push({ id: "aw-" + a.id, kind: "award", icon: "🏆",
+          title: "You won " + info.label, sub: "Tap to view your honours",
+          at: new Date(a.createdAt).getTime() });
+      });
+      return out.sort((a, b) => b.at - a.at);
+    }
+
+    if (me.role !== "Captain") return [];
     matches.forEach((m) => {
       if (m.createdBy !== me.id) return;
       if (m.status === "Scheduled" && isDue(m)) {
@@ -1157,7 +1191,7 @@ export default function App() {
         at: r.createdAt ? new Date(r.createdAt).getTime() : 0 });
     });
     return out.sort((a, b) => b.at - a.at);
-  }, [me, matches, teamRequests, savedTeams, now]);
+  }, [me, matches, teamRequests, savedTeams, playerAwards, now]);
 
   const unreadBell = bellItems.filter((n) => !readIds.includes(n.id));
   /* Hero card drifts on its own between the text card and the photo, no tap needed —
@@ -2214,7 +2248,7 @@ export default function App() {
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
             <div className="display brand-title" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
-            {me.role === "Captain" && (
+            {(me.role === "Captain" || me.role === "Player") && (
               <div style={{ position: "relative", marginLeft: "auto", marginRight: 8 }}>
                 <button title="Notifications"
                   onClick={() => { setBellOpen((v) => !v); }}
@@ -2246,12 +2280,11 @@ export default function App() {
           </div>
           <nav className="topnav">
             <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
-            {me.role === "Fan" && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
+            {(me.role === "Fan" || me.role === "Player") && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
             {me.role === "Player" && <button className={page === "myplayer" ? "on" : ""} onClick={() => setPage("myplayer")}>My Profile</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
-            {me.role !== "Admin" && <button className={page === "feedbackpage" ? "on" : ""} onClick={() => setPage("feedbackpage")}>Feedback</button>}
           </nav>
         </div>
       </header>
@@ -2923,9 +2956,9 @@ export default function App() {
                       )}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
-                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11 }}
-                        onClick={(e) => { e.stopPropagation(); setSquadManageFor(t.id); }}>👥 Squad</button>
-                      <button className="btn btn-ghost" style={{ padding: "6px 10px", fontSize: 11 }}
+                      <button className="tappable" style={{ padding: "6px 11px", fontSize: 11, fontWeight: 600, fontFamily: "inherit", background: "none", border: "1px solid #243128", color: "#B9C7BC", borderRadius: 8, cursor: "pointer" }}
+                        onClick={(e) => { e.stopPropagation(); setSquadManageFor(t.id); }}>Awards</button>
+                      <button className="tappable" style={{ padding: "6px 11px", fontSize: 11, fontWeight: 600, fontFamily: "inherit", background: "none", border: "1px solid #243128", color: "#B9C7BC", borderRadius: 8, cursor: "pointer" }}
                         onClick={(e) => { e.stopPropagation(); setTeamFormOpen(t.id); }}>Edit</button>
                     </div>
                   </div>
@@ -3525,6 +3558,24 @@ export default function App() {
               Captains publish official scores. Catch every match as it happens on 🔴 Live!
             </div>
           </div>
+          {/* Footer links — Feedback moved here from the nav to keep the bar short */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 }}>More</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9, alignItems: "flex-start" }}>
+              {me.role !== "Admin" && (
+                <button className="tappable" onClick={() => { setPage("feedbackpage"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  style={{ background: "none", border: 0, padding: 0, fontFamily: "inherit", fontSize: 13, color: T.floodlight, fontWeight: 700, cursor: "pointer" }}>
+                  💬 Send feedback
+                </button>
+              )}
+              <button className="tappable" onClick={() => { setPage("about"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                style={{ background: "none", border: 0, padding: 0, fontFamily: "inherit", fontSize: 13, color: T.muted, cursor: "pointer" }}>
+                About Area Match
+              </button>
+              <a href="https://areamatch.com.ng" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 13, color: T.muted, textDecoration: "none" }}>areamatch.com.ng</a>
+            </div>
+          </div>
         </div>
         <div style={{ borderTop: "1px solid #1a2019", padding: "14px 20px", textAlign: "center", fontSize: 12, color: T.muted }}>
           © {new Date().getFullYear()} Area Match · Built for the community
@@ -3594,7 +3645,7 @@ export default function App() {
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
       {/* NOTIFICATION PANEL — tap-outside closes it */}
-      {bellOpen && me.role === "Captain" && (
+      {bellOpen && (me.role === "Captain" || me.role === "Player") && (
         <>
           <div onClick={() => setBellOpen(false)}
             style={{ position: "fixed", inset: 0, zIndex: 78, background: "transparent" }} />
@@ -3638,6 +3689,14 @@ export default function App() {
                           {n.kind === "score" ? "Submit result" : "Open"}
                         </button>
                       )}
+                      {n.kind === "approved" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openTeamProfile(n.teamId); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>View team</button>
+                      )}
+                      {n.kind === "award" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openPlayerProfile(me.id); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>View award</button>
+                      )}
                       {n.kind === "request" && (
                         <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); setPage("myteams"); }}
                           style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Review</button>
@@ -3673,7 +3732,7 @@ export default function App() {
         return (
           <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-              <button onClick={goBackPage} style={{ width: 29, height: 29, border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#7d8f83", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, cursor: "pointer" }}>‹</button>
+              <button onClick={goBackPage} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
               <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Fixtures</div>
             </div>
             {statesWithFixtures.length > 1 && (
@@ -3737,7 +3796,7 @@ export default function App() {
       {showLeaderboards && (
         <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-            <button onClick={goBackPage} style={{ width: 29, height: 29, border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#7d8f83", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, cursor: "pointer" }}>‹</button>
+            <button onClick={goBackPage} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
             <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Leaderboards</div>
           </div>
           <div style={{ display: "flex", padding: "0 17px", borderBottom: "1px solid #151c16", gap: 24 }}>
@@ -3889,7 +3948,6 @@ export default function App() {
           playerStats={playerStats}
           playerAwards={playerAwards}
           onGiveAward={giveAward}
-          onSaveStarting={(names) => saveSquadStarting(squadManageFor, names)}
           onClose={() => setSquadManageFor(null)}
         />
       )}
@@ -4226,87 +4284,171 @@ function TeamFormModal({ existing, onSave, onDelete, onClose }) {
   );
 }
 
-/* ---------- MY TEAMS — public team profile ---------- */
-/* ---------- SQUAD MANAGEMENT — captain's roster view, registered players prioritized, award-giving ---------- */
-function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playerAwards, onGiveAward, onSaveStarting, onClose }) {
-  const [awardMenuFor, setAwardMenuFor] = useState(null); // player id
+/* ---------- AWARDS — give recognition to registered players. Substitution used
+   to live here too; it now belongs to the team Edit screen, leaving this page
+   to do one thing well. ---------- */
+function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playerAwards, onGiveAward, onClose }) {
+  const [awardMenuFor, setAwardMenuFor] = useState(null);
+  const [tab, setTab] = useState("give");
   const roster = (team.players || "").split(",").map((p) => p.trim()).filter(Boolean);
-  const startingNames = Array.isArray(team.startingNames) ? team.startingNames : [];
-  const withLink = roster.map((name) => ({ name, linked: linkedPlayers.find((pl) => pl.rosterName.trim().toLowerCase() === name.trim().toLowerCase() && (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase()) }));
-  /* Registered (linked) players first within each group — they have real, verifiable stats. */
-  const sortGroup = (list) => [...list].sort((a, b) => (b.linked ? 1 : 0) - (a.linked ? 1 : 0));
-  const starting = sortGroup(withLink.filter((p) => startingNames.includes(p.name)));
-  const reserves = sortGroup(withLink.filter((p) => !startingNames.includes(p.name)));
-  const toggleStarting = (name) => {
-    const isStarting = startingNames.includes(name);
-    onSaveStarting(isStarting ? startingNames.filter((n) => n !== name) : [...startingNames, name]);
-  };
+  const withLink = roster.map((name) => ({ name, linked: linkedPlayers.find((pl) =>
+    pl.rosterName.trim().toLowerCase() === name.trim().toLowerCase() &&
+    (pl.teamName || "").trim().toLowerCase() === (team.name || "").trim().toLowerCase()) }));
 
-  const renderPlayerRow = (name, linked, isStarting) => {
-    if (!linked) {
-      return (
-        <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #243128" }}>
-          <span style={{ flex: 1, fontSize: 13, color: "#8FA396" }}>{name} <span style={{ fontSize: 10 }}>— not on Area Match</span></span>
-          <button onClick={() => toggleStarting(name)} style={{ background: "none", border: "1px solid #243128", color: "#8FA396", borderRadius: 8, padding: "5px 9px", fontSize: 10.5 }}>
-            {isStarting ? "→ Bench" : "→ Start"}
-          </button>
-        </div>
-      );
-    }
-    const lvl = playerLevel(linked);
-    const stats = playerStats(linked);
-    const awards = playerAwards.filter((a) => a.playerId === linked.id);
-    return (
-      <div key={name} style={{ borderBottom: "1px solid #243128" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0" }}>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minWidth: 0 }}
-            onClick={() => setAwardMenuFor(awardMenuFor === linked.id ? null : linked.id)}>
-            <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={30} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: "#F5F0E1" }}>{name} <span style={{ fontSize: 10, background: "rgba(230,179,30,.15)", color: "#E6B31E", padding: "1px 6px", borderRadius: 4 }}>{lvl.tier.icon} {lvl.tier.name}</span></div>
-              <div style={{ fontSize: 10.5, color: "#8FA396", marginTop: 2 }}>⚽ {stats.goals} goals · {awards.length} award{awards.length === 1 ? "" : "s"}</div>
-            </div>
-          </div>
-          <button onClick={() => toggleStarting(name)} style={{ background: "none", border: "1px solid #243128", color: "#8FA396", borderRadius: 8, padding: "5px 9px", fontSize: 10.5, flexShrink: 0 }}>
-            {isStarting ? "→ Bench" : "→ Start"}
-          </button>
-        </div>
-        {awardMenuFor === linked.id && (
-          <div style={{ paddingBottom: 12 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {Object.entries(AWARD_TYPES).map(([key, a]) => (
-                <button key={key} onClick={() => { onGiveAward(linked.id, team.id, key); setAwardMenuFor(null); }}
-                  style={{ background: "#131a15", border: "1px solid #243128", color: "#F5F0E1", borderRadius: 99, padding: "5px 11px 5px 5px", fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 6 }}><TrophyIcon art={a.art} size={20} />{a.label}</button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
+  /* Registered players first, then by goals — the ones most likely to deserve
+     something sit at the top rather than in roster order. */
+  const registered = withLink.filter((p) => p.linked).sort((a, b) => {
+    const ga = playerStats(a.linked).goals, gb = playerStats(b.linked).goals;
+    return gb - ga;
+  });
+  const unregistered = withLink.filter((p) => !p.linked);
+
+  const teamAwards = playerAwards.filter((a) => a.teamId === team.id);
+  const recent = [...teamAwards].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 8);
+
+  const Lbl = ({ children, style }) => (
+    <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, ...style }}>{children}</div>
+  );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 92, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: "24px 12px" }} onClick={onClose}>
-      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, width: "100%", maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-        <div className="display" style={{ fontSize: 18, color: "#E6B31E", marginBottom: 4 }}>{team.name} Squad</div>
-        <div style={{ fontSize: 11.5, color: "#8FA396", marginBottom: 14 }}>Tap a registered player to give an award. Use → Start / → Bench to make substitutions.</div>
+    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 92, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
+        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+        </button>
+        <div style={{ flex: 1 }} />
+      </div>
 
-        {roster.length === 0 && <div style={{ color: "#8FA396", fontSize: 13 }}>No squad names yet — add some from Edit Team.</div>}
+      <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto" }}>
+        {/* Hero */}
+        <div style={{ position: "relative", padding: "4px 16px 0", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
+          <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
+            <MiniLogo team={team} badge={team.badge} size={46} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 21, lineHeight: 1.05, color: "#F7F4EA" }}>Awards</div>
+              <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 5 }}>{team.name}</div>
+            </div>
+          </div>
+          <div style={{ position: "relative", display: "flex", marginTop: 16, borderTop: "1px solid #151c16", borderBottom: "1px solid #151c16" }}>
+            {[[teamAwards.length, "Given", true], [registered.length, "Eligible", false], [roster.length, "Squad", false]].map((f, i) => (
+              <div key={f[1]} style={{ flex: 1, padding: "12px 4px", textAlign: "center", borderRight: i < 2 ? "1px solid #151c16" : "none" }}>
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: f[2] ? "#D6A81D" : "#F7F4EA" }}>{f[0]}</div>
+                <div style={{ fontSize: 8.5, color: "#5a6a5f", letterSpacing: "1.1px", textTransform: "uppercase", marginTop: 4, fontWeight: 600 }}>{f[1]}</div>
+              </div>
+            ))}
+          </div>
+        </div>
 
-        {starting.length > 0 && (
-          <>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#3FA35B", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 4 }}>Starting XI ({starting.length})</div>
-            {starting.map((p) => renderPlayerRow(p.name, p.linked, true))}
-          </>
-        )}
-        {reserves.length > 0 && (
-          <>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#8FA396", letterSpacing: ".1em", textTransform: "uppercase", marginTop: 14, marginBottom: 4 }}>Reserves ({reserves.length})</div>
-            {reserves.map((p) => renderPlayerRow(p.name, p.linked, false))}
-          </>
-        )}
+        <div style={{ display: "flex", padding: "0 16px", borderBottom: "1px solid #151c16", gap: 22 }}>
+          {[["give", "Give award"], ["recent", "Recently given"]].map((t) => (
+            <button key={t[0]} onClick={() => setTab(t[0])}
+              style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: tab === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: tab === t[0] ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: "1.5px solid " + (tab === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
+              {t[1]}
+            </button>
+          ))}
+        </div>
 
-        <button className="btn btn-ghost" style={{ width: "100%", marginTop: 14 }} onClick={onClose}>Close</button>
+        <div style={{ padding: "17px 16px 24px" }}>
+          {tab === "give" && (
+            <>
+              {registered.length === 0 && (
+                <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>No registered players yet</div>
+                  <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Players need an Area Match account before they can receive awards.</div>
+                </div>
+              )}
+
+              {registered.length > 0 && <Lbl>Tap a player to award them</Lbl>}
+              {registered.map((p) => {
+                const linked = p.linked;
+                const stats = playerStats(linked);
+                const lvl = playerLevel ? playerLevel(linked) : null;
+                const mine = playerAwards.filter((a) => a.playerId === linked.id);
+                const open = awardMenuFor === linked.id;
+                return (
+                  <div key={linked.id} style={{ borderBottom: "1px solid #121a14" }}>
+                    <div className="tappable" onClick={() => setAwardMenuFor(open ? null : linked.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", cursor: "pointer" }}>
+                      <Jersey pattern={linked.jerseyPattern} main={linked.jerseyMain} trim={linked.jerseyTrim} size={22} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#F7F4EA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>
+                          {stats.goals} goal{stats.goals === 1 ? "" : "s"} · {stats.matches} match{stats.matches === 1 ? "" : "es"}
+                          {lvl && lvl.tier ? ` · ${lvl.tier.name}` : ""}
+                        </div>
+                        {mine.length > 0 && (
+                          <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+                            {mine.slice(0, 6).map((a) => {
+                              const info = AWARD_TYPES[a.awardType] || { art: "motm" };
+                              return <TrophyIcon key={a.id} art={info.art} size={15} />;
+                            })}
+                            {mine.length > 6 && <span style={{ fontSize: 9, color: "#4e5c53", alignSelf: "center" }}>+{mine.length - 6}</span>}
+                          </div>
+                        )}
+                      </div>
+                      <span style={{ fontSize: 10, color: open ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{open ? "⌃" : "⌄"}</span>
+                    </div>
+
+                    {open && (
+                      <div style={{ paddingBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                        {Object.entries(AWARD_TYPES).map(([key, info]) => (
+                          <button key={key} className="tappable"
+                            onClick={() => { onGiveAward(linked.id, team.id, key); setAwardMenuFor(null); }}
+                            style={{ display: "flex", alignItems: "center", gap: 7, background: "#0E140F", border: "1px solid #1b241c", borderRadius: 9, padding: "8px 9px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                            <TrophyIcon art={info.art} size={18} />
+                            <span style={{ fontSize: 10, color: "#EDEAE0", fontWeight: 500, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{info.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {unregistered.length > 0 && (
+                <>
+                  <Lbl style={{ marginTop: 22 }}>Not on Area Match · {unregistered.length}</Lbl>
+                  <div style={{ fontSize: 10.5, color: "#5a6a5f", lineHeight: 1.5, marginBottom: 10 }}>
+                    These players can't receive awards until they create an account.
+                  </div>
+                  {unregistered.map((p, i) => (
+                    <div key={i} style={{ fontSize: 12, color: "#8FA396", padding: "8px 0", borderBottom: i < unregistered.length - 1 ? "1px solid #121a14" : "none" }}>{p.name}</div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+
+          {tab === "recent" && (
+            <>
+              {recent.length === 0 && (
+                <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 12.5, color: "#B9C7BC", fontWeight: 600 }}>No awards given yet</div>
+                  <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>Awards you give will be listed here, and appear on the player's profile.</div>
+                </div>
+              )}
+              {recent.map((a) => {
+                const info = AWARD_TYPES[a.awardType] || { label: a.awardType, art: "motm" };
+                const who = linkedPlayers.find((pl) => pl.id === a.playerId);
+                return (
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14" }}>
+                    <TrophyIcon art={info.art} size={26} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "#F7F4EA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{who ? who.name : "Player"}</div>
+                      <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{info.label}</div>
+                    </div>
+                    {a.createdAt && (
+                      <div style={{ fontSize: 9, color: "#3f4b43", flexShrink: 0 }}>
+                        {new Date(a.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -4347,7 +4489,7 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 90, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ width: 28, height: 28, border: "1px solid #1f2921", borderRadius: 8, background: "none", color: "#7d8f83", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, cursor: "pointer" }}>‹</button>
+        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 12px", border: "1px solid #1f2921", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
         <div style={{ flex: 1 }} />
       </div>
 
@@ -4565,7 +4707,7 @@ function PlayerProfilePage({ player, data, level, team, onClose, onOpenCard, onO
     <div style={{ position: "fixed", inset: 0, background: PP.bg, zIndex: 90, display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ width: 29, height: 29, border: `1px solid ${PP.line}`, borderRadius: 8, background: "none", color: PP.dim, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, cursor: "pointer" }}>‹</button>
+        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: `1px solid ${PP.line}`, borderRadius: 8, background: "none", color: PP.dim, fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
         <div style={{ flex: 1 }} />
         <button onClick={onShareProfile} title="Share profile" style={{ width: 29, height: 29, border: `1px solid ${PP.line}`, borderRadius: 8, background: "none", color: PP.gold, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -4963,7 +5105,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   return (
     <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 50, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
+        <button onClick={onClose} className="tappable" style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, height: 34, padding: "0 13px", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
         <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
         <StatusChip m={m} />
       </div>
@@ -5766,7 +5908,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
     <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 80, display: "flex", flexDirection: "column" }}>
       <div style={{ maxWidth: 460, width: "100%", margin: "0 auto", flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128" }}>
-          <button onClick={onClose} style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>‹</button>
+          <button onClick={onClose} className="tappable" style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, height: 34, padding: "0 13px", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
           <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
             <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".1em" }}>{(m.location || "").toUpperCase()}</div>
