@@ -610,6 +610,10 @@ export default function App() {
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
+  /* Name field on the merged profile page. Seeded from the signed-in user and
+     kept in sync if the profile reloads. */
+  const [selfName, setSelfName] = useState("");
+  useEffect(() => { if (me && me.name) setSelfName(me.name); }, [me && me.id, me && me.name]);
   const [showLeaderboards, setShowLeaderboards] = useState(false);
   const [showFixtures, setShowFixtures] = useState(false);
   const [fixState, setFixState] = useState("All");
@@ -2324,7 +2328,7 @@ export default function App() {
             )}
             {/* One clean tap target — logout now lives in profile settings, so it
                 can't be hit by accident reaching for the profile. */}
-            <div className="user-pill user-pill-clickable" title="View profile" onClick={() => setPage("profile")}>
+            <div className="user-pill user-pill-clickable" title="View profile" onClick={() => setPage(me.role === "Player" ? "myplayer" : "profile")}>
               <RoleAvatar user={me} size={25} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 12.5, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>
@@ -2686,7 +2690,7 @@ export default function App() {
               </div>
 
               <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 26, marginBottom: 18 }}>
-                {[["overview", "Overview"], ["matches", "Matches"], ["honours", "Honours"], ["edit", "Edit"]].map(([key, lbl]) => (
+                {[["overview", "Overview"], ["matches", "Matches"], ["honours", "Honours"], ["edit", "Settings"]].map(([key, lbl]) => (
                   <button key={key} onClick={() => setMyProfileTab(key)}
                     style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: myProfileTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: myProfileTab === key ? 600 : 500, padding: "13px 0", cursor: "pointer", borderBottom: `1.5px solid ${myProfileTab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
                     {lbl}
@@ -2942,6 +2946,43 @@ export default function App() {
                   })}
                 </div>
               )}
+
+              {/* Account — merged in so there's one profile page, reached from the
+                  name in the header. Logout lives here rather than the header. */}
+              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "22px 0 10px" }}>Account</div>
+              <div className="card" style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#7d8f83" }}>Display name</div>
+                <input className="input" maxLength={30} value={selfName} onChange={(e) => setSelfName(sanitizeText(e.target.value, 30))} />
+                <button className="btn btn-gold" onClick={() => {
+                  const clean = (selfName || "").trim();
+                  if (clean.length < 2) return notify("Name must be at least 2 characters");
+                  updateProfile({ name: clean }); notify("Name updated ✔");
+                }}>Save name</button>
+              </div>
+              <div className="card" style={{ display: "grid", gap: 6, marginBottom: 12, fontSize: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <span style={{ color: "#7d8f83" }}>Email</span>
+                  <span style={{ color: "#EDEAE0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{me.contact}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "#7d8f83" }}>Account type</span><span>{me.role}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "#7d8f83" }}>Joined</span><span>{me.joined}</span>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "18px 0 10px" }}>Session</div>
+              <button className="tappable" onClick={logout}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+                  padding: "12px 13px", border: "1px solid rgba(198,80,63,.3)", background: "rgba(198,80,63,.07)", borderRadius: 10 }}>
+                <span style={{ fontSize: 14, color: "#e08a7d", flexShrink: 0 }}>⏻</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#e08a7d" }}>Log out</span>
+                  <span style={{ display: "block", fontSize: 9.5, color: "#5a6a5f", marginTop: 2 }}>You'll need your email to sign back in</span>
+                </span>
+              </button>
+
               </div>
             </div>
           );
