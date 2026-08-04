@@ -1530,6 +1530,8 @@ export default function App() {
     });
     return n;
   };
+  };
+
   const playerProfileData = (player) => {
     const base = playerStats(player);
     if (!base.ready) return { ...base, history: [], streak: 0, lastBlank: null, standout: null, standing: null };
@@ -1770,6 +1772,33 @@ export default function App() {
     });
     return rows.sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf || a.team.name.localeCompare(b.team.name));
   };
+
+  /* Tournaments a player has actually featured in, with their goals and where
+     their team finished. Derived — a permanent record that builds each season. */
+  const playerTournaments = (player) => {
+    if (!player || !player.rosterName) return [];
+    const team = savedTeams.find((t) => t.id === player.teamId);
+    if (!team) return [];
+    const teamKey = (team.name || "").trim().toLowerCase();
+    const nameKey = (player.rosterName || "").trim().toLowerCase();
+    return tournaments.map((tn) => {
+      const games = matches.filter((m) => m.tournamentId === tn.id && m.status === "ResultPublished" &&
+        ((m.teamA.name || "").trim().toLowerCase() === teamKey || (m.teamB.name || "").trim().toLowerCase() === teamKey));
+      if (games.length === 0) return null;
+      let goals = 0;
+      games.forEach((m) => {
+        const isA = (m.teamA.name || "").trim().toLowerCase() === teamKey;
+        const str = isA ? m.scorersA : m.scorersB;
+        (str || "").split(",").map((c) => c.trim()).filter(Boolean).forEach((part) => {
+          const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(part);
+          const nm = (mm ? mm[1] : part).trim().toLowerCase();
+          if (nm === nameKey) goals += mm ? parseInt(mm[2], 10) : 1;
+        });
+      });
+      const table = tournamentTable(tn.id);
+      const pos = table.findIndex((r) => r.team.id === team.id);
+      return { tn, played: games.length, goals, pos: pos >= 0 ? pos + 1 : null, teamName: team.name };
+    }).filter(Boolean).sort((a, b) => new Date(b.tn.createdAt || 0) - new Date(a.tn.createdAt || 0));
 
   const tournamentScorers = (tid) => {
     const games = matches.filter((m) => m.tournamentId === tid && m.status === "ResultPublished");
@@ -2814,6 +2843,54 @@ export default function App() {
               </>
             )}
 
+            {/* TOURNAMENTS — a strip above the fixtures, scoped to the same state
+                filter the rest of the feed uses. */}
+            {(() => {
+              const live = tournaments.filter((t) => t.status === "active" &&
+                (feedState === "All" || !t.state || t.state === feedState));
+              if (live.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 28 }}>
+                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Tournaments{feedState !== "All" ? ` in ${feedState}` : " near you"}</span>
+                    {live.length > 2 && (
+                      <span className="tappable" onClick={() => { setViewTournament(null); setPage("tournaments"); }}
+                        style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
+                        All {live.length} ›
+                      </span>
+                    )}
+                  </div>
+                  {live.slice(0, 2).map((t) => {
+                    const rows = tournamentTable(t.id);
+                    const all = matches.filter((m) => m.tournamentId === t.id);
+                    const done = all.filter((m) => m.status === "ResultPublished").length;
+                    const host = users.find((u) => u.id === t.hostId);
+                    return (
+                      <div key={t.id} className="tappable" onClick={() => { setTnTab("table"); setViewTournament(t.id); setPage("tournaments"); }}
+                        style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #E6B31E", borderRadius: "0 11px 11px 0", padding: 12, marginBottom: 9, cursor: "pointer" }}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14.5, color: "#F7F4EA", lineHeight: 1.15 }}>{t.name.toUpperCase()}</div>
+                        <div style={{ fontSize: 9.5, color: "#7d8f83", marginTop: 4 }}>
+                          {t.state ? `${t.state} · ` : ""}hosted by {host ? host.name : "a captain"}
+                        </div>
+                        <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
+                          {[[rows.length, "Teams"], [done, "Played"], [Math.max(0, all.length - done), "Left"]].map((f) => (
+                            <div key={f[1]} style={{ flex: 1, textAlign: "center", background: "rgba(0,0,0,.25)", borderRadius: 7, padding: "7px 3px" }}>
+                              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#E6B31E" }}>{f[0]}</div>
+                              <div style={{ fontSize: 7, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".7px", marginTop: 2 }}>{f[1]}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {rows.length > 0 && rows[0].p > 0 && (
+                          <div style={{ fontSize: 9.5, color: "#5a6a5f", marginTop: 9 }}>
+                            Leading: <span style={{ color: "#E6B31E", fontWeight: 600 }}>{rows[0].team.name}</span> · {rows[0].pts} pts
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
             {upcomingFixtures.length > 0 && (
               <div style={{ marginBottom: 28 }}>
                 <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -3080,6 +3157,33 @@ export default function App() {
                   ))}
                 </>
               )}
+
+              {myProfileTab === "overview" && (() => {
+                const tns = playerTournaments(me);
+                if (tns.length === 0) return null;
+                return (
+                  <div style={{ marginTop: 22 }}>
+                    <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>Tournaments</div>
+                    {tns.map((r) => (
+                      <div key={r.tn.id} className="tappable" onClick={() => { setTnTab("table"); setViewTournament(r.tn.id); setPage("tournaments"); }}
+                        style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 8, background: "#141c16", border: "1px solid #1f2a22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>🏆</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.tn.name}</div>
+                          <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>
+                            {r.goals} goal{r.goals === 1 ? "" : "s"} in {r.played}
+                          </div>
+                        </div>
+                        {r.pos && (
+                          <div style={{ fontSize: 9.5, fontWeight: 700, flexShrink: 0, color: r.pos === 1 ? "#5fcf87" : "#7d8f83" }}>
+                            {r.pos === 1 ? "1st" : r.pos === 2 ? "2nd" : r.pos === 3 ? "3rd" : r.pos + "th"}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {myProfileTab === "honours" && (
                 <>
