@@ -695,6 +695,7 @@ export default function App() {
   const [viewTournament, setViewTournament] = useState(null);
   const [tnTab, setTnTab] = useState("table");
   const [tnCreateOpen, setTnCreateOpen] = useState(false);
+  const [assignFor, setAssignFor] = useState(null); // match id awaiting a scorer
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
@@ -1328,6 +1329,28 @@ export default function App() {
     }
 
     if (me.role !== "Captain") return [];
+
+    /* Delegated fixtures — a captain needs to know they've been asked, and the
+       host needs to know when someone declines. */
+    matches.forEach((m) => {
+      if (m.assignedTo === me.id && m.assignmentState === "pending") {
+        const tn = tournaments.find((t) => t.id === m.tournamentId);
+        out.push({ id: "as-" + m.id, kind: "assigned", icon: "🎯",
+          title: "You've been asked to score",
+          sub: `${m.teamA.name} vs ${m.teamB.name}${tn ? " · " + tn.name : ""}`,
+          matchId: m.id, at: m.date ? new Date(`${m.date}T${m.time || "00:00"}`).getTime() : 0 });
+      }
+      if (m.assignmentState === "declined" && m.tournamentId) {
+        const tn = tournaments.find((t) => t.id === m.tournamentId);
+        if (tn && tn.hostId === me.id) {
+          const who = users.find((u) => u.id === m.assignedTo);
+          out.push({ id: "dc-" + m.id, kind: "declined", icon: "✕",
+            title: "Scorer declined",
+            sub: `${who ? who.name.split(" ")[0] : "They"} can't do ${m.teamA.name} vs ${m.teamB.name}`,
+            matchId: m.id, at: m.date ? new Date(`${m.date}T${m.time || "00:00"}`).getTime() : 0 });
+        }
+      }
+    });
     matches.forEach((m) => {
       if (m.createdBy !== me.id) return;
       if (m.status === "Scheduled" && isDue(m)) {
@@ -1349,7 +1372,7 @@ export default function App() {
         at: r.createdAt ? new Date(r.createdAt).getTime() : 0 });
     });
     return out.sort((a, b) => b.at - a.at);
-  }, [me, matches, teamRequests, savedTeams, playerAwards, now]);
+  }, [me, matches, teamRequests, savedTeams, playerAwards, tournaments, users, now]);
 
   const unreadBell = bellItems.filter((n) => !readIds.includes(n.id));
   /* Hero card drifts on its own between the text card and the photo, no tap needed —
@@ -1700,6 +1723,41 @@ export default function App() {
       });
     });
     return Object.values(tally).sort((a, b) => b.goals - a.goals).slice(0, 15);
+  };
+
+  /* Delegate scoring for one fixture. A captain whose own team is playing can't
+     be picked — the UI hides them, and this guards the same rule server-side of
+     the UI in case the list is stale. */
+  const assignScorer = async (matchId, captainId) => {
+    const m = matches.find((x) => x.id === matchId);
+    if (!m) return;
+    const theirTeams = savedTeams.filter((t) => t.captainId === captainId).map((t) => (t.name || "").trim().toLowerCase());
+    const playing = theirTeams.includes((m.teamA.name || "").trim().toLowerCase()) ||
+                    theirTeams.includes((m.teamB.name || "").trim().toLowerCase());
+    if (playing) return notify("That captain's team is playing in this match");
+    const { error } = await supabase.from("matches")
+      .update({ assigned_to: captainId, assignment_state: "pending" }).eq("id", matchId).select();
+    if (error) return notify("Couldn't assign: " + error.message);
+    patchMatch(matchId, { assignedTo: captainId, assignmentState: "pending" });
+    notify("Assigned — they'll see it in their notifications");
+  };
+
+  /* Host takes a fixture back, or clears a decline before reassigning. */
+  const clearScorer = async (matchId) => {
+    const { error } = await supabase.from("matches")
+      .update({ assigned_to: null, assignment_state: null }).eq("id", matchId).select();
+    if (error) return notify("Couldn't update: " + error.message);
+    patchMatch(matchId, { assignedTo: null, assignmentState: null });
+    notify("You'll score this match");
+  };
+
+  /* The assigned captain accepts or declines. */
+  const respondAssignment = async (matchId, accept) => {
+    const { error } = await supabase.from("matches")
+      .update({ assignment_state: accept ? "accepted" : "declined" }).eq("id", matchId).select();
+    if (error) return notify("Couldn't respond: " + error.message);
+    patchMatch(matchId, { assignmentState: accept ? "accepted" : "declined" });
+    notify(accept ? "You're scoring this match" : "Declined — the host has been told");
   };
 
   const createTournament = async (name, format, state, teamIds) => {
@@ -2137,7 +2195,10 @@ export default function App() {
   const liveNow = published.filter((m) => m.status === "Live")
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const results = published.filter((m) => m.status === "ResultPublished");
-  const mine = matches.filter((m) => m.createdBy === me.id);
+  /* Own matches plus any delegated to me that I've accepted or not yet answered —
+     a captain scoring someone else's fixture needs it in their own list. */
+  const mine = matches.filter((m) => m.createdBy === me.id ||
+    (m.assignedTo === me.id && m.assignmentState !== "declined"));
   /* 🔴 Live tab — "Captains I follow" and state are alternate modes, not combinable filters:
      when follow mode is on, state is ignored entirely, and vice versa. */
   const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
@@ -2232,7 +2293,7 @@ export default function App() {
                     </div>
                   ))}
                   <div className="feedgrid" style={{ marginTop: 12 }}>
-                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               )}
@@ -2621,7 +2682,7 @@ export default function App() {
                 <>
                   <SectionTitle color={"#E6B31E"}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               ) : null;
@@ -2650,7 +2711,7 @@ export default function App() {
               <>
                 <SectionTitle color={"#E8442E"}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -2659,7 +2720,7 @@ export default function App() {
               <>
                 <SectionTitle color={"#E6B31E"}>⏳ Awaiting Results</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -2714,7 +2775,7 @@ export default function App() {
               <>
                 <SectionTitle color={"#E6B31E"}>📍 Matches in {me.state}</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
                 <SeeMoreBtn k="mystate" list={inMyState} />
               </>
@@ -2723,7 +2784,7 @@ export default function App() {
             <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
 
             <SeeMoreBtn k="upcoming" list={upcoming} />
@@ -2731,7 +2792,7 @@ export default function App() {
             <SectionTitle color={"#F5F0E1"}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
 
@@ -2760,7 +2821,7 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
+              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
             </div>
             <SeeMoreBtn k="mymatches" list={mine} />
           </>
@@ -3225,6 +3286,7 @@ export default function App() {
           <div style={{ maxWidth: 560 }}>
             <CreateMatch
               myTeams={savedTeams.filter((t) => t.captainId === me.id)}
+              myTournaments={tournaments.filter((t) => t.hostId === me.id && t.status === "active")}
               onCancel={() => setPage("mymatches")}
               onSave={async (data) => {
                 const { error } = await supabase.from("matches").insert({
@@ -3236,6 +3298,7 @@ export default function App() {
                   badge_a: data.badgeA, badge_b: data.badgeB,
                   duration_minutes: data.duration, published: true,
                   stream_url: data.streamUrl || null,
+                  tournament_id: data.tournamentId || null,
                 });
                 if (error) return notify(error.message);
                 setPage("mymatches");
@@ -3342,19 +3405,46 @@ export default function App() {
                   <>
                     {fixtures.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No matches added to this tournament yet.</div>}
                     {upcoming.length > 0 && <div style={T_LBL}>To play</div>}
-                    {upcoming.map((m) => (
-                      <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
-                        <div style={{ width: 38, textAlign: "center", flexShrink: 0 }}>
-                          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 12 }}>{m.date ? new Date(`${m.date}T${m.time || "00:00"}`).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase() : "TBC"}</div>
-                          <div style={{ fontSize: 7.5, color: "#4e5c53", marginTop: 2 }}>{m.date ? new Date(m.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : ""}</div>
+                    {upcoming.map((m) => {
+                      const scorer = m.assignedTo ? users.find((u) => u.id === m.assignedTo) : null;
+                      const dec = m.assignmentState === "declined";
+                      /* Who scores it: nobody assigned means the host does. */
+                      const tagText = dec ? `${scorer ? scorer.name.split(" ")[0] : "They"} declined — reassign`
+                        : scorer ? `${m.assignmentState === "accepted" ? "Scored by" : "Asked"} ${scorer.name.split(" ")[0]}`
+                        : isHost ? "You're scoring this" : "Host is scoring this";
+                      return (
+                        <div key={m.id} style={{ padding: "10px 0", borderBottom: "1px solid #121a14" }}>
+                          <div className="tappable" onClick={() => openMatchDetail(m.id)} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                            <div style={{ width: 38, textAlign: "center", flexShrink: 0 }}>
+                              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 12 }}>{m.date ? new Date(`${m.date}T${m.time || "00:00"}`).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase() : "TBC"}</div>
+                              <div style={{ fontSize: 7.5, color: "#4e5c53", marginTop: 2 }}>{m.date ? new Date(m.date).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : ""}</div>
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                              <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{m.location}{m.time ? ` · ${m.time}` : ""}</div>
+                              <span style={{ display: "inline-block", marginTop: 5, fontSize: 7.5, padding: "2px 6px", borderRadius: 4,
+                                background: dec ? "rgba(198,80,63,.12)" : "#141c16",
+                                border: `1px solid ${dec ? "rgba(198,80,63,.3)" : "#243128"}`,
+                                color: dec ? "#e08a7d" : "#8FA396" }}>{tagText}</span>
+                            </div>
+                          </div>
+                          {isHost && (
+                            <div style={{ display: "flex", gap: 6, marginTop: 8, marginLeft: 48, flexWrap: "wrap" }}>
+                              <button className="tappable" onClick={() => setAssignFor(m.id)}
+                                style={{ fontSize: 9.5, background: "none", border: "1px solid #243128", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer" }}>
+                                {m.assignedTo ? "Reassign" : "Assign a scorer"}
+                              </button>
+                              {m.assignedTo && (
+                                <button className="tappable" onClick={() => clearScorer(m.id)}
+                                  style={{ fontSize: 9.5, background: "none", border: "1px solid #243128", color: "#8FA396", padding: "4px 10px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer" }}>
+                                  I'll score it
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
-                          <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{m.location}{m.time ? ` · ${m.time}` : ""}</div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {played.length > 0 && <div style={{ ...T_LBL, marginTop: 18 }}>Played</div>}
                     {played.map((m) => (
                       <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
@@ -3834,12 +3924,12 @@ export default function App() {
                         {theirs.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>This captain hasn't published any matches yet.</div>}
                         {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <Lbl>Current &amp; upcoming</Lbl>}
                         <div className="feedgrid" style={{ marginBottom: 20 }}>
-                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
                         {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <Lbl>Past results</Lbl>}
                         <div className="feedgrid">
-                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
                       </>
@@ -3876,7 +3966,7 @@ export default function App() {
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
               {capped("live", liveForUser).map((m) => (
-                <MatchCard key={"lv" + m.id} m={m} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
+                <MatchCard key={"lv" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
               ))}
             </div>
             <SeeMoreBtn k="live" list={liveForUser} />
@@ -4140,6 +4230,18 @@ export default function App() {
                           {n.kind === "score" ? "Submit result" : "Open"}
                         </button>
                       )}
+                      {n.kind === "assigned" && (
+                        <>
+                          <button className="tappable" onClick={() => { markRead([n.id]); respondAssignment(n.matchId, true); }}
+                            style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Accept</button>
+                          <button className="tappable" onClick={() => { markRead([n.id]); respondAssignment(n.matchId, false); }}
+                            style={{ fontSize: 9.5, background: "none", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>Decline</button>
+                        </>
+                      )}
+                      {n.kind === "declined" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); setAssignFor(n.matchId); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Reassign</button>
+                      )}
                       {n.kind === "approved" && (
                         <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openTeamProfile(n.teamId); }}
                           style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>View team</button>
@@ -4172,6 +4274,66 @@ export default function App() {
           onClose={() => setTnCreateOpen(false)}
         />
       )}
+      {/* ASSIGN A SCORER — captains whose team is playing are shown but blocked,
+          which is clearer than hiding them and leaving the host wondering. */}
+      {assignFor && (() => {
+        const m = matches.find((x) => x.id === assignFor);
+        if (!m) return null;
+        const aName = (m.teamA.name || "").trim().toLowerCase();
+        const bName = (m.teamB.name || "").trim().toLowerCase();
+        const captains = users.filter((u) => u.role === "Captain");
+        const rows = captains.map((c) => {
+          const theirs = savedTeams.filter((t) => t.captainId === c.id).map((t) => (t.name || "").trim().toLowerCase());
+          const clash = theirs.includes(aName) ? m.teamA.name : theirs.includes(bName) ? m.teamB.name : null;
+          const hosted = matches.filter((x) => x.createdBy === c.id && x.published).length;
+          return { c, clash, hosted, isMe: c.id === me.id };
+        }).sort((x, y) => (x.isMe ? -1 : y.isMe ? 1 : (x.clash ? 1 : 0) - (y.clash ? 1 : 0) || y.hosted - x.hosted));
+
+        return (
+          <>
+            <div onClick={() => setAssignFor(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 94 }} />
+            <div style={{ position: "fixed", left: 12, right: 12, bottom: 12, maxWidth: 430, margin: "0 auto", height: "62vh", display: "flex", flexDirection: "column", background: "#0E140F", border: "1px solid #243128", borderRadius: 14, overflow: "hidden", zIndex: 95, boxShadow: "0 -10px 30px rgba(0,0,0,.5)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 13px", borderBottom: "1px solid #1b241c", flexShrink: 0 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: "1.4px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700 }}>Who scores this match?</div>
+                <button onClick={() => setAssignFor(null)} style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 11, color: "#D6A81D", cursor: "pointer", fontWeight: 600 }}>Done</button>
+              </div>
+              <div style={{ padding: "11px 13px", borderBottom: "1px solid #1b241c", flexShrink: 0 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA" }}>{m.teamA.name} vs {m.teamB.name}</div>
+                <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 3 }}>{m.date}{m.time ? ` · ${m.time}` : ""}{m.location ? ` · ${m.location}` : ""}</div>
+              </div>
+              <div style={{ overflowY: "auto", flex: 1 }}>
+                {rows.map((r, i) => (
+                  <div key={r.c.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", borderBottom: i < rows.length - 1 ? "1px solid #121a14" : "none", opacity: r.clash ? 0.45 : 1 }}>
+                    <RoleAvatar user={r.c} size={26} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.c.name}{r.isMe ? " (you)" : ""}
+                      </div>
+                      {r.clash ? (
+                        <div style={{ fontSize: 8.5, color: "#e08a7d", marginTop: 2 }}>Captains {r.clash} — playing in this match</div>
+                      ) : (
+                        <div style={{ fontSize: 8.5, color: "#4e5c53", marginTop: 2 }}>
+                          {r.isMe ? "Host · always available" : `${r.c.state || "—"} · ${r.hosted} match${r.hosted === 1 ? "" : "es"} hosted`}
+                        </div>
+                      )}
+                    </div>
+                    {!r.clash && (
+                      <button className="tappable"
+                        onClick={() => { if (r.isMe) clearScorer(m.id); else assignScorer(m.id, r.c.id); setAssignFor(null); }}
+                        style={{ fontSize: 9, background: "#E6B31E", color: "#1a1405", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
+                        {r.isMe ? "I'll score" : "Assign"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{ padding: "10px 13px", borderTop: "1px solid #1b241c", fontSize: 9, color: "#3f4b43", lineHeight: 1.5, flexShrink: 0 }}>
+                Captains whose team is playing can't score this match. If nobody's available, it stays with you.
+              </div>
+            </div>
+          </>
+        );
+      })()}
       {showFixtures && (() => {
         const list = allUpcomingFixtures.filter((m) => fixState === "All" || captainState(m) === fixState);
         const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -5430,7 +5592,7 @@ function MiniLogo({ team, badge, size = 42 }) {
   );
 }
 
-function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
+function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamentName }) {
   const showScore = m.status === "ResultPublished";
   return (
     <div className="card" style={{ display: "grid", gap: 12, cursor: "pointer", alignContent: "start" }} onClick={onOpen}>
@@ -5480,6 +5642,11 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView }) {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#7d8f83", flexWrap: "wrap", gap: 8 }}>
         <span>📍 {m.location} · {m.date} · ⏱ {m.duration || 90}'</span>
+        {tournamentName && (
+          <span style={{ display: "inline-block", marginTop: 4, background: "rgba(230,179,30,.12)", border: "1px solid rgba(230,179,30,.3)", color: "#E6B31E", fontSize: 8.5, fontWeight: 700, letterSpacing: ".7px", padding: "2px 7px", borderRadius: 4, textTransform: "uppercase", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            🏆 {tournamentName}
+          </span>
+        )}
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onPoster(); }}>🎨 Artwork</button>
         </div>
@@ -6853,11 +7020,11 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
   );
 }
 
-function CreateMatch({ onSave, onCancel, myTeams = [] }) {
+function CreateMatch({ onSave, onCancel, myTeams = [], myTournaments = [] }) {
   const [f, setF] = useState({
     teamAName: "", teamAColor: "#E6B31E", teamBName: "", teamBColor: "#1DB954",
     badgeA: "⚽", badgeB: "🦁",
-    playersA: "", playersB: "", location: "", date: "", time: "", duration: 90,
+    playersA: "", playersB: "", location: "", date: "", time: "", duration: 90, tournamentId: "",
   });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const isPastDateTime = f.date && f.time && new Date(`${f.date}T${f.time}`).getTime() < Date.now();
@@ -6949,6 +7116,36 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
         {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setF({ ...f, badgeB: b })}><MiniLogo team={{ name: "", color: f.badgeB === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} /></button>)}
       </div>
       <input className="input" placeholder="Location (e.g. Campos Mini Stadium)" maxLength={60} value={f.location} onChange={(e) => setF({ ...f, location: sanitizeText(e.target.value, 60) })} />
+      {myTournaments.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 6, fontWeight: 700 }}>🏆 Part of a tournament?</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => setF({ ...f, tournamentId: "" })}
+              style={{ fontSize: 11, padding: "7px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer",
+                background: !f.tournamentId ? "#E6B31E" : "none",
+                border: `1px solid ${!f.tournamentId ? "#E6B31E" : "#243128"}`,
+                color: !f.tournamentId ? "#1a1405" : "#8FA396", fontWeight: !f.tournamentId ? 700 : 500 }}>
+              Friendly
+            </button>
+            {myTournaments.map((t) => {
+              const on = f.tournamentId === t.id;
+              return (
+                <button type="button" key={t.id} onClick={() => setF({ ...f, tournamentId: t.id })}
+                  style={{ fontSize: 11, padding: "7px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", maxWidth: "100%",
+                    background: on ? "#E6B31E" : "none",
+                    border: `1px solid ${on ? "#E6B31E" : "#243128"}`,
+                    color: on ? "#1a1405" : "#8FA396", fontWeight: on ? 700 : 500,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {t.name}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 7, lineHeight: 1.45 }}>
+            Tournament matches feed the table and scorer list automatically.
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>📅 Match date</div>
@@ -7001,7 +7198,7 @@ function CreateMatch({ onSave, onCancel, myTeams = [] }) {
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
         <button className="btn btn-gold" style={{ flex: 2, opacity: valid ? 1 : .5 }} disabled={!valid}
-          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: f.playersA, playersB: f.playersB, location: f.location, date: f.date, time: f.time, duration: f.duration, streamUrl: wantsStream === "yes" && streamValid ? normalizeStreamUrl(streamInput.trim()) : "" })}>
+          onClick={() => valid && onSave({ teamA: { name: f.teamAName, color: f.teamAColor }, teamB: { name: f.teamBName, color: f.teamBColor }, badgeA: f.badgeA, badgeB: f.badgeB, playersA: f.playersA, playersB: f.playersB, tournamentId: f.tournamentId, location: f.location, date: f.date, time: f.time, duration: f.duration, streamUrl: wantsStream === "yes" && streamValid ? normalizeStreamUrl(streamInput.trim()) : "" })}>
           Save as Scheduled
         </button>
       </div>
