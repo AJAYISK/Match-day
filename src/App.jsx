@@ -407,6 +407,63 @@ function BadgeIconPaths({ name }) {
    Replaces the native <select>, whose dropdown is drawn by the OS and so can't
    be styled. Shows match counts where they're supplied, and a search box because
    37 states is too many to scroll comfortably. ---------- */
+const JERSEY_PATH = "M50 8 L36 0 L20 10 L2 26 L14 40 L24 32 L24 108 Q50 116 76 108 L76 32 L86 40 L98 26 L80 10 L64 0 Z";
+/* ---------- ROLE AVATAR — no photo uploads, so each role gets a distinct
+   generated mark: players wear their own kit, captains get an armband crest,
+   fans a supporter mark. Tinted from the user id so two captains differ. ---------- */
+function RoleAvatar({ user, size = 30 }) {
+  if (!user) return null;
+  const seed = String(user.id || user.name || "x");
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
+  const role = user.role;
+
+  if (role === "Player") {
+    const main = user.jerseyMain || "#E6B31E";
+    const trim = user.jerseyTrim || "#F5F0E1";
+    const pat = user.jerseyPattern || "solid";
+    return (
+      <svg width={size} height={size} viewBox="0 0 100 100" style={{ flexShrink: 0, borderRadius: "50%" }}>
+        <circle cx="50" cy="50" r="50" fill={`hsl(${h}, 32%, 15%)`} />
+        <g transform="translate(22,16) scale(.56)">
+          <path d={JERSEY_PATH} fill={main} stroke="#0d1a12" strokeWidth="5" />
+          {pat === "stripes" && (<><rect x="24" y="32" width="13" height="76" fill={trim} opacity=".85" /><rect x="63" y="32" width="13" height="76" fill={trim} opacity=".85" /></>)}
+          {pat === "hoops" && (<><rect x="24" y="44" width="52" height="12" fill={trim} opacity=".85" /><rect x="24" y="70" width="52" height="12" fill={trim} opacity=".85" /></>)}
+          {pat === "sash" && <path d="M24 40 L76 96 L76 78 L24 24 Z" fill={trim} opacity=".85" />}
+        </g>
+      </svg>
+    );
+  }
+
+  if (role === "Captain") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 100 100" style={{ flexShrink: 0, borderRadius: "50%" }}>
+        <circle cx="50" cy="50" r="50" fill={`hsl(${h}, 24%, 14%)`} />
+        <path d="M28 34 L50 24 L72 34 L72 56 Q72 74 50 84 Q28 74 28 56 Z" fill="none" stroke="#E6B31E" strokeWidth="6" />
+        <path d="M50 42 L54 54 L67 54 L56 62 L60 74 L50 66 L40 74 L44 62 L33 54 L46 54 Z" fill="#E6B31E" />
+      </svg>
+    );
+  }
+
+  if (role === "Admin") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 100 100" style={{ flexShrink: 0, borderRadius: "50%" }}>
+        <circle cx="50" cy="50" r="50" fill="#241c2e" />
+        <path d="M50 20 L60 42 L84 44 L66 60 L71 84 L50 71 L29 84 L34 60 L16 44 L40 42 Z" fill="#b98ce0" />
+      </svg>
+    );
+  }
+
+  /* Fan */
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" style={{ flexShrink: 0, borderRadius: "50%" }}>
+      <circle cx="50" cy="50" r="50" fill={`hsl(${h}, 26%, 15%)`} />
+      <path d="M26 66 Q26 46 50 46 Q74 46 74 66 Z" fill="#7ab0cf" />
+      <circle cx="50" cy="34" r="13" fill="#7ab0cf" />
+    </svg>
+  );
+}
+
 function StatePicker({ value, onChange, counts = null, allLabel = "All states", label = "Showing", disabled = false, placeholder = "Select your state…" }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -2265,17 +2322,15 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className={`user-pill ${me.role !== "Admin" ? "user-pill-clickable" : ""}`} title="View profile" onClick={() => me.role !== "Admin" && setPage("profile")}>
-              <div className="user-avatar-simple">{me.name.slice(0, 1).toUpperCase()}</div>
+            {/* One clean tap target — logout now lives in profile settings, so it
+                can't be hit by accident reaching for the profile. */}
+            <div className="user-pill user-pill-clickable" title="View profile" onClick={() => setPage("profile")}>
+              <RoleAvatar user={me} size={25} />
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>{me.name}{me.role !== "Admin" && <span style={{ color: T.muted, fontWeight: 400 }}> ›</span>}</div>
+                <div style={{ fontWeight: 600, fontSize: 12.5, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 110 }}>
+                  {me.name.split(" ")[0]}<span style={{ color: "#5a6a5f", fontWeight: 400 }}> ›</span>
+                </div>
               </div>
-              <button className="user-logout" title="Log out" onClick={(e) => { e.stopPropagation(); logout(); }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
-                  <line x1="12" y1="2" x2="12" y2="12" />
-                </svg>
-              </button>
             </div>
           </div>
           <nav className="topnav">
@@ -2283,7 +2338,6 @@ export default function App() {
             {(me.role === "Fan" || me.role === "Player") && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
-            {me.role === "Player" && <button className={page === "myplayer" ? "on" : ""} onClick={() => setPage("myplayer")}>My Profile</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
@@ -3102,6 +3156,7 @@ export default function App() {
               : { a: ["Captains followed", follows.length], b: ["Teams backed", teamSupporters.filter((s) => s.fanId === me.id).length], c: ["Member since", me.joined || "—"] }}
             onSave={updateProfile}
             notify={notify}
+            onLogout={logout}
           />
         )}
 
@@ -3199,9 +3254,7 @@ export default function App() {
                     <div style={{ position: "relative", overflow: "hidden", marginBottom: 2 }}>
                       <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
                       <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
-                        <div style={{ width: 54, height: 54, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 21, color: "#D6A81D", flexShrink: 0 }}>
-                          {c.name.slice(0, 2).toUpperCase()}
-                        </div>
+<RoleAvatar user={c} size={54} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 23, lineHeight: 1.05, color: "#F7F4EA" }}>{c.name}</div>
                           <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6 }}>
@@ -4930,7 +4983,6 @@ function PlayerProfilePage({ player, data, level, team, onClose, onOpenCard, onO
 const JERSEY_PATTERNS = [
   ["solid", "Solid"], ["vstripes", "V-Stripes"], ["hstripes", "H-Stripes"], ["halves", "Halves"], ["sleeves", "Sleeves"],
 ];
-const JERSEY_PATH = "M50 8 L36 0 L20 10 L2 26 L14 40 L24 32 L24 108 Q50 116 76 108 L76 32 L86 40 L98 26 L80 10 L64 0 Z";
 function Jersey({ pattern = "solid", main = "#E6B31E", trim = "#F5F0E1", size = 60 }) {
   const clipId = `jc-${pattern}-${main.replace("#", "")}-${trim.replace("#", "")}-${size}`;
   return (
@@ -6169,7 +6221,7 @@ function ComingSoonCard({ feature, detail, onFeedback, onClose }) {
 }
 
 /* ---------- PROFILE PAGE — edit name, manage security PIN ---------- */
-function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch }) {
+function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOpenCaptain, supportedTeams = [], myUpcoming = [], onOpenTeam, onOpenMatch, onLogout = () => {} }) {
   const [selfTab, setSelfTab] = useState("overview");
   const [name, setName] = useState(me.name);
   const [contactInfo, setContactInfo] = useState(me.contactInfo || "");
@@ -6200,9 +6252,7 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
       <div style={{ position: "relative", overflow: "hidden", marginBottom: 2 }}>
         <div style={{ position: "absolute", top: -70, left: -10, width: 230, height: 200, background: "radial-gradient(ellipse, rgba(214,168,29,.10), transparent 68%)", pointerEvents: "none" }} />
         <div style={{ position: "relative", display: "flex", alignItems: "flex-start", gap: 14 }}>
-          <div style={{ width: 54, height: 54, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 21, color: me.role === "Fan" ? "#7ab0cf" : "#D6A81D", flexShrink: 0 }}>
-            {me.name.slice(0, 2).toUpperCase()}
-          </div>
+<RoleAvatar user={me} size={54} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 23, lineHeight: 1.05, color: "#F7F4EA" }}>{me.name}</div>
             <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6 }}>
@@ -6309,9 +6359,7 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
             return (
               <div key={id} className="tappable" onClick={() => onOpenCaptain && onOpenCaptain(id)}
                 style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
-                <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#141c16", border: "1px solid #2a3d31", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 12, color: "#D6A81D", flexShrink: 0 }}>
-                  {cap.name.slice(0, 1).toUpperCase()}
-                </div>
+<RoleAvatar user={cap} size={30} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cap.name}</div>
                   {cap.state && <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>{cap.state}</div>}
@@ -6382,6 +6430,18 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
         <input className="input" type="password" inputMode="numeric" placeholder="Confirm new PIN" maxLength={4} value={confirmPin} onChange={(e) => setConfirmPin(digits(e.target.value))} />
         <button className="btn btn-gold" onClick={savePin}>{me.pin ? "Change PIN" : "Set PIN"}</button>
       </div>
+
+      {/* Session — logout moved here from the header so it can't be mis-tapped */}
+      <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "18px 0 10px" }}>Session</div>
+      <button className="tappable" onClick={onLogout}
+        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+          padding: "12px 13px", border: "1px solid rgba(198,80,63,.3)", background: "rgba(198,80,63,.07)", borderRadius: 10 }}>
+        <span style={{ fontSize: 14, color: "#e08a7d", flexShrink: 0 }}>⏻</span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#e08a7d" }}>Log out</span>
+          <span style={{ display: "block", fontSize: 9.5, color: "#5a6a5f", marginTop: 2 }}>You'll need your email to sign back in</span>
+        </span>
+      </button>
       </div>
     </div>
   );
