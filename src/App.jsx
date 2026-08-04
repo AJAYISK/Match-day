@@ -1530,7 +1530,6 @@ export default function App() {
     });
     return n;
   };
-  };
 
   const playerProfileData = (player) => {
     const base = playerStats(player);
@@ -1799,6 +1798,7 @@ export default function App() {
       const pos = table.findIndex((r) => r.team.id === team.id);
       return { tn, played: games.length, goals, pos: pos >= 0 ? pos + 1 : null, teamName: team.name };
     }).filter(Boolean).sort((a, b) => new Date(b.tn.createdAt || 0) - new Date(a.tn.createdAt || 0));
+  };
 
   const tournamentScorers = (tid) => {
     const games = matches.filter((m) => m.tournamentId === tid && m.status === "ResultPublished");
