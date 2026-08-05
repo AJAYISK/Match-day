@@ -39,6 +39,11 @@ const rowToMatchBase = (r) => ({
   cancelledAt: r.cancelled_at,
   streamUrl: r.stream_url || "",
   tournamentId: r.tournament_id || null,
+  roundNumber: r.round_number || null,
+  subHomeA: r.sub_home_a, subHomeB: r.sub_home_b,
+  subAwayA: r.sub_away_a, subAwayB: r.sub_away_b,
+  subHomeBy: r.sub_home_by || null, subAwayBy: r.sub_away_by || null,
+  submissionState: r.submission_state || null,
   assignedTo: r.assigned_to || null,
   assignmentState: r.assignment_state || null,
   shares: r.shares ?? 0,
@@ -755,6 +760,8 @@ export default function App() {
   const [teamSupporters, setTeamSupporters] = useState([]); // { fanId, teamId }
   const [tournaments, setTournaments] = useState([]);
   const [tournamentTeams, setTournamentTeams] = useState([]); // { tournamentId, teamId }
+  const [tournamentInvites, setTournamentInvites] = useState([]);
+  const [tournamentRounds, setTournamentRounds] = useState([]);
   const [viewTournament, setViewTournament] = useState(null);
   const [tnTab, setTnTab] = useState("table");
   const [tnCreateOpen, setTnCreateOpen] = useState(false);
@@ -958,9 +965,13 @@ export default function App() {
     try {
       const { data: tnRows } = await supabase.from("tournaments").select("*").order("created_at", { ascending: false });
       if (tnRows) setTournaments(tnRows.map((r) => ({ id: r.id, name: r.name, hostId: r.host_id, format: r.format || "league",
-        state: r.state || "", status: r.status || "active", startDate: r.start_date, endDate: r.end_date, createdAt: r.created_at })));
+        state: r.state || "", status: r.status || "active", startDate: r.start_date, endDate: r.end_date, teamCount: r.team_count || 6, fixturesGenerated: !!r.fixtures_generated, createdAt: r.created_at })));
       const { data: ttRows } = await supabase.from("tournament_teams").select("*");
-      if (ttRows) setTournamentTeams(ttRows.map((r) => ({ id: r.id, tournamentId: r.tournament_id, teamId: r.team_id })));
+      if (ttRows) setTournamentTeams(ttRows.map((r) => ({ id: r.id, tournamentId: r.tournament_id, teamId: r.team_id, captainId: r.captain_id || null })));
+      const { data: tiRows } = await supabase.from("tournament_invites").select("*");
+      if (tiRows) setTournamentInvites(tiRows.map((r) => ({ id: r.id, tournamentId: r.tournament_id, captainId: r.captain_id, status: r.status, createdAt: r.created_at })));
+      const { data: trRows2 } = await supabase.from("tournament_rounds").select("*").order("round_number");
+      if (trRows2) setTournamentRounds(trRows2.map((r) => ({ id: r.id, tournamentId: r.tournament_id, roundNumber: r.round_number, matchDate: r.match_date })));
     } catch (e) { /* tables not created yet — tournaments simply stay empty */ }
     const { data: tsRows } = await supabase.from("team_supporters").select("*");
     if (tsRows) setTeamSupporters(tsRows.map((r) => ({ fanId: r.fan_id, teamId: r.team_id })));
@@ -1876,6 +1887,170 @@ export default function App() {
     if (error) return notify("Couldn't respond: " + error.message);
     patchMatch(matchId, { assignmentState: accept ? "accepted" : "declined" });
     notify(accept ? "You're scoring this match" : "Declined — the host has been told");
+  };
+
+  /* Both captains submit their own scoreline. Agreement publishes; disagreement
+     raises a dispute for the host. Only permitted at full time — no half-time
+     or partial scores. Editable while pending or disputed, locked once published. */
+  const submitTournamentScore = async (m, a, b) => {
+    if (m.submission_state === "published" || m.status === "ResultPublished")
+      return notify("This result is already published");
+
+    const teamA = savedTeams.find((t) => (t.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+    const isHomeCaptain = teamA && (teamA.captainId === me.id);
+    const patch = isHomeCaptain
+      ? { sub_home_a: a, sub_home_b: b, sub_home_by: me.id }
+      : { sub_away_a: a, sub_away_b: b, sub_away_by: me.id };
+
+    /* What the other side said, using the value we're about to write for our own */
+    const homeA = isHomeCaptain ? a : m.subHomeA, homeB = isHomeCaptain ? b : m.subHomeB;
+    const awayA = isHomeCaptain ? m.subAwayA : a,  awayB = isHomeCaptain ? m.subAwayB : b;
+    const bothIn = homeA !== null && homeA !== undefined && awayA !== null && awayA !== undefined;
+
+    let state = "pending", extra = {};
+    if (bothIn) {
+      if (homeA === awayA && homeB === awayB) {
+        state = "published";
+        /* Scorers come from the home captain; fall back to away if empty. */
+        extra = { final_a: homeA, final_b: homeB, status: "ResultPublished", published: true };
+      } else {
+        state = "disputed";
+      }
+    }
+
+    const { error } = await supabase.from("matches")
+      .update({ ...patch, ...extra, submission_state: state }).eq("id", m.id).select();
+    if (error) return notify("Couldn't submit: " + error.message);
+
+    patchMatch(m.id, {
+      subHomeA: homeA, subHomeB: homeB, subAwayA: awayA, subAwayB: awayB,
+      submissionState: state,
+      ...(state === "published" ? { finalA: homeA, finalB: homeB, status: "ResultPublished", published: true } : {}),
+    });
+
+    notify(state === "published" ? "Both captains agree — result published 🏁"
+      : state === "disputed" ? "Scores don't match — the host has been notified"
+      : "Submitted — waiting for the other captain");
+    refreshAll();
+  };
+
+  /* Host settles a dispute, or confirms a single submission through. */
+  const hostResolveScore = async (m, a, b) => {
+    const { error } = await supabase.from("matches").update({
+      final_a: a, final_b: b, status: "ResultPublished", published: true, submission_state: "published",
+    }).eq("id", m.id).select();
+    if (error) return notify("Couldn't publish: " + error.message);
+    patchMatch(m.id, { finalA: a, finalB: b, status: "ResultPublished", published: true, submissionState: "published" });
+    notify("Result published 🏁");
+    refreshAll();
+  };
+
+  /* Round-robin fixtures. Uses the circle method: fix one team, rotate the rest.
+     With an odd count a "bye" slot sits out each round. Teams lock once this
+     runs — a later withdrawal is the host's to sort out manually. */
+  const generateFixtures = async (tournamentId) => {
+    const tn = tournaments.find((t) => t.id === tournamentId);
+    if (!tn) return;
+    if (tn.fixturesGenerated) return notify("Fixtures already generated");
+    const entered = tournamentTeams.filter((tt) => tt.tournamentId === tournamentId);
+    if (entered.length < 2) return notify("Need at least two teams");
+
+    const teams = entered.map((tt) => {
+      const t = savedTeams.find((x) => x.id === tt.teamId);
+      return t ? { ...t, captainId: tt.captainId || t.captainId } : null;
+    }).filter(Boolean);
+
+    /* Shuffle so the schedule isn't the order they were added */
+    for (let i = teams.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [teams[i], teams[j]] = [teams[j], teams[i]];
+    }
+
+    const list = teams.slice();
+    if (list.length % 2 === 1) list.push(null); // bye
+    const n = list.length;
+    const roundsCount = n - 1;
+    const half = n / 2;
+    const rows = [];
+
+    let order = list.slice();
+    for (let r = 0; r < roundsCount; r++) {
+      for (let i = 0; i < half; i++) {
+        const home = order[i], away = order[n - 1 - i];
+        if (!home || !away) continue; // bye
+        rows.push({
+          created_by: me.id,
+          tournament_id: tournamentId,
+          round_number: r + 1,
+          team_a_name: home.name, team_a_color: home.color,
+          team_b_name: away.name, team_b_color: away.color,
+          badge_a: home.badge || null, badge_b: away.badge || null,
+          players_a: home.players || "", players_b: away.players || "",
+          location: "", date: null, time: null,
+          duration: 90, status: "Scheduled", published: true,
+        });
+      }
+      /* rotate all but the first */
+      order = [order[0]].concat([order[n - 1]]).concat(order.slice(1, n - 1));
+    }
+
+    const { error } = await supabase.from("matches").insert(rows);
+    if (error) return notify("Couldn't generate: " + error.message);
+
+    const roundRows = Array.from({ length: roundsCount }, (_, i) => ({
+      tournament_id: tournamentId, round_number: i + 1, match_date: null,
+    }));
+    await supabase.from("tournament_rounds").insert(roundRows);
+    await supabase.from("tournaments").update({ fixtures_generated: true }).eq("id", tournamentId);
+
+    notify(`${rows.length} fixtures generated across ${roundsCount} rounds 🏆`);
+    refreshAll();
+  };
+
+  /* Host sets one date per round; every fixture in it inherits that date. */
+  const setRoundDate = async (tournamentId, roundNumber, date) => {
+    const { error } = await supabase.from("tournament_rounds")
+      .update({ match_date: date }).eq("tournament_id", tournamentId).eq("round_number", roundNumber);
+    if (error) return notify("Couldn't set date: " + error.message);
+    await supabase.from("matches").update({ date })
+      .eq("tournament_id", tournamentId).eq("round_number", roundNumber);
+    notify(`Round ${roundNumber} set for ${date}`);
+    refreshAll();
+  };
+
+  /* ---- INVITES ---- */
+  const inviteCaptain = async (tournamentId, captainId) => {
+    const { error } = await supabase.from("tournament_invites")
+      .insert({ tournament_id: tournamentId, captain_id: captainId });
+    if (error) return notify(error.message.includes("duplicate") ? "Already invited" : "Couldn't invite: " + error.message);
+    notify("Invite sent");
+    refreshAll();
+  };
+
+  const respondInvite = async (inviteId, accept) => {
+    const { error } = await supabase.from("tournament_invites")
+      .update({ status: accept ? "accepted" : "declined" }).eq("id", inviteId).select();
+    if (error) return notify("Couldn't respond: " + error.message);
+    setTournamentInvites((xs) => xs.map((x) => (x.id === inviteId ? { ...x, status: accept ? "accepted" : "declined" } : x)));
+    notify(accept ? "You're in — the host will pick your teams" : "Invite declined");
+  };
+
+  /* Host adds one of an accepted captain's teams. captain_id is stored so we
+     know who submits scores for it later. */
+  const addTeamToTournament = async (tournamentId, teamId, captainId) => {
+    const tn = tournaments.find((t) => t.id === tournamentId);
+    const already = tournamentTeams.filter((tt) => tt.tournamentId === tournamentId).length;
+    if (tn && already >= (tn.teamCount || 6)) return notify(`That's all ${tn.teamCount} teams`);
+    const { error } = await supabase.from("tournament_teams")
+      .insert({ tournament_id: tournamentId, team_id: teamId, captain_id: captainId });
+    if (error) return notify(error.message.includes("duplicate") ? "Already entered" : "Couldn't add: " + error.message);
+    refreshAll();
+  };
+
+  const removeTeamFromTournament = async (rowId) => {
+    const { error } = await supabase.from("tournament_teams").delete().eq("id", rowId);
+    if (error) return notify("Couldn't remove: " + error.message);
+    setTournamentTeams((xs) => xs.filter((x) => x.id !== rowId));
   };
 
   const createTournament = async (name, format, state, teamIds) => {
@@ -6225,7 +6400,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
 
         {/* TOURNAMENT — a match can be pulled into a cup after it was created,
             since captains don't always set the tournament up first. */}
-        {isOwner && myTournaments.length > 0 && m.status !== "ResultPublished" && (
+        {isOwner && myTournaments.length > 0 && m.status === "Scheduled" && (
           <div>
             <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 10 }}>Tournament</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -6293,7 +6468,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
           )}
             {m.status === "Scheduled" && (isDue(m) ? (
               <>
-                <button className="btn btn-live" onClick={() => onStart(m)}>▶ Start Match (90-min timer)</button>
+                <button className="btn btn-live" onClick={() => onStart(m)}>▶ Start Match ({m.duration || 90}-min timer)</button>
                 <div style={{ fontSize: 12, color: "#8FA396" }}>Kick-off time has been reached, but nothing starts without your consent — start when the teams are ready, or postpone below.</div>
               </>
             ) : (
@@ -6606,7 +6781,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                     <div style={{ fontSize: 11, color: "#8FA396" }}>Choose for each name, then tap Upload match result again.</div>
                   </div>
                 )}
-                <div style={{ fontSize: 12, color: "#8FA396" }}>Your uploaded score is the official result. It publishes to the News Feed on the 90-minute score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
+                <div style={{ fontSize: 12, color: "#8FA396" }}>Your uploaded score is the official result. It publishes to the News Feed on the full-time score{shootout ? " (the shootout decides the match winner, shown on the result)" : ""}.</div>
               </div>
                 </>
               );
