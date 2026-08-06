@@ -1982,9 +1982,10 @@ export default function App() {
   const publishBulk = async (entries) => {
     let ok = 0;
     for (const e of entries) {
-      const { error } = await supabase.from("matches").update({
-        final_a: e.a, final_b: e.b, status: "ResultPublished", published: true,
-      }).eq("id", e.match.id).select();
+      const { error } = await supabase.rpc("submit_result", {
+        p_match_id: e.match.id, p_final_a: e.a, p_final_b: e.b,
+        p_shootout: false, p_pens_a: null, p_pens_b: null,
+      });
       if (!error) { patchMatch(e.match.id, { finalA: e.a, finalB: e.b, status: "ResultPublished", published: true }); ok++; }
     }
     setBulkFor(null);
@@ -2051,20 +2052,25 @@ export default function App() {
     const awayA = isHomeCaptain ? m.subAwayA : a,  awayB = isHomeCaptain ? m.subAwayB : b;
     const bothIn = homeA !== null && homeA !== undefined && awayA !== null && awayA !== undefined;
 
-    let state = "pending", extra = {};
+    let state = "pending", agreed = false;
     if (bothIn) {
-      if (homeA === awayA && homeB === awayB) {
-        state = "published";
-        /* Scorers come from the home captain; fall back to away if empty. */
-        extra = { final_a: homeA, final_b: homeB, status: "ResultPublished", published: true };
-      } else {
-        state = "disputed";
-      }
+      if (homeA === awayA && homeB === awayB) { state = "published"; agreed = true; }
+      else state = "disputed";
     }
 
     const { error } = await supabase.from("matches")
-      .update({ ...patch, ...extra, submission_state: state }).eq("id", m.id).select();
+      .update({ ...patch, submission_state: state }).eq("id", m.id).select();
     if (error) return notify("Couldn't submit: " + error.message);
+
+    /* Publishing goes through the same RPC the rest of the app uses, so a
+       tournament result behaves exactly like any other. */
+    if (agreed) {
+      const { error: e2 } = await supabase.rpc("submit_result", {
+        p_match_id: m.id, p_final_a: homeA, p_final_b: homeB,
+        p_shootout: false, p_pens_a: null, p_pens_b: null,
+      });
+      if (e2) return notify("Scores agree but publishing failed: " + e2.message);
+    }
 
     patchMatch(m.id, {
       subHomeA: homeA, subHomeB: homeB, subAwayA: awayA, subAwayB: awayB,
@@ -2080,10 +2086,12 @@ export default function App() {
 
   /* Host settles a dispute, or confirms a single submission through. */
   const hostResolveScore = async (m, a, b) => {
-    const { error } = await supabase.from("matches").update({
-      final_a: a, final_b: b, status: "ResultPublished", published: true, submission_state: "published",
-    }).eq("id", m.id).select();
+    const { error } = await supabase.rpc("submit_result", {
+      p_match_id: m.id, p_final_a: a, p_final_b: b,
+      p_shootout: false, p_pens_a: null, p_pens_b: null,
+    });
     if (error) return notify("Couldn't publish: " + error.message);
+    await supabase.from("matches").update({ submission_state: "published" }).eq("id", m.id);
     patchMatch(m.id, { finalA: a, finalB: b, status: "ResultPublished", published: true, submissionState: "published" });
     notify("Result published 🏁");
     refreshAll();
@@ -2130,8 +2138,8 @@ export default function App() {
           team_b_name: away.name, team_b_color: away.color,
           badge_a: home.badge || null, badge_b: away.badge || null,
           players_a: home.players || "", players_b: away.players || "",
-          location: "", date: null, time: null,
-          duration: 90, status: "Scheduled", published: true,
+          location: "", match_date: null, match_time: null,
+          duration_minutes: 90, status: "Scheduled", published: true,
         });
       }
       /* rotate all but the first */
@@ -2156,7 +2164,7 @@ export default function App() {
     const { error } = await supabase.from("tournament_rounds")
       .update({ match_date: date }).eq("tournament_id", tournamentId).eq("round_number", roundNumber);
     if (error) return notify("Couldn't set date: " + error.message);
-    await supabase.from("matches").update({ date })
+    await supabase.from("matches").update({ match_date: date })
       .eq("tournament_id", tournamentId).eq("round_number", roundNumber);
     notify(`Round ${roundNumber} set for ${date}`);
     refreshAll();
