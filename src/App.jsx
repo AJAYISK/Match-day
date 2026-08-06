@@ -738,8 +738,9 @@ function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
    24 hours. Polls rather than using Realtime, so it costs nothing extra on a
    plan billed by concurrent connections. Emoji only: no image or GIF uploads,
    which keeps moderation tractable and data use low. ---------- */
-function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live }) {
+function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, fullHeight = false }) {
   const [text, setText] = useState("");
+  const [replyTo, setReplyTo] = useState(null);
   const endRef = useRef(null);
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
 
@@ -759,7 +760,7 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live })
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: 340 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: fullHeight ? "100%" : 340, minHeight: 0 }}>
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 2px" }}>
         <div style={{ textAlign: "center", fontSize: 9, color: "#5a6a5f", background: "#0E140F", border: "1px solid #1b241c", borderRadius: 8, padding: "7px 10px", marginBottom: 13, lineHeight: 1.4 }}>
           {live ? "Chat is open until full time. Messages are deleted 24 hours after the match."
@@ -789,15 +790,34 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live })
                     {new Date(msg.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
                   </span>
                 </div>
-                <div style={{ fontSize: 11.5, color: msg.reported ? "#4e5c53" : "#C6D3C9", marginTop: 3, lineHeight: 1.45, wordBreak: "break-word", fontStyle: msg.reported ? "italic" : "normal" }}>
-                  {msg.reported ? "Message reported — hidden pending review" : msg.message}
+                {msg.replyTo && (() => {
+                  const src_ = messages.find((x) => x.id === msg.replyTo);
+                  const su = src_ ? users.find((x) => x.id === src_.userId) : null;
+                  return (
+                    <div style={{ borderLeft: "2px solid #2a3d31", paddingLeft: 7, marginTop: 4, marginBottom: 2 }}>
+                      <div style={{ fontSize: 8.5, color: "#5a6a5f", fontWeight: 600 }}>{su ? su.name.split(" ")[0] : "Someone"}</div>
+                      <div style={{ fontSize: 9.5, color: "#4e5c53", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {src_ ? src_.message : "message deleted"}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div style={{ fontSize: 11.5, color: "#C6D3C9", marginTop: 3, lineHeight: 1.45, wordBreak: "break-word" }}>
+                  {msg.message}
                 </div>
-                {!msg.reported && (
+                {msg.reported && (
+                  <div style={{ fontSize: 8.5, color: "#e08a7d", marginTop: 3 }}>⚑ This message has been reported</div>
+                )}
+                <div style={{ display: "flex", gap: 10, paddingTop: 3 }}>
+                  {live && (
+                    <button onClick={() => setReplyTo(msg)}
+                      style={{ background: "none", border: 0, padding: 0, fontFamily: "inherit", fontSize: 8.5, color: "#3f4b43", cursor: "pointer" }}>Reply</button>
+                  )}
                   <button onClick={() => (mine ? onDelete(msg.id) : onReport(msg.id))}
-                    style={{ background: "none", border: 0, padding: "3px 0 0", fontFamily: "inherit", fontSize: 8.5, color: "#3f4b43", cursor: "pointer" }}>
+                    style={{ background: "none", border: 0, padding: 0, fontFamily: "inherit", fontSize: 8.5, color: "#3f4b43", cursor: "pointer" }}>
                     {mine ? "Delete" : "Report"}
                   </button>
-                )}
+                </div>
               </div>
             </div>
           );
@@ -806,13 +826,26 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live })
       </div>
 
       {live ? (
-        <div style={{ display: "flex", gap: 7, paddingTop: 10, borderTop: "1px solid #151c16", alignItems: "center" }}>
+        <div style={{ paddingTop: 10, borderTop: "1px solid #151c16" }}>
+        {replyTo && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 8px 8px 0", padding: "7px 9px", marginBottom: 8 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 8.5, color: "#D6A81D", fontWeight: 700 }}>
+                Replying to {(users.find((x) => x.id === replyTo.userId) || {}).name || "someone"}
+              </div>
+              <div style={{ fontSize: 9.5, color: "#5a6a5f", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyTo.message}</div>
+            </div>
+            <button onClick={() => setReplyTo(null)} style={{ background: "none", border: 0, color: "#5a6a5f", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>×</button>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
           <input value={text} maxLength={200} placeholder="Say something…"
             onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text.trim()); setText(""); } }}
+            onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text.trim(), replyTo ? replyTo.id : null); setText(""); setReplyTo(null); } }}
             style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 99, padding: "9px 13px", fontSize: 16, color: "#F5F0E1", fontFamily: "inherit", outline: "none" }} />
-          <button onClick={() => { if (text.trim()) { onSend(text.trim()); setText(""); } }}
+          <button onClick={() => { if (text.trim()) { onSend(text.trim(), replyTo ? replyTo.id : null); setText(""); setReplyTo(null); } }}
             style={{ width: 32, height: 32, borderRadius: "50%", background: text.trim() ? "#E6B31E" : "#243128", color: "#1a1405", border: 0, fontSize: 13, flexShrink: 0, cursor: "pointer" }}>↑</button>
+        </div>
         </div>
       ) : (
         <div style={{ paddingTop: 11, borderTop: "1px solid #151c16", textAlign: "center", fontSize: 9.5, color: "#5a6a5f", lineHeight: 1.45 }}>
@@ -1003,6 +1036,10 @@ export default function App() {
   const [supportLink, setSupportLink] = useState("");
   const [annes, setAnnes] = useState([]);
   const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatReports, setChatReports] = useState([]);
+  const [warnFor, setWarnFor] = useState(null); // { user, quoted, reportId }
+  const [chatFor, setChatFor] = useState(null); // match id — full-screen chat
+  const [myWarnings, setMyWarnings] = useState([]);
   const [annDraft, setAnnDraft] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
   /* One state filter shared by every page. Picking Lagos on the feed should
@@ -1160,7 +1197,11 @@ export default function App() {
        last day — everything older is purged, so there's nothing else to get. */
     try {
       const { data: cm } = await supabase.from("match_chat").select("*").order("created_at");
-      if (cm) setChatMsgs(cm.map((r) => ({ id: r.id, matchId: r.match_id, userId: r.user_id, message: r.message, reported: !!r.reported, createdAt: r.created_at })));
+      if (cm) setChatMsgs(cm.map((r) => ({ id: r.id, matchId: r.match_id, userId: r.user_id, message: r.message, reported: !!r.reported, reportCount: r.report_count || 0, replyTo: r.reply_to || null, createdAt: r.created_at })));
+      const { data: cr } = await supabase.from("chat_reports").select("*").order("created_at", { ascending: false });
+      if (cr) setChatReports(cr.map((r) => ({ id: r.id, chatId: r.chat_id, reporterId: r.reporter_id, reason: r.reason || "", resolved: !!r.resolved, createdAt: r.created_at })));
+      const { data: aw } = await supabase.from("account_warnings").select("*").order("created_at", { ascending: false });
+      if (aw) setMyWarnings(aw.map((r) => ({ id: r.id, userId: r.user_id, issuedBy: r.issued_by, reason: r.reason, quoted: r.quoted || "", seenAt: r.seen_at || null, createdAt: r.created_at })));
       supabase.rpc("purge_old_chat");
     } catch (e) { /* table not created yet — chat stays empty */ }
     const { data: an } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
@@ -1603,6 +1644,14 @@ export default function App() {
     if (!me) return [];
     const out = [];
 
+    /* A warning from an admin — every role can receive one, so it sits above
+       the role-specific sections. */
+    (myWarnings || []).filter((w) => w.userId === me.id && !w.seenAt).forEach((w) => {
+      out.push({ id: "wn-" + w.id, kind: "warning", icon: "⚠️",
+        title: "Warning from Area Match", sub: w.reason,
+        warningId: w.id, at: w.createdAt ? new Date(w.createdAt).getTime() : 0 });
+    });
+
     /* ---- PLAYER ---- squad decisions and awards won */
     if (me.role === "Player") {
       (teamRequests || []).filter((r) => r.playerId === me.id && r.status !== "pending" && !r.seenAt).forEach((r) => {
@@ -1694,7 +1743,7 @@ export default function App() {
         at: r.createdAt ? new Date(r.createdAt).getTime() : 0 });
     });
     return out.sort((a, b) => b.at - a.at);
-  }, [me, matches, teamRequests, savedTeams, playerAwards, tournaments, tournamentInvites, users, now]);
+  }, [me, matches, teamRequests, savedTeams, playerAwards, tournaments, tournamentInvites, myWarnings, users, now]);
 
   const unreadBell = bellItems.filter((n) => !readIds.includes(n.id));
   /* Hero card drifts on its own between the text card and the photo, no tap needed —
@@ -2281,17 +2330,40 @@ export default function App() {
     refreshAll();
   };
 
-  const sendChat = async (matchId, message) => {
+  const sendChat = async (matchId, message, replyTo = null) => {
     const { data, error } = await supabase.from("match_chat")
-      .insert({ match_id: matchId, user_id: me.id, message }).select().single();
+      .insert({ match_id: matchId, user_id: me.id, message, reply_to: replyTo }).select().single();
     if (error) return notify(error.message.includes("row-level") ? "Chat is only open while the match is live" : error.message);
-    if (data) setChatMsgs((xs) => xs.concat({ id: data.id, matchId, userId: me.id, message, reported: false, createdAt: data.created_at }));
+    if (data) setChatMsgs((xs) => xs.concat({ id: data.id, matchId, userId: me.id, message, reported: false, reportCount: 0, replyTo, createdAt: data.created_at }));
   };
-  const reportChat = async (id) => {
-    const { error } = await supabase.from("match_chat").update({ reported: true }).eq("id", id).select();
-    if (error) return notify("Couldn't report: " + error.message);
-    setChatMsgs((xs) => xs.map((x) => (x.id === id ? { ...x, reported: true } : x)));
-    notify("Reported — thanks for flagging it");
+  const reportChat = async (id, reason = "") => {
+    const { error } = await supabase.from("chat_reports")
+      .insert({ chat_id: id, reporter_id: me.id, reason: reason || null });
+    if (error) {
+      if (error.message.includes("duplicate")) return notify("You've already reported this");
+      return notify("Couldn't report: " + error.message);
+    }
+    /* The message stays visible — reporting flags it for an admin, it doesn't
+       let one tap silence someone. */
+    setChatMsgs((xs) => xs.map((x) => (x.id === id ? { ...x, reported: true, reportCount: (x.reportCount || 0) + 1 } : x)));
+    notify("Reported — an admin will review it");
+    refreshAll();
+  };
+
+  /* Admin resolves a report and optionally warns the account. */
+  const resolveReport = async (reportId) => {
+    const { error } = await supabase.from("chat_reports").update({ resolved: true }).eq("id", reportId).select();
+    if (error) return notify("Couldn't resolve: " + error.message);
+    setChatReports((xs) => xs.map((x) => (x.id === reportId ? { ...x, resolved: true } : x)));
+    notify("Marked as reviewed");
+  };
+
+  const warnAccount = async (userId, reason, quoted) => {
+    const { error } = await supabase.from("account_warnings")
+      .insert({ user_id: userId, issued_by: me.id, reason, quoted: quoted || null });
+    if (error) return notify("Couldn't send warning: " + error.message);
+    notify("Warning sent — they'll see it in their notifications");
+    refreshAll();
   };
   const deleteChat = async (id) => {
     const { error } = await supabase.from("match_chat").delete().eq("id", id);
@@ -2798,12 +2870,15 @@ export default function App() {
             </div>
 
             <div className="adm-menu">
-              {[["newsfeed", "📰", "Newsfeed"], ["active", "🟢", "Active Users"], ["post", "📢", "Post to Feed"], ["scores", "🏁", "Awaiting Scores"], ["requests", "📨", "Match Requests"], ["feedback", "💡", "Feature Requests"], ["newusers", "🆕", "New Users"], ["blocked", "🚫", "Blocked Users"], ["users", "👥", "Users & Blocking"], ["settings", "⚙️", "Settings"]].map(([k, icon, label]) => (
+              {[["newsfeed", "📰", "Newsfeed"], ["active", "🟢", "Active Users"], ["post", "📢", "Post to Feed"], ["scores", "🏁", "Awaiting Scores"], ["requests", "📨", "Match Requests"], ["reports", "⚑", "Chat Reports"], ["feedback", "💡", "Feature Requests"], ["newusers", "🆕", "New Users"], ["blocked", "🚫", "Blocked Users"], ["users", "👥", "Users & Blocking"], ["settings", "⚙️", "Settings"]].map(([k, icon, label]) => (
                 <button key={k} className={`adm-item ${adminSection === k ? "on" : ""}`} onClick={() => setAdminSection(k)}>
                   <span style={{ fontSize: 17 }}>{icon}</span>
                   <span className="adm-label">{label}</span>
                   {k === "scores" && matches.filter((x) => x.status === "AwaitingScore").length > 0 && (
                     <span className="adm-badge">{matches.filter((x) => x.status === "AwaitingScore").length}</span>
+                  )}
+                  {k === "reports" && chatReports.filter((r) => !r.resolved).length > 0 && (
+                    <span className="adm-badge">{chatReports.filter((r) => !r.resolved).length}</span>
                   )}
                   {k === "requests" && requests.filter((r) => r.status === "pending").length > 0 && (
                     <span className="adm-badge">{requests.filter((r) => r.status === "pending").length}</span>
@@ -2954,6 +3029,91 @@ export default function App() {
                 </>
               )}
 
+              {adminSection === "reports" && (() => {
+                const open_ = chatReports.filter((r) => !r.resolved);
+                const done = chatReports.filter((r) => r.resolved);
+                const row = (rep) => {
+                  const msg = chatMsgs.find((c) => c.id === rep.chatId);
+                  const author = msg ? users.find((u) => u.id === msg.userId) : null;
+                  const reporter = users.find((u) => u.id === rep.reporterId);
+                  const match = msg ? matches.find((x) => x.id === msg.matchId) : null;
+                  return (
+                    <div key={rep.id} className="card" style={{ marginBottom: 11, padding: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
+                        <RoleAvatar user={author} size={30} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{author ? author.name : "Deleted user"}</div>
+                          <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
+                            {match ? `${match.teamA.name} vs ${match.teamB.name}` : "match removed"}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 9.5, color: T.muted, flexShrink: 0 }}>
+                          {new Date(rep.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                        </div>
+                      </div>
+
+                      {/* What was actually said — kept for 7 days so it can be reviewed */}
+                      <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 9, padding: "10px 12px", fontSize: 13, color: "#F5F0E1", lineHeight: 1.5 }}>
+                        {msg ? msg.message : "Message no longer available"}
+                      </div>
+
+                      <div style={{ fontSize: 10.5, color: T.muted, marginTop: 9 }}>
+                        Reported by <b style={{ color: "#B9C7BC" }}>{reporter ? reporter.name : "someone"}</b>
+                        {msg && msg.reportCount > 1 ? ` · ${msg.reportCount} reports on this message` : ""}
+                      </div>
+
+                      {!rep.resolved && (
+                        <div style={{ display: "flex", gap: 7, marginTop: 12, flexWrap: "wrap" }}>
+                          <button className="btn btn-gold" style={{ flex: 1, minWidth: 120, fontSize: 12, padding: "9px 12px" }}
+                            onClick={() => { if (author) { setWarnFor({ user: author, quoted: msg ? msg.message : "", reportId: rep.id }); } }}>
+                            Warn this account
+                          </button>
+                          <button className="btn btn-ghost" style={{ flex: 1, minWidth: 100, fontSize: 12, padding: "9px 12px" }}
+                            onClick={() => resolveReport(rep.id)}>
+                            No action needed
+                          </button>
+                          {msg && (
+                            <button className="btn btn-ghost" style={{ width: "100%", fontSize: 12, padding: "9px 12px", color: "#e08a7d", borderColor: "#3a1f1a" }}
+                              onClick={() => { deleteChat(msg.id); resolveReport(rep.id); }}>
+                              Delete the message
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {rep.resolved && (
+                        <div style={{ fontSize: 10.5, color: "#5fcf87", marginTop: 10 }}>✓ Reviewed</div>
+                      )}
+                    </div>
+                  );
+                };
+                return (
+                  <>
+                    <div className="display" style={{ fontSize: 20, marginBottom: 4 }}>Chat Reports</div>
+                    <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>
+                      Reported messages stay visible in chat — reporting flags them for you, it doesn't hide them.
+                      Reported messages are kept for 7 days.
+                    </div>
+                    {open_.length === 0 && done.length === 0 && (
+                      <div className="card" style={{ textAlign: "center", padding: 24 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "#B9C7BC" }}>Nothing reported</div>
+                        <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>Reports from match chat will appear here.</div>
+                      </div>
+                    )}
+                    {open_.length > 0 && (
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 11 }}>
+                        Needs review · {open_.length}
+                      </div>
+                    )}
+                    {open_.map(row)}
+                    {done.length > 0 && (
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, margin: "22px 0 11px" }}>
+                        Reviewed
+                      </div>
+                    )}
+                    {done.slice(0, 10).map(row)}
+                  </>
+                );
+              })()}
               {adminSection === "requests" && (
                 <>
                   {requests.filter((r) => r.status === "pending").length === 0 && <div className="card" style={{ color: T.muted }}>No pending requests.</div>}
@@ -3108,7 +3268,7 @@ export default function App() {
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12 }}>
             <div className="display brand-title" style={{ fontSize: 26, color: T.floodlight }}>Area Match</div>
-            {(me.role === "Captain" || me.role === "Player") && (
+            {me.role !== "Admin" && (
               <div style={{ position: "relative", marginLeft: "auto", marginRight: 8 }}>
                 <button title="Notifications"
                   onClick={() => { setBellOpen((v) => !v); }}
@@ -4959,6 +5119,7 @@ export default function App() {
           onSendChat={sendChat}
           onReportChat={reportChat}
           onDeleteChat={deleteChat}
+          onOpenChat={(id) => setChatFor(id)}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -5161,7 +5322,7 @@ export default function App() {
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
       {/* NOTIFICATION PANEL — tap-outside closes it */}
-      {bellOpen && (me.role === "Captain" || me.role === "Player") && (
+      {bellOpen && me.role !== "Admin" && (
         <>
           <div onClick={() => setBellOpen(false)}
             style={{ position: "fixed", inset: 0, zIndex: 78, background: "transparent" }} />
@@ -5204,6 +5365,14 @@ export default function App() {
                           style={{ fontSize: 9.5, background: "none", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>
                           {n.kind === "score" ? "Submit result" : "Open"}
                         </button>
+                      )}
+                      {n.kind === "warning" && (
+                        <button className="tappable" onClick={async () => {
+                          markRead([n.id]);
+                          await supabase.from("account_warnings").update({ seen_at: new Date().toISOString() }).eq("id", n.warningId);
+                          setMyWarnings((xs) => xs.map((x) => (x.id === n.warningId ? { ...x, seenAt: new Date().toISOString() } : x)));
+                        }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>I understand</button>
                       )}
                       {n.kind === "invite" && (
                         <>
@@ -5265,6 +5434,75 @@ export default function App() {
       )}
       {/* ASSIGN A SCORER — captains whose team is playing are shown but blocked,
           which is clearer than hiding them and leaving the host wondering. */}
+      {chatFor && (() => {
+        const cm = matches.find((x) => x.id === chatFor);
+        if (!cm) return null;
+        const msgs = chatMsgs.filter((c) => c.matchId === chatFor);
+        const here = new Set(msgs.map((x) => x.userId)).size;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 96, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 15px", borderBottom: "1px solid #151c16", flexShrink: 0 }}>
+              <button onClick={() => setChatFor(null)} className="tappable"
+                style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
+                <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+              </button>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: "#F7F4EA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {cm.teamA.name} vs {cm.teamB.name}
+                </div>
+                <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>
+                  {cm.status === "Live" ? `Live · ${minute(cm)}′` : "Full time"}{here ? ` · ${here} here` : ""}
+                </div>
+              </div>
+              {cm.status === "Live" && (
+                <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 16, color: "#E6B31E", flexShrink: 0 }}>
+                  {cm.liveA ?? 0}–{cm.liveB ?? 0}
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 1, minHeight: 0, maxWidth: 430, width: "100%", margin: "0 auto", padding: "0 15px 12px", display: "flex", flexDirection: "column" }}>
+              <MatchChat m={cm} me={me} messages={msgs} users={users}
+                onSend={(t, rid) => sendChat(cm.id, t, rid)}
+                onReport={reportChat} onDelete={deleteChat}
+                live={cm.status === "Live"} fullHeight />
+            </div>
+          </div>
+        );
+      })()}
+      {warnFor && (() => {
+        const presets = [
+          "Abusive or insulting language",
+          "Harassment of another user",
+          "Spam or advertising",
+          "Inappropriate content",
+        ];
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 97, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setWarnFor(null)}>
+            <div style={{ background: "#12161c", borderRadius: 16, padding: 16, maxWidth: 360, width: "100%" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 18, color: "#F7F4EA" }}>Warn {warnFor.user.name}</div>
+              <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 6, lineHeight: 1.5 }}>
+                They'll see this in their notifications. Their message is quoted so they know what it refers to.
+              </div>
+              {warnFor.quoted && (
+                <div style={{ background: "#131a15", border: "1px solid #243128", borderRadius: 9, padding: "9px 11px", fontSize: 12, color: "#B9C7BC", marginTop: 12, lineHeight: 1.45 }}>
+                  "{warnFor.quoted}"
+                </div>
+              )}
+              <div style={{ fontSize: 9.5, letterSpacing: "1.4px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "16px 0 9px" }}>Reason</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {presets.map((p) => (
+                  <button key={p} className="tappable"
+                    onClick={() => { warnAccount(warnFor.user.id, p, warnFor.quoted); if (warnFor.reportId) resolveReport(warnFor.reportId); setWarnFor(null); }}
+                    style={{ textAlign: "left", background: "#0E140F", border: "1px solid #1b241c", borderRadius: 9, padding: "11px 12px", fontFamily: "inherit", fontSize: 12.5, color: "#EDEAE0", cursor: "pointer" }}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+              <button className="btn btn-ghost" style={{ width: "100%", marginTop: 12 }} onClick={() => setWarnFor(null)}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
       {tablePosterFor && (() => {
         const tn = tournaments.find((t) => t.id === tablePosterFor);
         if (!tn) return null;
@@ -5601,6 +5839,7 @@ export default function App() {
           onSendChat={sendChat}
           onReportChat={reportChat}
           onDeleteChat={deleteChat}
+          onOpenChat={(id) => setChatFor(id)}
           minute={minute}
           timeline={liveTimeline}
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
@@ -6686,7 +6925,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamen
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -6899,7 +7138,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
           return (
             <div className="card" style={{ fontSize: 13, padding: 14 }}>
               <div style={{ display: "flex", gap: 20, borderBottom: "1px solid #151c16", marginBottom: 14 }}>
-                {[[0, "Line-ups"], [1, "Form"], [2, `Chat${chatMessages.length ? " " + chatMessages.length : ""}`]].map((t) => (
+                {[[0, "Line-ups"], [1, "Form"]].map((t) => (
                   <button key={t[0]} onClick={() => setSheetCard(t[0])}
                     style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12, color: sheetCard === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: sheetCard === t[0] ? 600 : 500, padding: "10px 0", cursor: "pointer", borderBottom: "1.5px solid " + (sheetCard === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
                     {t[1]}
@@ -6910,17 +7149,10 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                 onTouchStart={(e) => { sheetTouchX.current = e.touches[0].clientX; }}
                 onTouchEnd={(e) => {
                   const dx = e.changedTouches[0].clientX - sheetTouchX.current;
-                  if (dx < -40) setSheetCard((c) => Math.min(2, c + 1));
-                  if (dx > 40) setSheetCard((c) => Math.max(0, c - 1));
+                  if (dx < -40) setSheetCard(1);
+                  if (dx > 40) setSheetCard(0);
                 }}>
-                {sheetCard === 2 ? (
-                  <div style={{ width: "100%" }}>
-                    <MatchChat m={m} me={me} messages={chatMessages} users={allUsers}
-                      onSend={(t) => onSendChat && onSendChat(m.id, t)}
-                      onReport={onReportChat} onDelete={onDeleteChat}
-                      live={m.status === "Live"} />
-                  </div>
-                ) : sheetCard === 0 ? (
+                {sheetCard === 0 ? (
                   [[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => {
                     const names = (players || "").split(",").map((p) => p.trim()).filter(Boolean);
                     return (
@@ -7138,6 +7370,30 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
               );
             })()}
           </div>
+        )}
+        {/* CHAT — its own screen. A chat needs full height for scrolling and
+            typing, and a captain shouldn't have score controls sitting under it. */}
+        {(m.status === "Live" || chatMessages.length > 0) && (
+          <button className="tappable" onClick={() => onOpenChat && onOpenChat(m.id)}
+            style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+              background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${m.status === "Live" ? "#E6B31E" : "#243128"}`,
+              borderRadius: "0 11px 11px 0", padding: "13px 14px" }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>💬</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#F7F4EA" }}>Match chat</span>
+              <span style={{ display: "block", fontSize: 10, color: "#7d8f83", marginTop: 3 }}>
+                {m.status === "Live"
+                  ? (chatMessages.length ? `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · open now` : "Be the first to say something")
+                  : `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · closed`}
+              </span>
+            </span>
+            {m.status === "Live" && chatMessages.length > 0 && (
+              <span style={{ background: "#E8442E", color: "#fff", fontSize: 9, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 }}>
+                {chatMessages.length > 99 ? "99+" : chatMessages.length}
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: "#4e5c53", flexShrink: 0 }}>›</span>
+          </button>
         )}
         <button className="btn btn-turf" onClick={onPoster}>🎨 View match artwork (download inside)</button>
 
@@ -7773,7 +8029,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
             }}>
             {liveTab === "chat" ? (
               <MatchChat m={m} me={me} messages={chatMessages} users={allUsers}
-                onSend={(t) => onSendChat(m.id, t)} onReport={onReportChat} onDelete={onDeleteChat}
+                onSend={(t, rid) => onSendChat(m.id, t, rid)} onReport={onReportChat} onDelete={onDeleteChat}
                 live={m.status === "Live"} />
             ) : liveTab === "stats" ? (
               <>
