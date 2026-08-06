@@ -7371,31 +7371,6 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             })()}
           </div>
         )}
-        {/* CHAT — its own screen. A chat needs full height for scrolling and
-            typing, and a captain shouldn't have score controls sitting under it. */}
-        {(m.status === "Live" || chatMessages.length > 0) && (
-          <button className="tappable" onClick={() => onOpenChat && onOpenChat(m.id)}
-            style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
-              background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${m.status === "Live" ? "#E6B31E" : "#243128"}`,
-              borderRadius: "0 11px 11px 0", padding: "13px 14px" }}>
-            <span style={{ fontSize: 16, flexShrink: 0 }}>💬</span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#F7F4EA" }}>Match chat</span>
-              <span style={{ display: "block", fontSize: 10, color: "#7d8f83", marginTop: 3 }}>
-                {m.status === "Live"
-                  ? (chatMessages.length ? `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · open now` : "Be the first to say something")
-                  : `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · closed`}
-              </span>
-            </span>
-            {m.status === "Live" && chatMessages.length > 0 && (
-              <span style={{ background: "#E8442E", color: "#fff", fontSize: 9, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 }}>
-                {chatMessages.length > 99 ? "99+" : chatMessages.length}
-              </span>
-            )}
-            <span style={{ fontSize: 11, color: "#4e5c53", flexShrink: 0 }}>›</span>
-          </button>
-        )}
-        <button className="btn btn-turf" onClick={onPoster}>🎨 View match artwork (download inside)</button>
 
         {/* CAPTAIN CONTROLS */}
         {isOwner && me.role === "Captain" && (
@@ -7826,7 +7801,7 @@ const genCommentary = (m, rosterNames) => {
   return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
 };
 
-function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, allMatches = [], onClose , chatMessages = [], onSendChat, onReportChat, onDeleteChat, allUsers = []}) {
+function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, allMatches = [], onClose , chatMessages = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, allUsers = []}) {
   const [commentary, setCommentary] = useState([]);
   const [watching, setWatching] = useState(1);
   const rosterNames = (str) => {
@@ -8010,9 +7985,33 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
           </div>
         )}
 
+        {/* CHAT — opens full screen. A chat needs the whole height for scrolling
+            and typing, so it isn't squeezed in as a tab. Open to every role. */}
+        <div style={{ padding: "0 14px 14px" }}>
+          <button className="tappable" onClick={() => onOpenChat && onOpenChat(m.id)}
+            style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+              background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${m.status === "Live" ? "#E6B31E" : "#243128"}`,
+              borderRadius: "0 11px 11px 0", padding: "13px 14px" }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>💬</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#F7F4EA" }}>Match chat</span>
+              <span style={{ display: "block", fontSize: 10, color: "#7d8f83", marginTop: 3 }}>
+                {m.status === "Live"
+                  ? (chatMessages.length ? `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · open now` : "Be the first to say something")
+                  : `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · closed`}
+              </span>
+            </span>
+            {m.status === "Live" && chatMessages.length > 0 && (
+              <span style={{ background: "#E8442E", color: "#fff", fontSize: 9, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 }}>
+                {chatMessages.length > 99 ? "99+" : chatMessages.length}
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: "#4e5c53", flexShrink: 0 }}>›</span>
+          </button>
+        </div>
         <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
           <div style={{ display: "flex", borderBottom: "1px solid #243128", marginBottom: 14 }}>
-            {[["stats", "Info"], ["commentary", "Commentary"], ["lineups", "Line-ups"], ["chat", `Chat${chatMessages.length ? " " + chatMessages.length : ""}`], ["h2h", "H2H"]].map(([key, label]) => (
+            {[["stats", "Info"], ["commentary", "Commentary"], ["lineups", "Line-ups"], ["h2h", "H2H"]].map(([key, label]) => (
               <button key={key} onClick={() => setLiveTab(key)}
                 style={{ flex: 1, background: "none", border: 0, borderBottom: `2px solid ${liveTab === key ? T.chalk : "transparent"}`, color: liveTab === key ? T.chalk : T.muted, fontWeight: liveTab === key ? 700 : 500, fontSize: 12.5, padding: "10px 2px", fontFamily: "inherit", cursor: "pointer" }}>
                 {label}
@@ -8027,11 +8026,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
               if (dx < -40 && i < order.length - 1) setLiveTab(order[i + 1]);
               if (dx > 40 && i > 0) setLiveTab(order[i - 1]);
             }}>
-            {liveTab === "chat" ? (
-              <MatchChat m={m} me={me} messages={chatMessages} users={allUsers}
-                onSend={(t, rid) => onSendChat(m.id, t, rid)} onReport={onReportChat} onDelete={onDeleteChat}
-                live={m.status === "Live"} />
-            ) : liveTab === "stats" ? (
+            {liveTab === "stats" ? (
               <>
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
