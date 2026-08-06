@@ -2138,7 +2138,7 @@ export default function App() {
           team_b_name: away.name, team_b_color: away.color,
           badge_a: home.badge || null, badge_b: away.badge || null,
           players_a: home.players || "", players_b: away.players || "",
-          location: "", match_date: null, match_time: null,
+          location: "TBC", match_date: new Date().toISOString().slice(0, 10), match_time: "16:00",
           duration_minutes: 90, status: "Scheduled", published: true,
         });
       }
@@ -2166,6 +2166,7 @@ export default function App() {
     if (error) return notify("Couldn't set date: " + error.message);
     await supabase.from("matches").update({ match_date: date })
       .eq("tournament_id", tournamentId).eq("round_number", roundNumber);
+    /* Fixtures start with a placeholder date; the host's round date is the real one. */
     notify(`Round ${roundNumber} set for ${date}`);
     refreshAll();
   };
