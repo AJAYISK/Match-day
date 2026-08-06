@@ -3301,7 +3301,12 @@ export default function App() {
             {(me.role === "Fan" || me.role === "Player") && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
-            <button className={page === "tournaments" ? "on" : ""} onClick={() => { setViewTournament(null); setPage("tournaments"); }}>Tournaments</button>
+            <button disabled title="Coming soon"
+              onClick={() => notify("Tournaments are coming soon 🏆")}
+              style={{ opacity: .45, cursor: "default", position: "relative" }}>
+              Tournaments
+              <span style={{ fontSize: 7.5, fontWeight: 700, letterSpacing: ".6px", background: "#243128", color: "#8FA396", borderRadius: 3, padding: "1px 4px", marginLeft: 5, verticalAlign: "middle" }}>SOON</span>
+            </button>
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
@@ -3491,9 +3496,8 @@ export default function App() {
               </>
             )}
 
-            {/* TOURNAMENTS — a strip above the fixtures, scoped to the same state
-                filter the rest of the feed uses. */}
-            {(() => {
+            {/* TOURNAMENTS — hidden while the feature is marked coming soon. */}
+            {false && (() => {
               const live = tournaments.filter((t) => t.status === "active" &&
                 (feedState === "All" || !t.state || t.state === feedState));
               if (live.length === 0) return null;
@@ -3839,7 +3843,8 @@ export default function App() {
               )}
 
               {myProfileTab === "overview" && (() => {
-                const tns = playerTournaments(me);
+                /* Hidden while tournaments are marked coming soon. */
+                const tns = [];
                 if (tns.length === 0) return null;
                 return (
                   <div style={{ marginTop: 22 }}>
@@ -7283,6 +7288,30 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             onClick={() => { if (window.confirm("Delete this match permanently? This can't be undone.")) onDeleteMatch(m); }}>🗑 Delete this match</button>
         )}
 
+        {/* CHAT — captains land here rather than the live view, so the entry
+            point has to exist on both screens. Opens the same full-screen chat. */}
+        {(m.status === "Live" || chatMessages.length > 0) && (
+          <button className="tappable" onClick={() => onOpenChat && onOpenChat(m.id)}
+            style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
+              background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${m.status === "Live" ? "#E6B31E" : "#243128"}`,
+              borderRadius: "0 11px 11px 0", padding: "13px 14px" }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>💬</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "#F7F4EA" }}>Match chat</span>
+              <span style={{ display: "block", fontSize: 10, color: "#7d8f83", marginTop: 3 }}>
+                {m.status === "Live"
+                  ? (chatMessages.length ? `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · open now` : "Be the first to say something")
+                  : `${chatMessages.length} message${chatMessages.length === 1 ? "" : "s"} · closed`}
+              </span>
+            </span>
+            {m.status === "Live" && chatMessages.length > 0 && (
+              <span style={{ background: "#E8442E", color: "#fff", fontSize: 9, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", flexShrink: 0 }}>
+                {chatMessages.length > 99 ? "99+" : chatMessages.length}
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: "#4e5c53", flexShrink: 0 }}>›</span>
+          </button>
+        )}
         {/* TOURNAMENT SCORE — both captains submit at full time. Agreement
             publishes; a mismatch raises a dispute for the host. */}
         {tournamentInfo && (canSubmitScore || isTournamentHost) && m.status !== "Scheduled" && (
