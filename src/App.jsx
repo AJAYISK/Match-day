@@ -734,6 +734,95 @@ function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
   );
 }
 
+/* ---------- MATCH CHAT — opens at kick-off, closes at full time, purged after
+   24 hours. Polls rather than using Realtime, so it costs nothing extra on a
+   plan billed by concurrent connections. Emoji only: no image or GIF uploads,
+   which keeps moderation tractable and data use low. ---------- */
+function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live }) {
+  const [text, setText] = useState("");
+  const endRef = useRef(null);
+  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
+
+  const hoursLeft = (() => {
+    if (messages.length === 0) return 24;
+    const oldest = Math.min(...messages.map((x) => new Date(x.createdAt).getTime()));
+    return Math.max(0, Math.round(24 - (Date.now() - oldest) / 3600000));
+  })();
+
+  const roleFor = (u) => {
+    if (!u) return null;
+    if (u.id === m.createdBy) return { label: "HOST", bg: "rgba(230,179,30,.14)", fg: "#E6B31E" };
+    const inMatch = (m.playersA + "," + m.playersB).toLowerCase();
+    if (u.role === "Player" && u.rosterName && inMatch.includes(u.rosterName.trim().toLowerCase()))
+      return { label: "PLAYING", bg: "rgba(63,163,91,.14)", fg: "#5fcf87" };
+    return null;
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: 340 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 2px" }}>
+        <div style={{ textAlign: "center", fontSize: 9, color: "#5a6a5f", background: "#0E140F", border: "1px solid #1b241c", borderRadius: 8, padding: "7px 10px", marginBottom: 13, lineHeight: 1.4 }}>
+          {live ? "Chat is open until full time. Messages are deleted 24 hours after the match."
+                : `Chat closed at full time. These messages are deleted in ${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}.`}
+        </div>
+
+        {messages.length === 0 && (
+          <div style={{ textAlign: "center", fontSize: 11, color: "#4e5c53", padding: "26px 12px", lineHeight: 1.5 }}>
+            {live ? "Nothing yet — say something." : "Nobody chatted during this match."}
+          </div>
+        )}
+
+        {messages.map((msg) => {
+          const u = users.find((x) => x.id === msg.userId);
+          const role = roleFor(u);
+          const mine = msg.userId === me.id;
+          return (
+            <div key={msg.id} style={{ display: "flex", gap: 8, marginBottom: 13 }}>
+              <RoleAvatar user={u} size={24} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: "#F7F4EA" }}>{u ? u.name.split(" ")[0] : "Someone"}</span>
+                  {role && (
+                    <span style={{ fontSize: 7, padding: "1px 5px", borderRadius: 3, fontWeight: 700, letterSpacing: ".5px", background: role.bg, color: role.fg }}>{role.label}</span>
+                  )}
+                  <span style={{ fontSize: 8, color: "#3f4b43", marginLeft: "auto", flexShrink: 0 }}>
+                    {new Date(msg.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: msg.reported ? "#4e5c53" : "#C6D3C9", marginTop: 3, lineHeight: 1.45, wordBreak: "break-word", fontStyle: msg.reported ? "italic" : "normal" }}>
+                  {msg.reported ? "Message reported — hidden pending review" : msg.message}
+                </div>
+                {!msg.reported && (
+                  <button onClick={() => (mine ? onDelete(msg.id) : onReport(msg.id))}
+                    style={{ background: "none", border: 0, padding: "3px 0 0", fontFamily: "inherit", fontSize: 8.5, color: "#3f4b43", cursor: "pointer" }}>
+                    {mine ? "Delete" : "Report"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        <div ref={endRef} />
+      </div>
+
+      {live ? (
+        <div style={{ display: "flex", gap: 7, paddingTop: 10, borderTop: "1px solid #151c16", alignItems: "center" }}>
+          <input value={text} maxLength={200} placeholder="Say something…"
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text.trim()); setText(""); } }}
+            style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 99, padding: "9px 13px", fontSize: 11.5, color: "#F5F0E1", fontFamily: "inherit", outline: "none" }} />
+          <button onClick={() => { if (text.trim()) { onSend(text.trim()); setText(""); } }}
+            style={{ width: 32, height: 32, borderRadius: "50%", background: text.trim() ? "#E6B31E" : "#243128", color: "#1a1405", border: 0, fontSize: 13, flexShrink: 0, cursor: "pointer" }}>↑</button>
+        </div>
+      ) : (
+        <div style={{ paddingTop: 11, borderTop: "1px solid #151c16", textAlign: "center", fontSize: 9.5, color: "#5a6a5f", lineHeight: 1.45 }}>
+          Chat closed at full time.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatePicker({ value, onChange, counts = null, allLabel = "All states", label = "Showing", disabled = false, placeholder = "Select your state…" }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -915,6 +1004,7 @@ export default function App() {
   const [adminViewUser, setAdminViewUser] = useState(null);
   const [supportLink, setSupportLink] = useState("");
   const [annes, setAnnes] = useState([]);
+  const [chatMsgs, setChatMsgs] = useState([]);
   const [annDraft, setAnnDraft] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
   const [feedState, setFeedState] = useState("All");
@@ -1060,6 +1150,13 @@ export default function App() {
     }
     const { data: rq } = await supabase.from("match_requests").select("*").order("created_at", { ascending: false });
     if (rq) setRequests(rq);
+    /* Chat is only fetched for matches that are live or finished within the
+       last day — everything older is purged, so there's nothing else to get. */
+    try {
+      const { data: cm } = await supabase.from("match_chat").select("*").order("created_at");
+      if (cm) setChatMsgs(cm.map((r) => ({ id: r.id, matchId: r.match_id, userId: r.user_id, message: r.message, reported: !!r.reported, createdAt: r.created_at })));
+      supabase.rpc("purge_old_chat");
+    } catch (e) { /* table not created yet — chat stays empty */ }
     const { data: an } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
     if (an) setAnnes(an.filter((a) => Date.now() - new Date(a.created_at).getTime() < 86400000));
     const { data: st } = await supabase.from("site_settings").select("value").eq("key", "support_link").single();
@@ -2176,6 +2273,24 @@ export default function App() {
     if (e2) return notify("Couldn't update fixtures: " + e2.message);
     notify(`Round ${roundNumber} updated`);
     refreshAll();
+  };
+
+  const sendChat = async (matchId, message) => {
+    const { data, error } = await supabase.from("match_chat")
+      .insert({ match_id: matchId, user_id: me.id, message }).select().single();
+    if (error) return notify(error.message.includes("row-level") ? "Chat is only open while the match is live" : error.message);
+    if (data) setChatMsgs((xs) => xs.concat({ id: data.id, matchId, userId: me.id, message, reported: false, createdAt: data.created_at }));
+  };
+  const reportChat = async (id) => {
+    const { error } = await supabase.from("match_chat").update({ reported: true }).eq("id", id).select();
+    if (error) return notify("Couldn't report: " + error.message);
+    setChatMsgs((xs) => xs.map((x) => (x.id === id ? { ...x, reported: true } : x)));
+    notify("Reported — thanks for flagging it");
+  };
+  const deleteChat = async (id) => {
+    const { error } = await supabase.from("match_chat").delete().eq("id", id);
+    if (error) return notify("Couldn't delete: " + error.message);
+    setChatMsgs((xs) => xs.filter((x) => x.id !== id));
   };
 
   /* ---- INVITES ---- */
@@ -4561,6 +4676,23 @@ export default function App() {
 
                     {captainTab === "overview" && (
                       <>
+                      {/* The captain's announcement — written in their own panel
+                          but never shown to visitors until now. */}
+                      {(() => {
+                        const ann = annes.find((a) => a.captain_id === c.id);
+                        if (!ann) return null;
+                        return (
+                          <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 11px 11px 0", padding: 13, marginBottom: 18 }}>
+                            <div style={{ fontSize: 9, letterSpacing: "1.3px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>Announcement</div>
+                            <div style={{ fontSize: 12.5, color: "#F7F4EA", marginTop: 7, lineHeight: 1.5 }}>{ann.message}</div>
+                            {ann.created_at && (
+                              <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 7 }}>
+                                {new Date(ann.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                         {liveNowMatch && (
                           <div className="tappable" onClick={() => openMatchDetail(liveNowMatch.id)}
                             style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #E8442E", borderRadius: "0 10px 10px 0", marginBottom: 18, cursor: "pointer" }}>
@@ -5447,6 +5579,11 @@ export default function App() {
           m={liveDetailMatch}
           me={me}
           notify={notify}
+          chatMessages={chatMsgs.filter((c) => c.matchId === liveDetailMatch.id)}
+          allUsers={users}
+          onSendChat={sendChat}
+          onReportChat={reportChat}
+          onDeleteChat={deleteChat}
           minute={minute}
           timeline={liveTimeline}
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
@@ -7409,7 +7546,7 @@ const genCommentary = (m, rosterNames) => {
   return t.replace(/\{p1\}/g, p1).replace(/\{p2\}/g, p2);
 };
 
-function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, allMatches = [], onClose }) {
+function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAlerts, onShare, onShareStats, onShareLineup, allMatches = [], onClose , chatMessages = [], onSendChat, onReportChat, onDeleteChat, allUsers = []}) {
   const [commentary, setCommentary] = useState([]);
   const [watching, setWatching] = useState(1);
   const rosterNames = (str) => {
@@ -7595,7 +7732,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
 
         <div style={{ padding: 14, borderBottom: "1px solid #243128" }}>
           <div style={{ display: "flex", borderBottom: "1px solid #243128", marginBottom: 14 }}>
-            {[["stats", "Info"], ["commentary", "Commentary"], ["lineups", "Line-ups"], ["h2h", "H2H"]].map(([key, label]) => (
+            {[["stats", "Info"], ["commentary", "Commentary"], ["lineups", "Line-ups"], ["chat", `Chat${chatMessages.length ? " " + chatMessages.length : ""}`], ["h2h", "H2H"]].map(([key, label]) => (
               <button key={key} onClick={() => setLiveTab(key)}
                 style={{ flex: 1, background: "none", border: 0, borderBottom: `2px solid ${liveTab === key ? T.chalk : "transparent"}`, color: liveTab === key ? T.chalk : T.muted, fontWeight: liveTab === key ? 700 : 500, fontSize: 12.5, padding: "10px 2px", fontFamily: "inherit", cursor: "pointer" }}>
                 {label}
@@ -7610,7 +7747,11 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
               if (dx < -40 && i < order.length - 1) setLiveTab(order[i + 1]);
               if (dx > 40 && i > 0) setLiveTab(order[i - 1]);
             }}>
-            {liveTab === "stats" ? (
+            {liveTab === "chat" ? (
+              <MatchChat m={m} me={me} messages={chatMessages} users={allUsers}
+                onSend={(t) => onSendChat(m.id, t)} onReport={onReportChat} onDelete={onDeleteChat}
+                live={m.status === "Live"} />
+            ) : liveTab === "stats" ? (
               <>
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
