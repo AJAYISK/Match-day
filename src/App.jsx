@@ -541,6 +541,125 @@ function BulkResultsModal({ tournament, fixtures, onPublish, onClose }) {
   );
 }
 
+/* ---------- TABLE POSTER — the shareable one. Standings, top scorer and rounds
+   remaining, built for posting into WhatsApp groups. ---------- */
+function TablePosterModal({ tournament, rows, topScorer, roundsPlayed, roundsTotal, onClose, notify }) {
+  const svgRef = useRef(null);
+  const download = () => {
+    const xml = new XMLSerializer().serializeToString(svgRef.current);
+    const blob = new Blob([xml], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1000; canvas.height = 1410;
+      canvas.getContext("2d").drawImage(img, 0, 0, 1000, 1410);
+      canvas.toBlob((png) => {
+        URL.revokeObjectURL(url);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(png);
+        a.download = `${tournament.name}-table.png`;
+        a.click();
+        notify("Table downloaded 📲");
+      });
+    };
+    img.src = url;
+  };
+
+  const show = rows.slice(0, 8);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 96, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <svg ref={svgRef} viewBox="0 0 500 705" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 14 }}>
+          <defs>
+            <linearGradient id="tpBg" x1="0.2" y1="0" x2="0.8" y2="1">
+              <stop offset="0%" stopColor="#1a2b1e" /><stop offset="45%" stopColor="#0f1a14" /><stop offset="100%" stopColor="#070c09" />
+            </linearGradient>
+            <linearGradient id="tpGold" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#FBEFC0" /><stop offset="35%" stopColor="#E3BC42" /><stop offset="100%" stopColor="#8a6a12" />
+            </linearGradient>
+            <radialGradient id="tpHalo" cx="50%" cy="18%" r="42%">
+              <stop offset="0%" stopColor="#D6A81D" stopOpacity=".22" /><stop offset="100%" stopColor="#D6A81D" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <rect width="500" height="705" fill="url(#tpBg)" />
+          <ellipse cx="250" cy="120" rx="210" ry="130" fill="url(#tpHalo)" />
+          <g opacity="0.03">
+            <rect x="70" width="26" height="705" fill="#F5F0E1" /><rect x="200" width="26" height="705" fill="#F5F0E1" /><rect x="330" width="26" height="705" fill="#F5F0E1" />
+          </g>
+
+          <g transform="translate(250,74)" fill="none" stroke="url(#tpGold)" strokeWidth="3" strokeLinecap="round">
+            <path d="M-40 22 Q-50 0 -38 -20" /><path d="M40 22 Q50 0 38 -20" />
+            <path d="M-38 12 Q-47 8 -50 0" /><path d="M-36 0 Q-45 -4 -47 -14" />
+            <path d="M38 12 Q47 8 50 0" /><path d="M36 0 Q45 -4 47 -14" />
+          </g>
+          <text x="250" y="72" textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize={tournament.name.length > 18 ? 15 : 20}>
+            {tournament.name.toUpperCase()}
+          </text>
+          <text x="250" y="120" textAnchor="middle" fill="#6f8377" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="9" letterSpacing="2.6">
+            STANDINGS · AFTER ROUND {roundsPlayed}
+          </text>
+
+          <line x1="44" y1="145" x2="456" y2="145" stroke="#1d2a22" />
+          <g fontFamily="Space Grotesk, sans-serif" fontSize="8" fill="#3f4b43" letterSpacing="1.1">
+            <text x="106" y="170">TEAM</text>
+            <text x="330" y="170" textAnchor="middle">P</text><text x="365" y="170" textAnchor="middle">W</text>
+            <text x="400" y="170" textAnchor="middle">D</text><text x="430" y="170" textAnchor="middle">L</text>
+            <text x="466" y="170" textAnchor="end">PTS</text>
+          </g>
+
+          {show.map((r, i) => {
+            const y = 209 + i * 46;
+            const qual = i < 2;
+            return (
+              <g key={r.team.id}>
+                {qual && <rect x="44" y={y - 27} width="412" height="42" rx="6" fill="rgba(63,163,91,.07)" />}
+                <text x="64" y={y} fill={qual ? "#5fcf87" : "#4e5c53"} fontFamily="Anton, sans-serif" fontSize="15">{i + 1}</text>
+                <text x="106" y={y} fill={qual ? "#F9F6EC" : "#EDEAE0"} fontFamily="Space Grotesk, sans-serif" fontSize="13" fontWeight={qual ? 600 : 400}>
+                  {r.team.name.length > 22 ? r.team.name.slice(0, 21) + "…" : r.team.name}
+                </text>
+                <text x="330" y={y} fill="#7d8f83" fontFamily="Space Grotesk, sans-serif" fontSize="13" textAnchor="middle">{r.p}</text>
+                <text x="365" y={y} fill="#7d8f83" fontFamily="Space Grotesk, sans-serif" fontSize="13" textAnchor="middle">{r.w}</text>
+                <text x="400" y={y} fill="#7d8f83" fontFamily="Space Grotesk, sans-serif" fontSize="13" textAnchor="middle">{r.d}</text>
+                <text x="430" y={y} fill="#7d8f83" fontFamily="Space Grotesk, sans-serif" fontSize="13" textAnchor="middle">{r.l}</text>
+                <text x="466" y={y} fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="16" textAnchor="end">{r.pts}</text>
+              </g>
+            );
+          })}
+
+          <line x1="44" y1={196 + show.length * 46} x2="456" y2={196 + show.length * 46} stroke="#1d2a22" />
+
+          {topScorer && (
+            <>
+              <text x="64" y={226 + show.length * 46} fill="#4e5c53" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="8" letterSpacing="1.6">TOP SCORER</text>
+              <g transform={`translate(64,${242 + show.length * 46})`}>
+                <svg width="30" height="35" viewBox="0 0 100 116"><path d={JERSEY_PATH} fill="url(#tpGold)" /></svg>
+                <text x="44" y="20" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize="17">
+                  {topScorer.name.length > 18 ? topScorer.name.slice(0, 17).toUpperCase() + "…" : topScorer.name.toUpperCase()}
+                </text>
+                <text x="44" y="38" fill="#7d8f83" fontFamily="Space Grotesk, sans-serif" fontSize="11">
+                  {topScorer.teamName && topScorer.teamName.length > 24 ? topScorer.teamName.slice(0, 23) + "…" : topScorer.teamName}
+                </text>
+                <text x="392" y="28" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" textAnchor="end">{topScorer.goals}</text>
+              </g>
+            </>
+          )}
+
+          <text x="250" y="628" textAnchor="middle" fill="#6f8377" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="10" letterSpacing="1.4">
+            {roundsPlayed} ROUND{roundsPlayed === 1 ? "" : "S"} PLAYED · {Math.max(0, roundsTotal - roundsPlayed)} TO GO
+          </text>
+          <text x="250" y="662" textAnchor="middle" fill="#3f4d45" fontFamily="Space Grotesk, sans-serif" fontWeight="600" fontSize="9" letterSpacing="3">AREAMATCH.COM.NG</text>
+          <rect x="1" y="1" width="498" height="703" rx="14" fill="none" stroke="#D6A81D" strokeOpacity=".35" strokeWidth="1.5" />
+        </svg>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Close</button>
+          <button className="btn btn-gold" style={{ flex: 1 }} onClick={download}>⬇ Download</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
   const [name, setName] = useState("");
   const [format, setFormat] = useState("league");
@@ -766,6 +885,7 @@ export default function App() {
   const [tnTab, setTnTab] = useState("table");
   const [tnCreateOpen, setTnCreateOpen] = useState(false);
   const [assignFor, setAssignFor] = useState(null); // match id awaiting a scorer
+  const [tablePosterFor, setTablePosterFor] = useState(null); // tournament id
   const [bulkFor, setBulkFor] = useState(null); // tournament id for bulk entry
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
@@ -1405,6 +1525,30 @@ export default function App() {
 
     if (me.role !== "Captain") return [];
 
+    /* Tournament invites and score disputes */
+    (tournamentInvites || []).filter((iv) => iv.captainId === me.id && iv.status === "pending").forEach((iv) => {
+      const tn = tournaments.find((t) => t.id === iv.tournamentId);
+      out.push({ id: "ti-" + iv.id, kind: "invite", icon: "🏆",
+        title: "Tournament invite", sub: tn ? tn.name : "A tournament",
+        inviteId: iv.id, at: iv.createdAt ? new Date(iv.createdAt).getTime() : 0 });
+    });
+    matches.forEach((m) => {
+      if (!m.tournamentId) return;
+      const tn = tournaments.find((t) => t.id === m.tournamentId);
+      if (!tn || tn.hostId !== me.id) return;
+      if (m.submissionState === "disputed") {
+        out.push({ id: "dp-" + m.id, kind: "dispute", icon: "⚠️",
+          title: "Scores don't match",
+          sub: `${m.teamA.name} vs ${m.teamB.name} — needs your decision`,
+          matchId: m.id, at: 0 });
+      } else if (m.submissionState === "pending") {
+        out.push({ id: "pn-" + m.id, kind: "onesub", icon: "⏳",
+          title: "Waiting on a score",
+          sub: `${m.teamA.name} vs ${m.teamB.name} — 1 of 2 submitted`,
+          matchId: m.id, at: 0 });
+      }
+    });
+
     /* Delegated fixtures — a captain needs to know they've been asked, and the
        host needs to know when someone declines. */
     matches.forEach((m) => {
@@ -1447,7 +1591,7 @@ export default function App() {
         at: r.createdAt ? new Date(r.createdAt).getTime() : 0 });
     });
     return out.sort((a, b) => b.at - a.at);
-  }, [me, matches, teamRequests, savedTeams, playerAwards, tournaments, users, now]);
+  }, [me, matches, teamRequests, savedTeams, playerAwards, tournaments, tournamentInvites, users, now]);
 
   const unreadBell = bellItems.filter((n) => !readIds.includes(n.id));
   /* Hero card drifts on its own between the text card and the photo, no tap needed —
@@ -2586,7 +2730,15 @@ export default function App() {
                     </div>
                   ))}
                   <div className="feedgrid" style={{ marginTop: 12 }}>
-                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               )}
@@ -2975,7 +3127,15 @@ export default function App() {
                 <>
                   <SectionTitle color={"#E6B31E"}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                   </div>
                 </>
               ) : null;
@@ -3004,7 +3164,15 @@ export default function App() {
               <>
                 <SectionTitle color={"#E8442E"}>● Live Now</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -3013,7 +3181,15 @@ export default function App() {
               <>
                 <SectionTitle color={"#E6B31E"}>⏳ Awaiting Results</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
               </>
             )}
@@ -3116,7 +3292,15 @@ export default function App() {
               <>
                 <SectionTitle color={"#E6B31E"}>📍 Matches in {me.state}</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                 </div>
                 <SeeMoreBtn k="mystate" list={inMyState} />
               </>
@@ -3125,7 +3309,15 @@ export default function App() {
             <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
 
             <SeeMoreBtn k="upcoming" list={upcoming} />
@@ -3133,7 +3325,15 @@ export default function App() {
             <SectionTitle color={"#F5F0E1"}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
 
@@ -3162,7 +3362,15 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
+              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
             </div>
             <SeeMoreBtn k="mymatches" list={mine} />
           </>
@@ -3729,7 +3937,8 @@ export default function App() {
                 </div>
 
                 <div style={{ display: "flex", borderBottom: "1px solid #151c16", gap: 22, marginTop: 13, marginBottom: 16 }}>
-                  {[["table", "Table"], ["fixtures", "Fixtures"], ["scorers", "Scorers"]].map((t) => (
+                  {[["table", "Table"], ["fixtures", "Fixtures"], ["scorers", "Scorers"]]
+                    .concat(isHost ? [["setup", "Setup"]] : []).map((t) => (
                     <button key={t[0]} onClick={() => setTnTab(t[0])}
                       style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12.5, color: tnTab === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: tnTab === t[0] ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: "1.5px solid " + (tnTab === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
                       {t[1]}
@@ -3766,6 +3975,10 @@ export default function App() {
                       );
                     })}
                     {rows.length > 0 && <div style={{ fontSize: 8.5, color: "#3f4b43", marginTop: 9 }}>Green = top places · ★ your team</div>}
+                    {rows.length > 0 && (
+                      <button className="btn btn-ghost tappable" style={{ width: "100%", marginTop: 14 }}
+                        onClick={() => setTablePosterFor(tn.id)}>Share the table</button>
+                    )}
                   </>
                 )}
 
@@ -3843,6 +4056,167 @@ export default function App() {
                   </>
                 )}
 
+                {tnTab === "setup" && isHost && (() => {
+                  const invites = tournamentInvites.filter((i) => i.tournamentId === tn.id);
+                  const accepted = invites.filter((i) => i.status === "accepted");
+                  const entered = tournamentTeams.filter((tt) => tt.tournamentId === tn.id);
+                  const target = tn.teamCount || 6;
+                  const full = entered.length >= target;
+                  const rounds = tournamentRounds.filter((r) => r.tournamentId === tn.id)
+                    .sort((a, b) => a.roundNumber - b.roundNumber);
+                  /* Captains who could still be invited */
+                  const invitable = users.filter((u) => u.role === "Captain" && u.id !== me.id &&
+                    !invites.some((i) => i.captainId === u.id));
+
+                  return (
+                    <>
+                      {/* STEP 1 — progress */}
+                      <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 13, marginBottom: 18 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                          <div style={{ fontSize: 9, letterSpacing: "1.3px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>Teams entered</div>
+                          <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 16, color: full ? "#5fcf87" : "#F7F4EA" }}>{entered.length}/{target}</div>
+                        </div>
+                        <div style={{ height: 4, background: "#161f18", borderRadius: 99, marginTop: 9, overflow: "hidden" }}>
+                          <div style={{ width: `${Math.min(100, (entered.length / target) * 100)}%`, height: "100%", background: full ? "#3FA35B" : "#D6A81D" }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 9, lineHeight: 1.45 }}>
+                          {tn.fixturesGenerated ? "Fixtures are generated. Teams are locked."
+                            : full ? "Ready — shuffle and generate the fixtures below."
+                            : `Invite captains, then add ${target - entered.length} more team${target - entered.length === 1 ? "" : "s"}.`}
+                        </div>
+                      </div>
+
+                      {/* STEP 2 — invites */}
+                      {!tn.fixturesGenerated && (
+                        <>
+                          <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>
+                            Invited captains{invites.length > 0 ? ` · ${invites.length}` : ""}
+                          </div>
+                          {invites.length === 0 && (
+                            <div style={{ fontSize: 11.5, color: "#7d8f83", paddingBottom: 10, lineHeight: 1.5 }}>
+                              Nobody invited yet. Invite captains so their teams can enter.
+                            </div>
+                          )}
+                          {invites.map((iv) => {
+                            const c = users.find((u) => u.id === iv.captainId);
+                            const tone = iv.status === "accepted" ? "#5fcf87" : iv.status === "declined" ? "#e08a7d" : "#8FA396";
+                            return (
+                              <div key={iv.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #121a14" }}>
+                                <RoleAvatar user={c} size={26} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c ? c.name : "Captain"}</div>
+                                  <div style={{ fontSize: 9, color: tone, marginTop: 2, textTransform: "capitalize" }}>{iv.status}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {invitable.length > 0 && (
+                            <>
+                              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "18px 0 11px" }}>Invite someone</div>
+                              {invitable.slice(0, 8).map((c) => (
+                                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #121a14" }}>
+                                  <RoleAvatar user={c} size={26} />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                                    <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>
+                                      {c.state || "—"} · {savedTeams.filter((t) => t.captainId === c.id).length} team(s)
+                                    </div>
+                                  </div>
+                                  <button className="tappable" onClick={() => inviteCaptain(tn.id, c.id)}
+                                    style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 11px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>Invite</button>
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          {/* STEP 3 — pick teams from accepted captains */}
+                          <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "22px 0 11px" }}>Teams in the tournament</div>
+                          {entered.map((tt) => {
+                            const t = savedTeams.find((x) => x.id === tt.teamId);
+                            const c = users.find((u) => u.id === tt.captainId);
+                            return (
+                              <div key={tt.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #121a14" }}>
+                                <MiniLogo team={t || {}} badge={t ? t.badge : null} size={26} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 11.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t ? t.name : "Team"}</div>
+                                  <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{c ? c.name : "—"}</div>
+                                </div>
+                                <button className="tappable" onClick={() => removeTeamFromTournament(tt.id)}
+                                  style={{ fontSize: 9.5, background: "none", border: "1px solid #243128", color: "#8FA396", padding: "4px 10px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>Remove</button>
+                              </div>
+                            );
+                          })}
+
+                          {!full && (
+                            <>
+                              <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "18px 0 11px" }}>Add a team</div>
+                              {[{ id: me.id, name: me.name + " (you)" }].concat(accepted.map((iv) => {
+                                const c = users.find((u) => u.id === iv.captainId);
+                                return c ? { id: c.id, name: c.name } : null;
+                              }).filter(Boolean)).map((cap) => {
+                                const theirs = savedTeams.filter((t) => t.captainId === cap.id &&
+                                  !entered.some((tt) => tt.teamId === t.id));
+                                if (theirs.length === 0) return null;
+                                return (
+                                  <div key={cap.id} style={{ marginBottom: 12 }}>
+                                    <div style={{ fontSize: 9, color: "#5a6a5f", marginBottom: 6 }}>{cap.name}</div>
+                                    {theirs.map((t) => (
+                                      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #121a14" }}>
+                                        <MiniLogo team={t} badge={t.badge} size={24} />
+                                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+                                        <button className="tappable" onClick={() => addTeamToTournament(tn.id, t.id, cap.id)}
+                                          style={{ fontSize: 9.5, background: "none", border: "1px solid #2a3d31", color: "#D6A81D", fontWeight: 600, padding: "4px 11px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>Add</button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })}
+                              {accepted.length === 0 && (
+                                <div style={{ fontSize: 10.5, color: "#5a6a5f", lineHeight: 1.5 }}>
+                                  Only your own teams can be added until a captain accepts an invite.
+                                </div>
+                              )}
+                            </>
+                          )}
+
+                          {/* STEP 4 — generate */}
+                          <button className="btn btn-gold" style={{ width: "100%", marginTop: 20, opacity: entered.length >= 2 ? 1 : 0.4 }}
+                            onClick={() => entered.length >= 2 && generateFixtures(tn.id)}>
+                            Shuffle &amp; generate fixtures
+                          </button>
+                          <div style={{ fontSize: 9.5, color: "#3f4b43", marginTop: 9, lineHeight: 1.5, textAlign: "center" }}>
+                            Teams lock once fixtures are generated. Everyone plays everyone.
+                          </div>
+                        </>
+                      )}
+
+                      {/* STEP 5 — round dates */}
+                      {tn.fixturesGenerated && (
+                        <>
+                          <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>Round dates</div>
+                          <div style={{ fontSize: 10.5, color: "#7d8f83", marginBottom: 12, lineHeight: 1.5 }}>
+                            One date per round — every fixture in that round takes it.
+                          </div>
+                          {rounds.map((r) => {
+                            const n = matches.filter((m) => m.tournamentId === tn.id && m.roundNumber === r.roundNumber).length;
+                            return (
+                              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #121a14" }}>
+                                <div style={{ width: 54, flexShrink: 0 }}>
+                                  <div style={{ fontSize: 11.5, fontWeight: 600 }}>Round {r.roundNumber}</div>
+                                  <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{n} match{n === 1 ? "" : "es"}</div>
+                                </div>
+                                <input type="date" defaultValue={r.matchDate || ""}
+                                  onChange={(e) => e.target.value && setRoundDate(tn.id, r.roundNumber, e.target.value)}
+                                  style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 10px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 11.5, outline: "none" }} />
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
                 {isHost && (
                   <div style={{ marginTop: 20, borderTop: "1px solid #121a14", paddingTop: 14 }}>
                     <button className="btn btn-gold" style={{ width: "100%" }} onClick={() => setBulkFor(tn.id)}>
@@ -4297,12 +4671,28 @@ export default function App() {
                         {theirs.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>This captain hasn't published any matches yet.</div>}
                         {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <Lbl>Current &amp; upcoming</Lbl>}
                         <div className="feedgrid" style={{ marginBottom: 20 }}>
-                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
                         {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <Lbl>Past results</Lbl>}
                         <div className="feedgrid">
-                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
                       </>
@@ -4339,7 +4729,15 @@ export default function App() {
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
               {capped("live", liveForUser).map((m) => (
-                <MatchCard key={"lv" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
+                <MatchCard key={"lv" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
+                    if (!m.tournamentId) return null;
+                    const rows = tournamentTable(m.tournamentId);
+                    if (rows.length === 0) return null;
+                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
+                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
+                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
+                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
               ))}
             </div>
             <SeeMoreBtn k="live" list={liveForUser} />
@@ -4374,6 +4772,25 @@ export default function App() {
           matchAwards={playerAwards.filter((a) => a.matchId === openMatch)}
           myTournaments={tournaments.filter((t) => t.hostId === me.id && t.status === "active")}
           onSetTournament={setMatchTournament}
+          tournamentInfo={(() => {
+            const om = matches.find((x) => x.id === openMatch);
+            return om && om.tournamentId ? tournaments.find((t) => t.id === om.tournamentId) || null : null;
+          })()}
+          canSubmitScore={(() => {
+            const om = matches.find((x) => x.id === openMatch);
+            if (!om || !om.tournamentId || me.role !== "Captain") return false;
+            /* Only a captain of one of the two teams in this fixture */
+            return savedTeams.some((t) => t.captainId === me.id &&
+              [(om.teamA.name || "").trim().toLowerCase(), (om.teamB.name || "").trim().toLowerCase()]
+                .includes((t.name || "").trim().toLowerCase()));
+          })()}
+          isTournamentHost={(() => {
+            const om = matches.find((x) => x.id === openMatch);
+            const tn = om && om.tournamentId ? tournaments.find((t) => t.id === om.tournamentId) : null;
+            return !!(tn && tn.hostId === me.id);
+          })()}
+          onSubmitTournamentScore={submitTournamentScore}
+          onHostResolve={hostResolveScore}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -4557,7 +4974,22 @@ export default function App() {
         </div>
       )}
 
-      {posterFor && <PosterModal m={matches.find((x) => x.id === posterFor)} onClose={() => setPosterFor(null)} notify={notify} />}
+      {posterFor && (() => {
+        const pm = matches.find((x) => x.id === posterFor);
+        if (!pm) return null;
+        const tn = pm.tournamentId ? tournaments.find((t) => t.id === pm.tournamentId) || null : null;
+        let posA = null, posB = null, top = [];
+        if (tn) {
+          top = tournamentTable(tn.id);
+          const ord = (n) => n === 1 ? "1ST" : n === 2 ? "2ND" : n === 3 ? "3RD" : n + "TH";
+          const ia = top.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (pm.teamA.name || "").trim().toLowerCase());
+          const ib = top.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (pm.teamB.name || "").trim().toLowerCase());
+          if (ia >= 0) posA = `${ord(ia + 1)} · ${top[ia].pts} PTS`;
+          if (ib >= 0) posB = `${ord(ib + 1)} · ${top[ib].pts} PTS`;
+        }
+        return <PosterModal m={pm} tournament={tn} posA={posA} posB={posB} tableTop={top}
+          onClose={() => setPosterFor(null)} notify={notify} />;
+      })()}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
       {/* NOTIFICATION PANEL — tap-outside closes it */}
@@ -4603,6 +5035,20 @@ export default function App() {
                         <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openMatchDetail(n.matchId); }}
                           style={{ fontSize: 9.5, background: "none", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>
                           {n.kind === "score" ? "Submit result" : "Open"}
+                        </button>
+                      )}
+                      {n.kind === "invite" && (
+                        <>
+                          <button className="tappable" onClick={() => { markRead([n.id]); respondInvite(n.inviteId, true); }}
+                            style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Accept</button>
+                          <button className="tappable" onClick={() => { markRead([n.id]); respondInvite(n.inviteId, false); }}
+                            style={{ fontSize: 9.5, background: "none", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>Decline</button>
+                        </>
+                      )}
+                      {(n.kind === "dispute" || n.kind === "onesub") && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openMatchDetail(n.matchId); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>
+                          {n.kind === "dispute" ? "Resolve" : "Open"}
                         </button>
                       )}
                       {n.kind === "assigned" && (
@@ -4651,6 +5097,22 @@ export default function App() {
       )}
       {/* ASSIGN A SCORER — captains whose team is playing are shown but blocked,
           which is clearer than hiding them and leaving the host wondering. */}
+      {tablePosterFor && (() => {
+        const tn = tournaments.find((t) => t.id === tablePosterFor);
+        if (!tn) return null;
+        const rows = tournamentTable(tn.id);
+        const sc = tournamentScorers(tn.id);
+        const rounds = tournamentRounds.filter((r) => r.tournamentId === tn.id);
+        const played = new Set(matches.filter((m) => m.tournamentId === tn.id && m.status === "ResultPublished")
+          .map((m) => m.roundNumber).filter(Boolean)).size;
+        return (
+          <TablePosterModal
+            tournament={tn} rows={rows} topScorer={sc[0] || null}
+            roundsPlayed={played} roundsTotal={rounds.length || 0}
+            onClose={() => setTablePosterFor(null)} notify={notify}
+          />
+        );
+      })()}
       {bulkFor && (() => {
         const tn = tournaments.find((t) => t.id === bulkFor);
         if (!tn) return null;
@@ -5980,7 +6442,7 @@ function MiniLogo({ team, badge, size = 42 }) {
   );
 }
 
-function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamentName }) {
+function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamentName, tournamentPositions }) {
   const showScore = m.status === "ResultPublished";
   return (
     <div className="card" style={{ display: "grid", gap: 12, cursor: "pointer", alignContent: "start" }} onClick={onOpen}>
@@ -6031,9 +6493,17 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamen
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#7d8f83", flexWrap: "wrap", gap: 8 }}>
         <span>📍 {m.location} · {m.date} · ⏱ {m.duration || 90}'</span>
         {tournamentName && (
-          <span style={{ display: "inline-block", marginTop: 4, background: "rgba(230,179,30,.12)", border: "1px solid rgba(230,179,30,.3)", color: "#E6B31E", fontSize: 8.5, fontWeight: 700, letterSpacing: ".7px", padding: "2px 7px", borderRadius: 4, textTransform: "uppercase", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            🏆 {tournamentName}
+          <span style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5 }}>
+            <svg width="11" height="11" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
+              <path d="M28 30 L50 20 L72 30 L72 54 Q72 72 50 82 Q28 72 28 54 Z" fill="none" stroke="#E6B31E" strokeWidth="7" />
+            </svg>
+            <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "1.1px", color: "#E6B31E", textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {tournamentName}{m.roundNumber ? ` · Round ${m.roundNumber}` : ""}
+            </span>
           </span>
+        )}
+        {tournamentName && tournamentPositions && (
+          <span style={{ display: "block", fontSize: 8, color: "#5a6a5f", marginTop: 3 }}>{tournamentPositions}</span>
         )}
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onPoster(); }}>🎨 Artwork</button>
@@ -6043,7 +6513,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamen
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -6060,7 +6530,10 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   const [reqOpen, setReqOpen] = useState(false);
   const [streamInput, setStreamInput] = useState("");
   const [ctrlTab, setCtrlTab] = useState("score"); // score | stats | commentary | stream — captain's live-match control tabs
-  const [detailTab, setDetailTab] = useState("summary"); // summary | lineups | form — what fans and captains browse
+  const [detailTab, setDetailTab] = useState("summary");
+  /* Deliberately empty strings, not zeros — captains type the real score. */
+  const [tsA, setTsA] = useState("");
+  const [tsB, setTsB] = useState(""); // summary | lineups | form — what fans and captains browse
   const [commentaryInput, setCommentaryInput] = useState("");
   const shareStream = async (m) => {
     const text = `🔴 Watch ${m.teamA.name} vs ${m.teamB.name} live: ${m.streamUrl}`;
@@ -6398,6 +6871,94 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             onClick={() => { if (window.confirm("Delete this match permanently? This can't be undone.")) onDeleteMatch(m); }}>🗑 Delete this match</button>
         )}
 
+        {/* TOURNAMENT SCORE — both captains submit at full time. Agreement
+            publishes; a mismatch raises a dispute for the host. */}
+        {tournamentInfo && (canSubmitScore || isTournamentHost) && m.status !== "Scheduled" && (
+          <div>
+            <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>
+              {tournamentInfo.name} · Round {m.roundNumber || "—"}
+            </div>
+
+            {m.status === "Live" && (
+              <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 13 }}>
+                <div style={{ fontSize: 12, color: "#B9C7BC", fontWeight: 600 }}>Scores open at full time</div>
+                <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 5, lineHeight: 1.5 }}>
+                  Both captains submit the final score once the match has finished.
+                </div>
+              </div>
+            )}
+
+            {m.status !== "Live" && (() => {
+              const st = m.submissionState;
+              const homeIn = m.subHomeA !== null && m.subHomeA !== undefined;
+              const awayIn = m.subAwayA !== null && m.subAwayA !== undefined;
+              const locked = st === "published" || m.status === "ResultPublished";
+              return (
+                <>
+                  {st === "disputed" && (
+                    <div style={{ background: "rgba(198,80,63,.07)", border: "1px solid rgba(198,80,63,.3)", borderRadius: 11, padding: 13, marginBottom: 12 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 600, color: "#e08a7d" }}>Scores don't match</div>
+                      <div style={{ fontSize: 10.5, color: "#8FA396", marginTop: 6, lineHeight: 1.5 }}>
+                        One captain says <b style={{ color: "#EDEAE0" }}>{m.subHomeA}–{m.subHomeB}</b>, the other says <b style={{ color: "#EDEAE0" }}>{m.subAwayA}–{m.subAwayB}</b>.
+                        {isTournamentHost ? " Set the correct score below." : " The host will settle it."}
+                      </div>
+                    </div>
+                  )}
+                  {st === "pending" && (
+                    <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 11px 11px 0", padding: 13, marginBottom: 12 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA" }}>1 of 2 submitted</div>
+                      <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 5, lineHeight: 1.5 }}>
+                        Waiting for the other captain. It publishes once you both agree.
+                      </div>
+                    </div>
+                  )}
+                  {locked && (
+                    <div style={{ background: "#0E140F", border: "1px solid #1b241c", borderRadius: 11, padding: 13 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 600, color: "#5fcf87" }}>Result published</div>
+                      <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 5 }}>{m.finalA}–{m.finalB} · locked</div>
+                    </div>
+                  )}
+
+                  {!locked && (canSubmitScore || (isTournamentHost && st === "disputed")) && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
+                        <input inputMode="numeric" value={tsA} placeholder="–"
+                          onChange={(e) => setTsA(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+                          style={{ width: 38, height: 34, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 7, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 15, outline: "none", flexShrink: 0 }} />
+                        <span style={{ color: "#3f4b43", flexShrink: 0 }}>–</span>
+                        <input inputMode="numeric" value={tsB} placeholder="–"
+                          onChange={(e) => setTsB(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+                          style={{ width: 38, height: 34, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 7, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 15, outline: "none", flexShrink: 0 }} />
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 11, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</span>
+                      </div>
+                      <button className="btn btn-gold" style={{ width: "100%", opacity: tsA !== "" && tsB !== "" ? 1 : 0.4 }}
+                        onClick={() => {
+                          if (tsA === "" || tsB === "") return;
+                          if (isTournamentHost && st === "disputed") onHostResolve(m, +tsA, +tsB);
+                          else onSubmitTournamentScore(m, +tsA, +tsB);
+                          setTsA(""); setTsB("");
+                        }}>
+                        {isTournamentHost && st === "disputed" ? "Publish this score"
+                          : (homeIn || awayIn) ? "Update my score" : "Submit score"}
+                      </button>
+                      <div style={{ fontSize: 9.5, color: "#3f4b43", marginTop: 9, lineHeight: 1.5, textAlign: "center" }}>
+                        You can change this until both captains agree.
+                      </div>
+                    </>
+                  )}
+
+                  {isTournamentHost && st === "pending" && (
+                    <button className="btn btn-ghost" style={{ width: "100%", marginTop: 10 }}
+                      onClick={() => onHostResolve(m, homeIn ? m.subHomeA : m.subAwayA, homeIn ? m.subHomeB : m.subAwayB)}>
+                      Publish the submitted score
+                    </button>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        )}
         {/* TOURNAMENT — a match can be pulled into a cup after it was created,
             since captains don't always set the tournament up first. */}
         {isOwner && myTournaments.length > 0 && m.status === "Scheduled" && (
@@ -7626,7 +8187,7 @@ function CreateMatch({ onSave, onCancel, myTeams = [], myTournaments = [] }) {
   );
 }
 
-function PosterModal({ m, onClose, notify }) {
+function PosterModal({ m, onClose, notify, tournament = null, posA = null, posB = null, tableTop = [] }) {
   const svgRef = useRef(null);
   if (!m) return null;
   const initials = (t) => t.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -7695,13 +8256,34 @@ function PosterModal({ m, onClose, notify }) {
           <line x1="0" y1="250" x2="400" y2="250" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
           <rect x="130" y="0" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
           <rect x="130" y="445" width="140" height="55" fill="none" stroke="#F5F0E1" strokeOpacity="0.08" strokeWidth="2" />
-          <text x="200" y="60" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">AREA MATCH</text>
-          <text x="200" y="82" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
+          {tournament ? (
+            <>
+              {/* Laurel marks a cup tie so it never reads as a friendly */}
+              <g transform="translate(200,52)" fill="none" stroke="#E6B31E" strokeWidth="2.6" strokeLinecap="round">
+                <path d="M-34 18 Q-43 0 -32 -17" /><path d="M34 18 Q43 0 32 -17" />
+                <path d="M-32 10 Q-40 7 -42 0" /><path d="M-30 0 Q-38 -3 -40 -12" />
+                <path d="M32 10 Q40 7 42 0" /><path d="M30 0 Q38 -3 40 -12" />
+              </g>
+              <text x="200" y="52" textAnchor="middle" fill="#F9F6EC" fontFamily="Anton, sans-serif" fontSize={tournament.name.length > 18 ? 13 : 17}>
+                {tournament.name.toUpperCase()}
+              </text>
+              <text x="200" y="82" textAnchor="middle" fill="#E6B31E" opacity="0.85" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="9.5" letterSpacing="3">
+                {m.roundNumber ? `ROUND ${m.roundNumber}` : "TOURNAMENT"}{isResult ? " · FULL TIME" : ""}
+              </text>
+            </>
+          ) : (
+            <>
+              <text x="200" y="60" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="30" letterSpacing="2">AREA MATCH</text>
+              <text x="200" y="82" textAnchor="middle" fill="#F5F0E1" opacity="0.6" fontFamily="Space Grotesk, sans-serif" fontSize="12" letterSpacing="4">{isResult ? "FULL TIME RESULT" : "COMMUNITY FOOTBALL"}</text>
+            </>
+          )}
           <PosterBadge cx={110} cy={185} team={m.teamA} badge={m.badgeA} />
           <PosterBadge cx={290} cy={185} team={m.teamB} badge={m.badgeB} />
           {!isResult && <text x="200" y="197" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="26">VS</text>}
           <text x="110" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize={m.teamA.name.length > 16 ? 10 : m.teamA.name.length > 12 ? 12.5 : 15}>{m.teamA.name}</text>
           <text x="290" y="257" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize={m.teamB.name.length > 16 ? 10 : m.teamB.name.length > 12 ? 12.5 : 15}>{m.teamB.name}</text>
+          {tournament && posA && <text x="110" y="273" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="8.5" letterSpacing="1.2">{posA}</text>}
+          {tournament && posB && <text x="290" y="273" textAnchor="middle" fill="#8FA396" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="8.5" letterSpacing="1.2">{posB}</text>}
 
           {isResult ? (
             <>
@@ -7727,6 +8309,22 @@ function PosterModal({ m, onClose, notify }) {
               <rect x="60" y="315" width="280" height="2" fill="#E6B31E" opacity="0.5" />
               <text x="200" y="345" textAnchor="middle" fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="15">{fmtDate(m.date)}  ·  {m.time}</text>
               <text x="200" y="368" textAnchor="middle" fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="13">📍 {m.location}</text>
+            </>
+          )}
+          {tournament && tableTop.length > 0 && (
+            <>
+              {/* Live top of the table, so the poster carries the standings too */}
+              <rect x="40" y="392" width="320" height="66" rx="7" fill="#0b120d" fillOpacity="0.75" stroke="#1a241d" />
+              <text x="54" y="409" fill="#4e5c53" fontFamily="Space Grotesk, sans-serif" fontWeight="700" fontSize="6.5" letterSpacing="1.5">TABLE</text>
+              {tableTop.slice(0, 3).map((r, i) => (
+                <g key={r.team.id}>
+                  <text x="54" y={424 + i * 13} fill={i < 2 ? "#5fcf87" : "#4e5c53"} fontFamily="Anton, sans-serif" fontSize="8">{i + 1}</text>
+                  <text x="68" y={424 + i * 13} fill="#F5F0E1" fontFamily="Space Grotesk, sans-serif" fontSize="8.5">
+                    {r.team.name.length > 26 ? r.team.name.slice(0, 25) + "…" : r.team.name}
+                  </text>
+                  <text x="346" y={424 + i * 13} fill="#E6B31E" fontFamily="Anton, sans-serif" fontSize="9" textAnchor="end">{r.pts}</text>
+                </g>
+              ))}
             </>
           )}
           <text x="200" y="470" textAnchor="middle" fill="#F5F0E1" opacity="0.5" fontFamily="Space Grotesk, sans-serif" fontSize="11" letterSpacing="2">{isResult ? "HOSTED ON AREA MATCH" : "HOSTED ON AREA MATCH · COME SUPPORT YOUR TEAM"}</text>
