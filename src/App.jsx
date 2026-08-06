@@ -2160,14 +2160,21 @@ export default function App() {
   };
 
   /* Host sets one date per round; every fixture in it inherits that date. */
-  const setRoundDate = async (tournamentId, roundNumber, date) => {
-    const { error } = await supabase.from("tournament_rounds")
-      .update({ match_date: date }).eq("tournament_id", tournamentId).eq("round_number", roundNumber);
-    if (error) return notify("Couldn't set date: " + error.message);
-    await supabase.from("matches").update({ match_date: date })
+  const setRoundSchedule = async (tournamentId, roundNumber, date, time) => {
+    if (date) {
+      const { error } = await supabase.from("tournament_rounds")
+        .update({ match_date: date }).eq("tournament_id", tournamentId).eq("round_number", roundNumber);
+      if (error) return notify("Couldn't set date: " + error.message);
+    }
+    /* Fixtures start with a placeholder; the host's round schedule is the real one. */
+    const patch = {};
+    if (date) patch.match_date = date;
+    if (time) patch.match_time = time;
+    if (Object.keys(patch).length === 0) return;
+    const { error: e2 } = await supabase.from("matches").update(patch)
       .eq("tournament_id", tournamentId).eq("round_number", roundNumber);
-    /* Fixtures start with a placeholder date; the host's round date is the real one. */
-    notify(`Round ${roundNumber} set for ${date}`);
+    if (e2) return notify("Couldn't update fixtures: " + e2.message);
+    notify(`Round ${roundNumber} updated`);
     refreshAll();
   };
 
@@ -4205,7 +4212,7 @@ export default function App() {
                         <>
                           <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11 }}>Round dates</div>
                           <div style={{ fontSize: 10.5, color: "#7d8f83", marginBottom: 12, lineHeight: 1.5 }}>
-                            One date per round — every fixture in that round takes it.
+                            Set a date and kick-off time per round — every fixture in it takes them.
                           </div>
                           {rounds.map((r) => {
                             const n = matches.filter((m) => m.tournamentId === tn.id && m.roundNumber === r.roundNumber).length;
@@ -4216,8 +4223,11 @@ export default function App() {
                                   <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 2 }}>{n} match{n === 1 ? "" : "es"}</div>
                                 </div>
                                 <input type="date" defaultValue={r.matchDate || ""}
-                                  onChange={(e) => e.target.value && setRoundDate(tn.id, r.roundNumber, e.target.value)}
-                                  style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 10px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 11.5, outline: "none" }} />
+                                  onChange={(e) => e.target.value && setRoundSchedule(tn.id, r.roundNumber, e.target.value, null)}
+                                  style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 9px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 11.5, outline: "none" }} />
+                                <input type="time" defaultValue={(matches.find((mm) => mm.tournamentId === tn.id && mm.roundNumber === r.roundNumber) || {}).time || ""}
+                                  onChange={(e) => e.target.value && setRoundSchedule(tn.id, r.roundNumber, null, e.target.value)}
+                                  style={{ width: 88, flexShrink: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 7px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 11.5, outline: "none" }} />
                               </div>
                             );
                           })}
@@ -6595,7 +6605,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   const [pb, setPb] = useState("");
   useEffect(() => { setFa(""); setFb(""); setShootout(false); setPa(""); setPb(""); setScorersA(""); setScorersB(""); setScorerTallyA({}); setScorerTallyB({}); }, [m && m.id]);
   if (!m) return null;
-  const isOwner = m.createdBy === me.id;
+  const isOwner = m.createdBy === me.id || (!!tournamentInfo && canSubmitScore);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 50, display: "flex", flexDirection: "column" }}>
@@ -6968,39 +6978,6 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             })()}
           </div>
         )}
-        {/* TOURNAMENT — a match can be pulled into a cup after it was created,
-            since captains don't always set the tournament up first. */}
-        {isOwner && myTournaments.length > 0 && m.status === "Scheduled" && (
-          <div>
-            <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 10 }}>Tournament</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button className="tappable" onClick={() => onSetTournament && onSetTournament(m, null)}
-                style={{ fontSize: 10.5, padding: "6px 11px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer",
-                  background: !m.tournamentId ? "#E6B31E" : "none",
-                  border: `1px solid ${!m.tournamentId ? "#E6B31E" : "#243128"}`,
-                  color: !m.tournamentId ? "#1a1405" : "#8FA396", fontWeight: !m.tournamentId ? 700 : 500 }}>
-                Friendly
-              </button>
-              {myTournaments.map((t) => {
-                const on = m.tournamentId === t.id;
-                return (
-                  <button className="tappable" key={t.id} onClick={() => onSetTournament && onSetTournament(m, t.id)}
-                    style={{ fontSize: 10.5, padding: "6px 11px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", maxWidth: "100%",
-                      background: on ? "#E6B31E" : "none",
-                      border: `1px solid ${on ? "#E6B31E" : "#243128"}`,
-                      color: on ? "#1a1405" : "#8FA396", fontWeight: on ? 700 : 500,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.name}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 10, color: "#5a6a5f", marginTop: 8, lineHeight: 1.45 }}>
-              Adding it to a tournament feeds the table and scorers once the result is published.
-            </div>
-          </div>
-        )}
-        {/* ARTWORK — visible to everyone, downloadable from the poster view */}
         <button className="btn btn-turf" onClick={onPoster}>🎨 View match artwork (download inside)</button>
 
         {/* CAPTAIN CONTROLS */}
@@ -8106,36 +8083,6 @@ function CreateMatch({ onSave, onCancel, myTeams = [], myTournaments = [] }) {
         {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setF({ ...f, badgeB: b })}><MiniLogo team={{ name: "", color: f.badgeB === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} /></button>)}
       </div>
       <input className="input" placeholder="Location (e.g. Campos Mini Stadium)" maxLength={60} value={f.location} onChange={(e) => setF({ ...f, location: sanitizeText(e.target.value, 60) })} />
-      {myTournaments.length > 0 && (
-        <div>
-          <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 6, fontWeight: 700 }}>🏆 Part of a tournament?</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => setF({ ...f, tournamentId: "" })}
-              style={{ fontSize: 11, padding: "7px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer",
-                background: !f.tournamentId ? "#E6B31E" : "none",
-                border: `1px solid ${!f.tournamentId ? "#E6B31E" : "#243128"}`,
-                color: !f.tournamentId ? "#1a1405" : "#8FA396", fontWeight: !f.tournamentId ? 700 : 500 }}>
-              Friendly
-            </button>
-            {myTournaments.map((t) => {
-              const on = f.tournamentId === t.id;
-              return (
-                <button type="button" key={t.id} onClick={() => setF({ ...f, tournamentId: t.id })}
-                  style={{ fontSize: 11, padding: "7px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", maxWidth: "100%",
-                    background: on ? "#E6B31E" : "none",
-                    border: `1px solid ${on ? "#E6B31E" : "#243128"}`,
-                    color: on ? "#1a1405" : "#8FA396", fontWeight: on ? 700 : 500,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {t.name}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: 10.5, color: "#5a6a5f", marginTop: 7, lineHeight: 1.45 }}>
-            Tournament matches feed the table and scorer list automatically.
-          </div>
-        </div>
-      )}
       <div style={{ display: "flex", gap: 8 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, color: "#8FA396", marginBottom: 4, fontWeight: 700 }}>📅 Match date</div>
