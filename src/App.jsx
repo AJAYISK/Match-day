@@ -810,7 +810,7 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live })
           <input value={text} maxLength={200} placeholder="Say something…"
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) { onSend(text.trim()); setText(""); } }}
-            style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 99, padding: "9px 13px", fontSize: 11.5, color: "#F5F0E1", fontFamily: "inherit", outline: "none" }} />
+            style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 99, padding: "9px 13px", fontSize: 16, color: "#F5F0E1", fontFamily: "inherit", outline: "none" }} />
           <button onClick={() => { if (text.trim()) { onSend(text.trim()); setText(""); } }}
             style={{ width: 32, height: 32, borderRadius: "50%", background: text.trim() ? "#E6B31E" : "#243128", color: "#1a1405", border: 0, fontSize: 13, flexShrink: 0, cursor: "pointer" }}>↑</button>
         </div>
@@ -864,7 +864,7 @@ function StatePicker({ value, onChange, counts = null, allLabel = "All states", 
             </div>
 
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search states…"
-              style={{ margin: "10px 13px", background: "#131a15", border: "1px solid #243128", borderRadius: 8, padding: "9px 11px", fontSize: 12, color: "#F5F0E1", fontFamily: "inherit", outline: "none", flexShrink: 0 }} />
+              style={{ margin: "10px 13px", background: "#131a15", border: "1px solid #243128", borderRadius: 8, padding: "9px 11px", fontSize: 16, color: "#F5F0E1", fontFamily: "inherit", outline: "none", flexShrink: 0 }} />
 
             <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
               {shown.length === 0 && (
@@ -4345,10 +4345,10 @@ export default function App() {
                                 </div>
                                 <input type="date" defaultValue={r.matchDate || ""}
                                   onChange={(e) => e.target.value && setRoundSchedule(tn.id, r.roundNumber, e.target.value, null)}
-                                  style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 9px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 11.5, outline: "none" }} />
+                                  style={{ flex: 1, minWidth: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 9px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 16, outline: "none" }} />
                                 <input type="time" defaultValue={(matches.find((mm) => mm.tournamentId === tn.id && mm.roundNumber === r.roundNumber) || {}).time || ""}
                                   onChange={(e) => e.target.value && setRoundSchedule(tn.id, r.roundNumber, null, e.target.value)}
-                                  style={{ width: 88, flexShrink: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 7px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 11.5, outline: "none" }} />
+                                  style={{ width: 88, flexShrink: 0, background: "#131a15", border: "1px solid #2A3A2E", borderRadius: 8, padding: "8px 7px", color: "#F5F0E1", fontFamily: "inherit", fontSize: 16, outline: "none" }} />
                               </div>
                             );
                           })}
@@ -7105,11 +7105,11 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
                         <input inputMode="numeric" value={tsA} placeholder="–"
                           onChange={(e) => setTsA(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
-                          style={{ width: 38, height: 34, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 7, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 15, outline: "none", flexShrink: 0 }} />
+                          style={{ width: 38, height: 34, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 7, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 16, outline: "none", flexShrink: 0 }} />
                         <span style={{ color: "#3f4b43", flexShrink: 0 }}>–</span>
                         <input inputMode="numeric" value={tsB} placeholder="–"
                           onChange={(e) => setTsB(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
-                          style={{ width: 38, height: 34, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 7, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 15, outline: "none", flexShrink: 0 }} />
+                          style={{ width: 38, height: 34, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 7, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 16, outline: "none", flexShrink: 0 }} />
                         <span style={{ flex: 1, minWidth: 0, fontSize: 11, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</span>
                       </div>
                       <button className="btn btn-gold" style={{ width: "100%", opacity: tsA !== "" && tsB !== "" ? 1 : 0.4 }}
