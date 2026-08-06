@@ -516,10 +516,10 @@ function BulkResultsModal({ tournament, fixtures, onPublish, onClose }) {
             <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 0", borderBottom: "1px solid #121a14" }}>
               <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</span>
               <input inputMode="numeric" value={s.a || ""} onChange={set(m.id, "a")} placeholder="–"
-                style={{ width: 32, height: 30, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 6, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 13, flexShrink: 0, outline: "none" }} />
+                style={{ width: 32, height: 30, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 6, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 16, flexShrink: 0, outline: "none" }} />
               <span style={{ color: "#3f4b43", fontSize: 10, flexShrink: 0 }}>–</span>
               <input inputMode="numeric" value={s.b || ""} onChange={set(m.id, "b")} placeholder="–"
-                style={{ width: 32, height: 30, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 6, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 13, flexShrink: 0, outline: "none" }} />
+                style={{ width: 32, height: 30, textAlign: "center", border: "1px solid #2A3A2E", borderRadius: 6, background: "#131a15", color: "#F5F0E1", fontFamily: "'Anton', sans-serif", fontSize: 16, flexShrink: 0, outline: "none" }} />
               <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</span>
             </div>
           );
@@ -960,7 +960,6 @@ export default function App() {
      from rather than always dumping you in the captains directory. */
   const [captainCameFrom, setCaptainCameFrom] = useState(null);
   const [captainTab, setCaptainTab] = useState("overview");
-  const [capStateFilter, setCapStateFilter] = useState("All");
   const [comingSoon, setComingSoon] = useState(null); // feature name or null
   const [feedbacks, setFeedbacks] = useState([]);
   const [savedTeams, setSavedTeams] = useState([]);
@@ -985,7 +984,6 @@ export default function App() {
   useEffect(() => { if (me && me.name) setSelfName(me.name); }, [me && me.id, me && me.name]);
   const [showLeaderboards, setShowLeaderboards] = useState(false);
   const [showFixtures, setShowFixtures] = useState(false);
-  const [fixState, setFixState] = useState("All");
   const [lbTab, setLbTab] = useState("scorers");
   const [dreamTeamInput, setDreamTeamInput] = useState("");
   const [dreamTeamSlide, setDreamTeamSlide] = useState(0);
@@ -1007,10 +1005,18 @@ export default function App() {
   const [chatMsgs, setChatMsgs] = useState([]);
   const [annDraft, setAnnDraft] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
-  const [feedState, setFeedState] = useState("All");
+  /* One state filter shared by every page. Picking Lagos on the feed should
+     still mean Lagos on Live, Captains, Fixtures and Tournaments — it's the
+     same question being asked, so it shouldn't need answering four times. */
+  const [feedState, setFeedState] = useState(() => {
+    try { return localStorage.getItem("am-state") || "All"; } catch (e) { return "All"; }
+  });
+  const setStateFilter = (st) => {
+    setFeedState(st);
+    try { localStorage.setItem("am-state", st); } catch (e) { /* private mode */ }
+  };
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
-  const [liveStateFilter, setLiveStateFilter] = useState("All");
   const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
@@ -1470,7 +1476,7 @@ export default function App() {
   const logout = async () => {
     await supabase.auth.signOut();
     setMe(null); setScreen("auth"); setOpenMatch(null);
-    setSeeMore({}); setFeedState("All"); setFeedFollowedOnly(false); // fresh feed for whoever logs in next
+    setSeeMore({}); setStateFilter("All"); setFeedFollowedOnly(false); // fresh feed for whoever logs in next
   };
 
   useEffect(() => {
@@ -2467,7 +2473,7 @@ export default function App() {
     .tappable { transition: opacity .12s ease, transform .12s ease; -webkit-tap-highlight-color: transparent; }
     .tappable:active { opacity: .55; transform: scale(.985); }
     .btn-live { background: #E8442E; color: #ffffff; }
-    .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #243128; background: #141c16; color: #F5F0E1; font-size: 15px; font-family: 'Space Grotesk', sans-serif; outline: none; }
+    .input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #243128; background: #141c16; color: #F5F0E1; font-size: 16px; font-family: 'Space Grotesk', sans-serif; outline: none; }
     .input:focus { border-color: #E6B31E; }
     .card { background: #0E140F; border: 1px solid #243128; border-radius: 16px; padding: 18px; }
     .chip { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
@@ -2563,7 +2569,7 @@ export default function App() {
     @media (max-width: 340px) {
       .brand-title { font-size: 18px !important }
       .btn { padding: 10px 12px; font-size: 13px }
-      .input { padding: 11px 12px; font-size: 13px }
+      .input { padding: 11px 12px; font-size: 16px }
     }
   `;
 
@@ -2770,7 +2776,7 @@ export default function App() {
   /* 🔴 Live tab — "Captains I follow" and state are alternate modes, not combinable filters:
      when follow mode is on, state is ignored entirely, and vice versa. */
   const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
-    (liveFollowedOnly ? follows.includes(m.createdBy) : (liveStateFilter === "All" || captainState(m) === liveStateFilter)));
+    (liveFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
   const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
@@ -3214,11 +3220,11 @@ export default function App() {
             <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ minWidth: 190, flex: "1 1 190px" }}>
                 <StatePicker value={feedState} counts={stateCounts} disabled={feedFollowedOnly}
-                  onChange={(st) => { setFeedFollowedOnly(false); setFeedState(st); }} />
+                  onChange={(st) => { setFeedFollowedOnly(false); setStateFilter(st); }} />
               </div>
               {me.role === "Fan" && follows.length > 0 && (
                 <button className={`btn ${feedFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
-                  onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setFeedState("All"); }}>🔔 Captains I follow</button>
+                  onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setStateFilter("All"); }}>🔔 Captains I follow</button>
               )}
             </div>
 
@@ -3378,7 +3384,7 @@ export default function App() {
                 <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span>Coming up{feedState !== "All" ? ` in ${feedState}` : " near you"}</span>
                   {allUpcomingFixtures.length > upcomingFixtures.length && (
-                    <span className="tappable" onClick={() => { setFixState(feedState); setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); }}
+                    <span className="tappable" onClick={() => { setStateFilter(feedState); setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); }}
                       style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
                       All {allUpcomingFixtures.length} ›
                     </span>
@@ -4366,8 +4372,11 @@ export default function App() {
           }
 
           /* ---------- LIST ---------- */
+          /* Respects the same shared state filter as every other page. Your own
+             tournaments always show, wherever they are. */
+          const inState = (t) => feedState === "All" || !t.state || t.state === feedState;
           const mine = tournaments.filter((t) => t.hostId === me.id);
-          const others = tournaments.filter((t) => t.hostId !== me.id);
+          const others = tournaments.filter((t) => t.hostId !== me.id && inState(t));
           const card = (t) => {
             const rows = tournamentTable(t.id);
             const played = matches.filter((m) => m.tournamentId === t.id && m.status === "ResultPublished").length;
@@ -4395,7 +4404,10 @@ export default function App() {
           return (
             <div style={{ maxWidth: 430 }}>
               <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>Tournaments</div>
-              <div style={{ color: T.muted, fontSize: 13, marginBottom: 18 }}>Cups and leagues run by captains in your area.</div>
+              <div style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>Cups and leagues run by captains in your area.</div>
+              <div style={{ marginBottom: 18 }}>
+                <StatePicker value={feedState} onChange={(st) => setStateFilter(st)} />
+              </div>
 
               {me.role === "Captain" && (
                 <button className="btn btn-gold" style={{ width: "100%", marginBottom: 18 }}
@@ -4536,14 +4548,14 @@ export default function App() {
               <>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ maxWidth: 260 }}>
-                  <StatePicker value={capStateFilter} allLabel="Captains in all states"
-                    onChange={(st) => setCapStateFilter(st)} />
+                  <StatePicker value={feedState} allLabel="Captains in all states"
+                    onChange={(st) => setStateFilter(st)} />
                 </div>
               </div>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 <div className="feedgrid">
-                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (capStateFilter === "All" || u.state === capStateFilter)).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
+                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState)).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
                     const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                     const today = new Date().toISOString().slice(0, 10);
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
@@ -4578,7 +4590,7 @@ export default function App() {
                     );
                   })}
                 </div>
-                <SeeMoreBtn k="captainsdir" list={users.filter((u) => u.role === "Captain" && (capStateFilter === "All" || u.state === capStateFilter))} />
+                <SeeMoreBtn k="captainsdir" list={users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState))} />
               </>
             ) : (
               (() => {
@@ -4865,17 +4877,17 @@ export default function App() {
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ minWidth: 190, flex: "1 1 190px" }}>
-                <StatePicker value={liveStateFilter} counts={stateCounts} disabled={liveFollowedOnly}
-                  onChange={(st) => { setLiveFollowedOnly(false); setLiveStateFilter(st); }} />
+                <StatePicker value={feedState} counts={stateCounts} disabled={liveFollowedOnly}
+                  onChange={(st) => { setLiveFollowedOnly(false); setStateFilter(st); }} />
               </div>
               {me.role === "Fan" && follows.length > 0 && (
                 <button className={`btn ${liveFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
-                  onClick={() => { setLiveFollowedOnly(!liveFollowedOnly); if (!liveFollowedOnly) setLiveStateFilter("All"); }}>🔔 Captains I follow</button>
+                  onClick={() => { setLiveFollowedOnly(!liveFollowedOnly); if (!liveFollowedOnly) setStateFilter("All"); }}>🔔 Captains I follow</button>
               )}
             </div>
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
-                {liveFollowedOnly ? "None of the captains you follow are live right now." : liveStateFilter !== "All" ? `No live matches in ${liveStateFilter} right now.` : "Nothing live right now — check back on match day. ⚽"}
+                {liveFollowedOnly ? "None of the captains you follow are live right now." : feedState !== "All" ? `No live matches in ${feedState} right now.` : "Nothing live right now — check back on match day. ⚽"}
               </div>
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
@@ -4942,6 +4954,11 @@ export default function App() {
           })()}
           onSubmitTournamentScore={submitTournamentScore}
           onHostResolve={hostResolveScore}
+          chatMessages={chatMsgs.filter((c) => c.matchId === openMatch)}
+          allUsers={users}
+          onSendChat={sendChat}
+          onReportChat={reportChat}
+          onDeleteChat={deleteChat}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -5336,7 +5353,7 @@ export default function App() {
         );
       })()}
       {showFixtures && (() => {
-        const list = allUpcomingFixtures.filter((m) => fixState === "All" || captainState(m) === fixState);
+        const list = allUpcomingFixtures.filter((m) => feedState === "All" || captainState(m) === feedState);
         const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
         const today0 = startOfDay(now);
         const groupOf = (m) => {
@@ -5360,11 +5377,11 @@ export default function App() {
             {statesWithFixtures.length > 1 && (
               <div style={{ padding: "0 17px 12px", display: "flex", gap: 6, overflowX: "auto", flexShrink: 0 }}>
                 {["All"].concat(statesWithFixtures).map((st) => (
-                  <button key={st} onClick={() => setFixState(st)}
+                  <button key={st} onClick={() => setStateFilter(st)}
                     style={{ flexShrink: 0, fontSize: 10.5, padding: "5px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap",
-                      background: fixState === st ? "#16211a" : "none",
-                      border: "1px solid " + (fixState === st ? "#2a3d31" : "#1b241c"),
-                      color: fixState === st ? "#EDEAE0" : "#5a6a5f", fontWeight: fixState === st ? 600 : 500 }}>
+                      background: feedState === st ? "#16211a" : "none",
+                      border: "1px solid " + (feedState === st ? "#2a3d31" : "#1b241c"),
+                      color: feedState === st ? "#EDEAE0" : "#5a6a5f", fontWeight: feedState === st ? 600 : 500 }}>
                     {st === "All" ? "All states" : st}
                   </button>
                 ))}
@@ -5374,7 +5391,7 @@ export default function App() {
             <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "6px 17px 24px" }}>
               {list.length === 0 && (
                 <div style={{ fontSize: 12.5, color: "#7d8f83", textAlign: "center", padding: "30px 0" }}>
-                  No scheduled fixtures{fixState !== "All" ? " in " + fixState : ""} right now.
+                  No scheduled fixtures{feedState !== "All" ? " in " + feedState : ""} right now.
                 </div>
               )}
               {order.filter((g) => grouped[g]).map((g) => (
@@ -5408,7 +5425,7 @@ export default function App() {
               ))}
               {list.length > 0 && (
                 <div style={{ textAlign: "center", fontSize: 10.5, color: "#4e5c53", paddingTop: 16 }}>
-                  {list.length} fixture{list.length === 1 ? "" : "s"}{fixState !== "All" ? " in " + fixState : " across all states"}
+                  {list.length} fixture{list.length === 1 ? "" : "s"}{feedState !== "All" ? " in " + feedState : " across all states"}
                 </div>
               )}
             </div>
@@ -6669,7 +6686,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamen
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -6882,7 +6899,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
           return (
             <div className="card" style={{ fontSize: 13, padding: 14 }}>
               <div style={{ display: "flex", gap: 20, borderBottom: "1px solid #151c16", marginBottom: 14 }}>
-                {[[0, "Line-ups"], [1, "Form"]].map((t) => (
+                {[[0, "Line-ups"], [1, "Form"], [2, `Chat${chatMessages.length ? " " + chatMessages.length : ""}`]].map((t) => (
                   <button key={t[0]} onClick={() => setSheetCard(t[0])}
                     style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12, color: sheetCard === t[0] ? "#F7F4EA" : "#5a6a5f", fontWeight: sheetCard === t[0] ? 600 : 500, padding: "10px 0", cursor: "pointer", borderBottom: "1.5px solid " + (sheetCard === t[0] ? "#D6A81D" : "transparent"), marginBottom: -1 }}>
                     {t[1]}
@@ -6893,10 +6910,17 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                 onTouchStart={(e) => { sheetTouchX.current = e.touches[0].clientX; }}
                 onTouchEnd={(e) => {
                   const dx = e.changedTouches[0].clientX - sheetTouchX.current;
-                  if (dx < -40) setSheetCard(1);
-                  if (dx > 40) setSheetCard(0);
+                  if (dx < -40) setSheetCard((c) => Math.min(2, c + 1));
+                  if (dx > 40) setSheetCard((c) => Math.max(0, c - 1));
                 }}>
-                {sheetCard === 0 ? (
+                {sheetCard === 2 ? (
+                  <div style={{ width: "100%" }}>
+                    <MatchChat m={m} me={me} messages={chatMessages} users={allUsers}
+                      onSend={(t) => onSendChat && onSendChat(m.id, t)}
+                      onReport={onReportChat} onDelete={onDeleteChat}
+                      live={m.status === "Live"} />
+                  </div>
+                ) : sheetCard === 0 ? (
                   [[m.teamA, m.badgeA, m.playersA], [m.teamB, m.badgeB, m.playersB]].map(([team, badge, players], i) => {
                     const names = (players || "").split(",").map((p) => p.trim()).filter(Boolean);
                     return (
