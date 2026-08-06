@@ -3301,12 +3301,7 @@ export default function App() {
             {(me.role === "Fan" || me.role === "Player") && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
-            <button disabled title="Coming soon"
-              onClick={() => notify("Tournaments are coming soon 🏆")}
-              style={{ opacity: .45, cursor: "default", position: "relative" }}>
-              Tournaments
-              <span style={{ fontSize: 7.5, fontWeight: 700, letterSpacing: ".6px", background: "#243128", color: "#8FA396", borderRadius: 3, padding: "1px 4px", marginLeft: 5, verticalAlign: "middle" }}>SOON</span>
-            </button>
+            <button onClick={() => notify("Tournaments are coming soon 🏆")}>Tournaments</button>
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
