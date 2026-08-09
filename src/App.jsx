@@ -1103,8 +1103,20 @@ export default function App() {
   const [scorerState, setScorerState] = useState("All");    // top scorers, independent of the feed state
   const [hlFilter, setHlFilter] = useState("all");          // highlights: all | captains | teams
   const [liveFollowFilter, setLiveFollowFilter] = useState(false);
+  /* Each section owns its filters outright. feedState stays as the app-wide
+     default every section starts from, but changing one section's state never
+     moves another — a fan comparing Lagos results against Ogun fixtures should
+     not have one undo the other. */
   const [capFollowFilter, setCapFollowFilter] = useState(false);   // captains page
+  const [capState, setCapState] = useState("All");
   const [teamFollowFilter, setTeamFollowFilter] = useState(false); // teams page
+  const [liveRailState, setLiveRailState] = useState("All");       // Live now, on the feed
+  const [liveRailTeams, setLiveRailTeams] = useState(false);
+  const [upState, setUpState] = useState("All");                   // Upcoming
+  const [upTeams, setUpTeams] = useState(false);
+  const [hlState, setHlState] = useState("All");                   // Highlights
+  const [livePageState, setLivePageState] = useState("All");       // Live nav page
+  const [livePageTeams, setLivePageTeams] = useState(false);
   const [stateSearch, setStateSearch] = useState("");
   const [heroSlide, setHeroSlide] = useState(0);
   const [seeMore, setSeeMore] = useState({});
@@ -2667,8 +2679,15 @@ export default function App() {
       background: rgba(230,179,30,.08); border: 1px solid rgba(230,179,30,.32); border-radius: 999px;
       padding: 6px 11px; cursor: pointer; white-space: nowrap; }
     .linkbtn:active { background: rgba(230,179,30,.18); }
-    .railhead .more { font-size: 10.5px; font-weight: 600; color: #D6A81D; background: rgba(230,179,30,.08);
-      border: 1px solid rgba(230,179,30,.32); border-radius: 999px; padding: 6px 11px; cursor: pointer;
+    /* Back and More are the same pill — the chevron says which way you're going. */
+    .goldpill { display: inline-flex; align-items: center; gap: 6px; flex: none; font-family: inherit;
+      font-size: 12.5px; font-weight: 700; color: #E6B31E; background: rgba(230,179,30,.05);
+      border: 1.5px solid rgba(230,179,30,.55); border-radius: 999px; padding: 9px 18px; cursor: pointer;
+      white-space: nowrap; }
+    .goldpill:active { background: rgba(230,179,30,.18); }
+    .goldpill.sm { font-size: 11px; padding: 7px 14px; border-width: 1px; }
+    .railhead .more { font-size: 11px; font-weight: 700; color: #E6B31E; background: rgba(230,179,30,.05);
+      border: 1px solid rgba(230,179,30,.55); border-radius: 999px; padding: 7px 14px; cursor: pointer;
       font-family: inherit; white-space: nowrap; }
     .railhead .more:active { background: rgba(230,179,30,.18); }
     /* A rail holding one item isn't a rail — let it fill the width instead of
@@ -3001,6 +3020,13 @@ export default function App() {
   /* A rail with one card in it looks broken, so a section has to clear a
      minimum before it renders at all. */
   const enough = (list, n) => Array.isArray(list) && list.length >= n;
+  /* Teams the signed-in user follows, and whether a given match involves one.
+     Names are normalised because a match stores team names as text. */
+  const myFollowedTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
+  const myFollowedTeamNames = savedTeams.filter((t) => myFollowedTeamIds.includes(t.id)).map((t) => normName(t.name));
+  const involvesFollowedTeam = (m) =>
+    myFollowedTeamNames.includes(normName(m.teamA.name)) || myFollowedTeamNames.includes(normName(m.teamB.name));
+  const inState = (m, st) => st === "All" || captainState(m) === st;
   /* One row of status filters, shared by every list that needs it. Counts come
      from the unfiltered list, and a chip is hidden when its count is zero —
      an empty filter is a dead end, not a choice. */
@@ -3116,10 +3142,15 @@ export default function App() {
       : null;
   /* published is already state-scoped, so Upcoming follows whichever state the
      feed is on without a filter of its own. */
-  const upcoming = published.filter((m) => m.status === "Scheduled");
-  const liveNow = published.filter((m) => m.status === "Live")
+  const upcoming = publishedAll.filter((m) => m.status === "Scheduled" && inState(m, upState) &&
+    (!upTeams || involvesFollowedTeam(m)));
+  /* Live now answers "what is happening right now", so it filters off the full
+     published set rather than inheriting whatever the feed is scoped to. */
+  const liveNow = publishedAll.filter((m) => m.status === "Live" && inState(m, liveRailState) &&
+    (!liveRailTeams || involvesFollowedTeam(m)))
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
-  const results = published.filter((m) => m.status === "ResultPublished");
+  const anyLive = publishedAll.some((m) => m.status === "Live");
+  const results = publishedAll.filter((m) => m.status === "ResultPublished" && inState(m, hlState));
   /* Own matches plus any delegated to me that I've accepted or not yet answered —
      a captain scoring someone else's fixture needs it in their own list. */
   const mine = matches.filter((m) => m.createdBy === me.id ||
@@ -3128,9 +3159,12 @@ export default function App() {
      when follow mode is on, state is ignored entirely, and vice versa. */
   /* State and follow filters stack instead of cancelling each other — picking a
      state narrows to that state and nothing widens it back. */
+  /* Three filters, none of them cancelling another: state, captains you follow,
+     teams you follow. Everything here is live by definition. */
   const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
-    (feedState === "All" || captainState(m) === feedState) &&
-    (!liveFollowFilter || follows.includes(m.createdBy)));
+    inState(m, livePageState) &&
+    (!liveFollowFilter || follows.includes(m.createdBy)) &&
+    (!livePageTeams || involvesFollowedTeam(m)));
   const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
@@ -3783,12 +3817,25 @@ export default function App() {
               </div>
             )}
 
-            {liveNow.length > 0 && (
+            {anyLive && (
               <>
                 <div className="railhead">
                   <span className="lbl" style={{ color: "#E8442E" }}>● Live now</span>
                   {liveNow.length > 1 && <button className="more" onClick={() => setPage("live")}>All {liveNow.length} ›</button>}
                 </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 180, flex: "1 1 180px" }}>
+                    <StatePicker value={liveRailState} counts={stateCounts} label="State" onChange={setLiveRailState} />
+                  </div>
+                  {myFollowedTeamIds.length > 0 && (
+                    <button className={`statechip ${liveRailTeams ? "on" : ""}`} onClick={() => setLiveRailTeams(!liveRailTeams)}>🛡 My teams</button>
+                  )}
+                </div>
+                {liveNow.length === 0 && (
+                  <div className="card" style={{ color: "#7d8f83", marginBottom: 24 }}>
+                    Nothing live{liveRailState !== "All" ? ` in ${liveRailState}` : ""}{liveRailTeams ? " from the teams you follow" : ""} right now.
+                  </div>
+                )}
                 <div className={`rail ${liveNow.length === 1 ? "solo" : ""}`}>
                   {liveNow.map((m) => (
                     <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)}
@@ -3997,8 +4044,16 @@ export default function App() {
               </>
             )}
 
-            <SectionTitle color={"#E6B31E"}>Upcoming Matches{feedState !== "All" ? ` · ${feedState}` : ""}</SectionTitle>
-            {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>No upcoming published matches yet.</div>}
+            <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 180, flex: "1 1 180px" }}>
+                <StatePicker value={upState} counts={stateCounts} label="State" onChange={setUpState} />
+              </div>
+              {myFollowedTeamIds.length > 0 && (
+                <button className={`statechip ${upTeams ? "on" : ""}`} onClick={() => setUpTeams(!upTeams)}>🛡 Teams I follow</button>
+              )}
+            </div>
+            {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>Nothing scheduled{upState !== "All" ? ` in ${upState}` : ""}{upTeams ? " for the teams you follow" : ""} yet.</div>}
             {upcoming.length > 0 && (() => {
               const counts = {};
               upcoming.forEach((m) => { const g = dayGroupOf(m); counts[g] = (counts[g] || 0) + 1; });
@@ -4023,21 +4078,22 @@ export default function App() {
             })()}
 
             <div className="railhead">
-              <span className="lbl">Highlights{feedState !== "All" ? ` · ${feedState}` : ""}</span>
+              <span className="lbl">Highlights</span>
               {results.length > 2 && (
                 <button className="more" onClick={() => setSeeMore((x) => ({ ...x, results: !x.results }))}>
                   {seeMore.results ? "Less ‹" : `More ${results.length} ›`}
                 </button>
               )}
             </div>
-            {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Highlights appear here once captains submit final scores.</div>}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 12px", flexWrap: "wrap" }}>
+              <div style={{ minWidth: 180, flex: "1 1 180px" }}>
+                <StatePicker value={hlState} counts={stateCounts} label="State" onChange={setHlState} />
+              </div>
+            </div>
+            {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results{hlState !== "All" ? ` in ${hlState}` : ""} yet. Highlights appear here once captains submit final scores.</div>}
             {results.length > 0 && (() => {
-              const myTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
               const byCaptains = results.filter((m) => follows.includes(m.createdBy));
-              const byTeams = results.filter((m) => {
-                const t = savedTeams.filter((st) => myTeamIds.includes(st.id));
-                return t.some((st) => normName(st.name) === normName(m.teamA.name) || normName(st.name) === normName(m.teamB.name));
-              });
+              const byTeams = results.filter(involvesFollowedTeam);
               const shown = hlFilter === "captains" ? byCaptains : hlFilter === "teams" ? byTeams : results;
               return (
                 <>
@@ -4090,9 +4146,12 @@ export default function App() {
                 return <div className="card" style={{ color: "#7d8f83" }}>Nothing here right now.</div>;
               }
               return (
-                <div className="feedgrid">
-                  {shown.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
-                </div>
+                <>
+                  <div className="feedgrid" style={{ marginBottom: 8 }}>
+                    {capped("mine", shown).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                  </div>
+                  <SeeMoreBtn k="mine" list={shown} />
+                </>
               );
             })()}
           </>
@@ -5132,9 +5191,8 @@ export default function App() {
             filter, captain names link through to their profile. */}
         {page === "teams" && (
           <>
-            <button onClick={() => setPage("feed")} className="tappable"
-              style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", marginBottom: 14 }}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Feed
+            <button onClick={() => setPage("feed")} className="goldpill sm" style={{ marginBottom: 14 }}>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
             </button>
             <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Teams</div>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Every team on Area Match. Follow the ones you want to keep up with.</div>
@@ -5206,13 +5264,18 @@ export default function App() {
           <>
             {!viewCaptain ? (
               <>
-                <StateChips extra={follows.length > 0 ? (
-                  <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>🔔 Captains I follow</button>
-                ) : null} />
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 190, flex: "1 1 190px" }}>
+                    <StatePicker value={capState} allLabel="Captains in all states" label="State" onChange={setCapState} />
+                  </div>
+                  {follows.length > 0 && (
+                    <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>🔔 Captains I follow</button>
+                  )}
+                </div>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 <div className="feedgrid">
-                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState) && (!capFollowFilter || follows.includes(u.id))).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
+                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (capState === "All" || u.state === capState) && (!capFollowFilter || follows.includes(u.id))).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
                     const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                     const today = new Date().toISOString().slice(0, 10);
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
@@ -5518,24 +5581,26 @@ export default function App() {
             </div>
             {/* Follow filter leads — it's the one most people want — and the state
                 chips sit after it. Both narrow the same live-only list. */}
-            <div className="chiprow">
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 190, flex: "1 1 190px" }}>
+                <StatePicker value={livePageState} counts={stateCounts} label="State" onChange={setLivePageState} />
+              </div>
               {follows.length > 0 && (
                 <button className={`statechip ${liveFollowFilter ? "on" : ""}`} onClick={() => setLiveFollowFilter(!liveFollowFilter)}>🔔 Captains I follow</button>
               )}
-              <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>All states</button>
-              {chipStates.map((st) => (
-                <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
-                  {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
-                </button>
-              ))}
-              <button className="statechip" onClick={openStateSheet}>More ▾</button>
+              {myFollowedTeamIds.length > 0 && (
+                <button className={`statechip ${livePageTeams ? "on" : ""}`} onClick={() => setLivePageTeams(!livePageTeams)}>🛡 Teams I follow</button>
+              )}
             </div>
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
-                {liveFollowFilter && feedState !== "All" ? `No captains you follow are live in ${feedState} right now.`
-                  : liveFollowFilter ? "None of the captains you follow are live right now."
-                  : feedState !== "All" ? `No live matches in ${feedState} right now.`
-                  : "Nothing live right now — check back on match day. ⚽"}
+                {(() => {
+                  const bits = [];
+                  if (livePageState !== "All") bits.push(`in ${livePageState}`);
+                  if (liveFollowFilter) bits.push("from captains you follow");
+                  if (livePageTeams) bits.push("from teams you follow");
+                  return bits.length ? `Nothing live ${bits.join(" ")} right now.` : "Nothing live right now — check back on match day. ⚽";
+                })()}
               </div>
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
@@ -6083,7 +6148,7 @@ export default function App() {
         return (
           <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-              <button onClick={goBackPage} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+              <button onClick={goBackPage} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
               <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Fixtures</div>
             </div>
             {statesWithFixtures.length > 1 && (
@@ -6147,7 +6212,7 @@ export default function App() {
       {showLeaderboards && (
         <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-            <button onClick={goBackPage} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+            <button onClick={goBackPage} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
             <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Leaderboards</div>
           </div>
           <div style={{ display: "flex", padding: "0 17px", borderBottom: "1px solid #151c16", gap: 24 }}>
@@ -6731,7 +6796,7 @@ function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playe
   return (
     <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 92, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
-        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
+        <button onClick={onClose} className="goldpill sm">
           <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
         </button>
         <div style={{ flex: 1 }} />
@@ -6907,7 +6972,7 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
   return (
     <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 90, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
-        <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 12px", border: "1px solid #1f2921", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+        <button onClick={onClose} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
         <div style={{ flex: 1 }} />
       </div>
 
@@ -7571,7 +7636,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   return (
     <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 50, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
-        <button onClick={onClose} className="tappable" style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, height: 34, padding: "0 13px", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
+        <button onClick={onClose} className="goldpill"><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
         <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
         <StatusChip m={m} />
       </div>
@@ -7608,17 +7673,25 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                   {live && !onBreakNow && !paused && <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#E8442E", display: "inline-block" }} />}
                   {chipText}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-                    <MiniLogo team={m.teamA} badge={m.badgeA} size={30} />
-                    <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name}</div>
-                  </div>
-                  <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 36, color: live ? "#D6A81D" : "#F7F4EA", flexShrink: 0 }}>{scoreText}</div>
-                  <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-                    <MiniLogo team={m.teamB} badge={m.badgeB} size={30} />
-                    <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamB.name}</div>
-                  </div>
-                </div>
+                {/* MiniLogo is a fixed-width block, so textAlign never centred it —
+                    each column needs its own flex centring. Both columns start at
+                    the top and the name row is a fixed height, so a long name on
+                    one side can't push its crest out of line with the other. */}
+                {(() => {
+                  const col = (team, badge) => (
+                    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                      <MiniLogo team={team} badge={badge} size={40} />
+                      <div style={{ fontSize: 11, fontWeight: 600, marginTop: 8, height: 30, lineHeight: 1.3, width: "100%", textAlign: "center", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{team.name}</div>
+                    </div>
+                  );
+                  return (
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                      {col(m.teamA, m.badgeA)}
+                      <div className="display" style={{ fontSize: 34, color: live ? "#D6A81D" : "#F7F4EA", flexShrink: 0, lineHeight: 1, marginTop: 6 }}>{scoreText}</div>
+                      {col(m.teamB, m.badgeB)}
+                    </div>
+                  );
+                })()}
                 <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 12, letterSpacing: ".4px" }}>
                   {m.location}{m.date ? " \u00b7 " + m.date : ""}{m.time ? " at " + m.time : ""}
                 </div>
@@ -8484,7 +8557,7 @@ function LiveMatchView({ m, me, notify, minute, timeline, alertsOn, onToggleAler
     <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 80, display: "flex", flexDirection: "column" }}>
       <div style={{ maxWidth: 460, width: "100%", margin: "0 auto", flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128" }}>
-          <button onClick={onClose} className="tappable" style={{ background: "none", border: "1px solid #243128", color: T.chalk, borderRadius: 10, height: 34, padding: "0 13px", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
+          <button onClick={onClose} className="goldpill"><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
           <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
             <div style={{ fontSize: 10, color: "#8FA396", letterSpacing: ".1em" }}>{(m.location || "").toUpperCase()}</div>
