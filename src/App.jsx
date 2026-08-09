@@ -1010,7 +1010,7 @@ export default function App() {
      history stack and the phone's back gesture closes it instead of leaving
      the app. Opening a view any other way is a bug. */
   const openFixtures = () => { setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); };
-  const openLeaderboards = () => { openLeaderboards(); };
+  const openLeaderboards = () => { setShowLeaderboards(true); pushCloseable(() => setShowLeaderboards(false)); };
   const openPoster = (id) => { setPosterFor(id); pushCloseable(() => setPosterFor(null)); };
   const openChat = (id) => { setChatFor(id); pushCloseable(() => setChatFor(null)); };
   const openPlayerCard = (id) => { setPlayerCardFor(id); pushCloseable(() => setPlayerCardFor(null)); };
@@ -2647,6 +2647,30 @@ export default function App() {
     .railhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
     .railhead .lbl { font-family: 'Anton', sans-serif; font-size: 14.5px; letter-spacing: .03em; text-transform: uppercase; color: #F7F4EA; }
     .railhead .more { font-size: 11px; color: #D6A81D; font-weight: 500; cursor: pointer; background: none; border: 0; font-family: inherit; padding: 0; }
+    .daygroup { display: flex; align-items: center; gap: 8px; font-size: 9.5px; letter-spacing: 1.5px;
+      text-transform: uppercase; color: #D6A81D; font-weight: 700; margin: 0 0 10px; }
+    .daygroup span { color: #4e5c53; letter-spacing: 0; font-size: 10px; font-weight: 500; }
+    .matchcard { padding: 12px 13px; border-radius: 13px; cursor: pointer; }
+    /* Every gold "go somewhere" link is a real button with a hit area, not text
+       that happens to be tappable. */
+    .linkbtn { flex: none; font-family: inherit; font-size: 10.5px; font-weight: 600; color: #D6A81D;
+      background: rgba(230,179,30,.08); border: 1px solid rgba(230,179,30,.32); border-radius: 999px;
+      padding: 6px 11px; cursor: pointer; white-space: nowrap; }
+    .linkbtn:active { background: rgba(230,179,30,.18); }
+    .railhead .more { font-size: 10.5px; font-weight: 600; color: #D6A81D; background: rgba(230,179,30,.08);
+      border: 1px solid rgba(230,179,30,.32); border-radius: 999px; padding: 6px 11px; cursor: pointer;
+      font-family: inherit; white-space: nowrap; }
+    .railhead .more:active { background: rgba(230,179,30,.18); }
+    /* A rail holding one item isn't a rail — let it fill the width instead of
+       sitting as a narrow card with dead space beside it. */
+    .rail.solo { display: block; overflow: visible; }
+    .kick-when { margin-bottom: 10px; }
+    /* Alone on the row there's width to spare, so time and teams sit side by side
+       instead of the names wrapping in a narrow column. */
+    .rail.solo .kick-inner { display: flex; align-items: center; gap: 16px; }
+    .rail.solo .kick-when { margin-bottom: 0; flex: none; min-width: 92px; }
+    .rail.solo .kick-teams { flex: 1; min-width: 0; }
+    .rail.solo > * { width: 100% !important; }
     .railcard { background: #0E140F; border: 1px solid #243128; border-radius: 13px; padding: 12px 13px; cursor: pointer; }
     .chiprow { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; padding-bottom: 2px; }
     .chiprow::-webkit-scrollbar { display: none; }
@@ -2679,7 +2703,7 @@ export default function App() {
         linear-gradient(90deg, transparent 49.6%, #dff2e4 49.6%, #dff2e4 50.4%, transparent 50.4%),
         radial-gradient(circle at 50% 50%, transparent 52px, #dff2e4 52px, #dff2e4 53px, transparent 53px); }
     .hero-title { font-family: 'Anton', sans-serif; font-size: 28px; line-height: 1.02; color: #F7F4EA; letter-spacing: .01em; }
-    .banner { background: #E8442E; color: #ffffff; border-radius: 12px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .banner { background: #E8442E; color: #ffffff; border-radius: 13px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     @media (prefers-reduced-motion: reduce) { .pulse { animation: none } }
     .md-root { overflow-x: hidden; }
     @keyframes spin { to { transform: rotate(360deg) } }
@@ -2971,6 +2995,24 @@ export default function App() {
   /* A rail with one card in it looks broken, so a section has to clear a
      minimum before it renders at all. */
   const enough = (list, n) => Array.isArray(list) && list.length >= n;
+  /* Shared by the fixtures page and every scheduled list, so "This week" means
+     the same thing everywhere. */
+  const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const dayGroupOf = (m) => {
+    if (!m.date) return "Later";
+    const days = Math.round((startOfDay(new Date(`${m.date}T${m.time || "00:00"}`).getTime()) - startOfDay(now)) / 86400000);
+    if (days < 0) return "Earlier";
+    if (days === 0) return "Today";
+    if (days === 1) return "Tomorrow";
+    if (days <= 7) return "This week";
+    return "Later";
+  };
+  const DAY_GROUP_ORDER = ["Today", "Tomorrow", "This week", "Later", "Earlier"];
+  const groupByDay = (list) => {
+    const out = {};
+    list.forEach((m) => { const g = dayGroupOf(m); (out[g] = out[g] || []).push(m); });
+    return DAY_GROUP_ORDER.filter((g) => out[g]).map((g) => [g, out[g]]);
+  };
   /* Local date, not UTC — toISOString() rolls over an hour early in WAT and
      would empty this section before the evening kick-offs have played. */
   const todayKey = new Date().toLocaleDateString("en-CA");
@@ -3467,12 +3509,12 @@ export default function App() {
           /* One compact line however many are due — the bell holds the detail. */
           return (
             <div className="tappable" onClick={() => setBellOpen(true)}
-              style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 11px 11px 0", padding: 12, marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
+              style={{ background: "#0E140F", border: "1px solid #243128", borderLeft: "2px solid #D6A81D", borderRadius: 13, padding: 12, marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 9, letterSpacing: "1.3px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>
+                <div style={{ fontSize: 9, letterSpacing: "1.5px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>
                   {due.length === 1 ? "1 match ready" : `${due.length} matches ready`}
                 </div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 6, color: "#F7F4EA" }}>Kick-off time reached</div>
+                <div className="display" style={{ fontSize: 15, marginTop: 6, color: "#F7F4EA", letterSpacing: ".02em" }}>KICK-OFF TIME REACHED</div>
                 <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 3, lineHeight: 1.45 }}>
                   {due.length === 1
                     ? `${due[0].teamA.name} vs ${due[0].teamB.name} — tap to start or postpone.`
@@ -3640,7 +3682,7 @@ export default function App() {
                   <span className="lbl" style={{ color: "#E8442E" }}>● Live now</span>
                   {liveNow.length > 1 && <button className="more" onClick={() => setPage("live")}>All {liveNow.length} ›</button>}
                 </div>
-                <div className="rail">
+                <div className={`rail ${liveNow.length === 1 ? "solo" : ""}`}>
                   {liveNow.map((m) => (
                     <RailMatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft}
                       captainName={(users.find((u) => u.id === m.createdBy) || {}).name}
@@ -3659,20 +3701,26 @@ export default function App() {
                   <span className="lbl">{kickoffs.label}</span>
                   <button className="more" onClick={openFixtures}>All fixtures ›</button>
                 </div>
-                <div className="rail">
+                <div className={`rail ${kickoffs.list.length === 1 ? "solo" : ""}`}>
                   {kickoffs.list.map((m) => {
                     const kickoff = new Date(`${m.date}T${m.time}`).getTime();
                     const hrs = (kickoff - now) / 3600000;
                     return (
                       <div key={m.id} className="railcard tappable" style={{ width: 178 }} onClick={() => openMatchDetail(m.id)}>
-                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: "#E6B31E", lineHeight: 1 }}>{m.time}</div>
-                        <div style={{ fontSize: 9.5, color: "#4e5c53", letterSpacing: ".06em", textTransform: "uppercase", margin: "3px 0 10px" }}>
-                          {hrs < 1 ? "kicking off" : hrs < 24 ? `in ${Math.round(hrs)}h` : new Date(kickoff).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                        <div className="kick-inner">
+                          <div className="kick-when">
+                            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: "#E6B31E", lineHeight: 1 }}>{m.time}</div>
+                            <div style={{ fontSize: 9.5, color: "#4e5c53", letterSpacing: ".06em", textTransform: "uppercase", marginTop: 3 }}>
+                              {hrs < 1 ? "kicking off" : hrs < 24 ? `in ${Math.round(hrs)}h` : new Date(kickoff).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                            </div>
+                          </div>
+                          <div className="kick-teams">
+                            <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                              {m.teamA.name}<span style={{ color: "#4e5c53", fontSize: 10, margin: "0 5px" }}>v</span>{m.teamB.name}
+                            </div>
+                            <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-                          {m.teamA.name}<span style={{ color: "#4e5c53", fontSize: 10, margin: "0 5px" }}>v</span>{m.teamB.name}
-                        </div>
-                        <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
                       </div>
                     );
                   })}
@@ -3685,7 +3733,7 @@ export default function App() {
                 <div className="railhead">
                   <span className="lbl" style={{ color: "#E6B31E" }}>⏳ Awaiting results</span>
                 </div>
-                <div className="rail">
+                <div className={`rail ${awaitingResults.length === 1 ? "solo" : ""}`}>
                   {awaitingResults.map((m) => (
                     <RailMatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft}
                       captainName={(users.find((u) => u.id === m.createdBy) || {}).name}
@@ -3703,7 +3751,7 @@ export default function App() {
                   <span className="lbl">Top scorers{scorerRail.scope ? ` · ${scorerRail.scope}` : ""}</span>
                   <button className="more" onClick={openLeaderboards}>Leaderboard ›</button>
                 </div>
-                <div className="rail">
+                <div className={`rail ${scorerRail.list.length === 1 ? "solo" : ""}`}>
                   {scorerRail.list.slice(0, 8).map((sc, i) => {
                     const team = savedTeams.find((t) => normName(t.name) === normName(sc.team));
                     const linked = team && users.find((u) => u.role === "Player" && u.teamId === team.id && normName(u.rosterName) === normName(sc.name));
@@ -3734,7 +3782,7 @@ export default function App() {
                   <span className="lbl">Teams{teamRail.scope ? ` · ${teamRail.scope}` : " near you"}</span>
                   <button className="more" onClick={openLeaderboards}>All teams ›</button>
                 </div>
-                <div className="rail">
+                <div className={`rail ${teamRail.list.length === 1 ? "solo" : ""}`}>
                   {teamRail.list.slice(0, 8).map((x) => (
                     <div key={x.team.id} className="railcard tappable" style={{ width: 108, textAlign: "center" }}
                       onClick={() => openTeamProfile(x.team.id)}>
@@ -3857,11 +3905,14 @@ export default function App() {
 
             <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>No upcoming published matches yet.</div>}
-            <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
-            </div>
-
-            <SeeMoreBtn k="upcoming" list={upcoming} />
+            {groupByDay(upcoming).map(([g, list]) => (
+              <div key={g} style={{ marginBottom: 18 }}>
+                <div className="daygroup">{g}<span>{list.length}</span></div>
+                <div className="feedgrid">
+                  {list.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                </div>
+              </div>
+            ))}
 
             <SectionTitle color={"#F5F0E1"}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Results appear here once captains submit final scores.</div>}
@@ -3894,10 +3945,14 @@ export default function App() {
               </div>
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
-            <div className="feedgrid">
-              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} mineView />)}
-            </div>
-            <SeeMoreBtn k="mymatches" list={mine} />
+            {groupByDay(mine).map(([g, list]) => (
+              <div key={g} style={{ marginBottom: 18 }}>
+                <div className="daygroup">{g}<span>{list.length}</span></div>
+                <div className="feedgrid">
+                  {list.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                </div>
+              </div>
+            ))}
           </>
         )}
 
@@ -5803,19 +5858,7 @@ export default function App() {
       })()}
       {showFixtures && (() => {
         const list = allUpcomingFixtures.filter((m) => feedState === "All" || captainState(m) === feedState);
-        const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
-        const today0 = startOfDay(now);
-        const groupOf = (m) => {
-          const k = startOfDay(new Date(m.date + "T" + m.time).getTime());
-          const days = Math.round((k - today0) / 86400000);
-          if (days <= 0) return "Today";
-          if (days === 1) return "Tomorrow";
-          if (days <= 7) return "This week";
-          return "Later";
-        };
-        const order = ["Today", "Tomorrow", "This week", "Later"];
-        const grouped = {};
-        list.forEach((m) => { const g = groupOf(m); (grouped[g] = grouped[g] || []).push(m); });
+        const groups = groupByDay(list);
         const statesWithFixtures = Array.from(new Set(allUpcomingFixtures.map((m) => captainState(m)).filter(Boolean)));
         return (
           <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
@@ -5843,10 +5886,10 @@ export default function App() {
                   No scheduled fixtures{feedState !== "All" ? " in " + feedState : ""} right now.
                 </div>
               )}
-              {order.filter((g) => grouped[g]).map((g) => (
+              {groups.map(([g, glist]) => (
                 <div key={g}>
                   <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700, margin: "18px 0 10px" }}>{g}</div>
-                  {grouped[g].map((m) => {
+                  {glist.map((m) => {
                     const kickoff = new Date(m.date + "T" + m.time).getTime();
                     const hoursOut = (kickoff - now) / 3600000;
                     const d = new Date(kickoff);
@@ -7106,23 +7149,38 @@ function Jersey({ pattern = "solid", main = "#E6B31E", trim = "#F5F0E1", size = 
   );
 }
 
+/* The crest: a rounded tile in the team's colour with the badge drawn over it
+   as a dark line icon. Replaced the jersey silhouette — at 26px in a list the
+   jersey read as a smudge, and the tile keeps the badge legible at any size.
+   Teams with no badge fall back to initials in the same tile. */
 function MiniLogo({ team, badge, size = 42 }) {
   const icon = resolveBadgeIcon(badge);
+  const tile = {
+    width: size, height: size, flexShrink: 0,
+    borderRadius: Math.round(size * 0.27),
+    background: team.color || "#E6B31E",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    boxShadow: "inset 0 0 0 1px rgba(255,255,255,.14)",
+  };
   if (!icon) {
     return (
-      <div className="mini-logo" style={{ width: size, height: size, borderRadius: "50%", background: team.color, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: size * 0.42, color: "#fff", flexShrink: 0, border: "2px solid rgba(255,255,255,.25)" }}>
-        {team.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+      <div className="mini-logo" style={{ ...tile, fontFamily: "'Anton', sans-serif", fontSize: size * 0.4, color: "rgba(10,13,10,.85)" }}>
+        {(team.name || "").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
       </div>
     );
   }
   return (
-    <svg width={size} height={size * 1.06} viewBox="0 0 100 106" style={{ flexShrink: 0, filter: "drop-shadow(0 2px 5px rgba(0,0,0,.35))" }}>
-      <path d="M50 9 L39 2 Q30 -1 22 6 L3 23 L15 36 L23 28 L23 99 Q50 106 77 99 L77 28 L85 36 L97 23 L78 6 Q70 -1 61 2 Z" fill={team.color} stroke="rgba(245,240,225,.35)" strokeWidth="2" />
-      <path d="M40 4 Q50 14 60 4" fill="none" stroke="rgba(12,18,14,.5)" strokeWidth="2.4" />
-      <g transform={`translate(50 50) scale(${BADGE_ICON_SCALE[icon] || 1.2})`}>
-        <BadgeIconPaths name={icon} />
-      </g>
-    </svg>
+    <div className="mini-logo" style={tile}>
+      {/* The badge paths are drawn in white for the old jersey. On a colour-filled
+          tile they need to be dark, and brightness(0) does that for every icon at
+          once rather than forking twelve path definitions. */}
+      <svg width={size * 0.56} height={size * 0.56} viewBox="-50 -50 100 100"
+        style={{ display: "block", filter: "brightness(0)", opacity: 0.82 }}>
+        <g transform={`scale(${(BADGE_ICON_SCALE[icon] || 1.2) * 2.6})`}>
+          <BadgeIconPaths name={icon} />
+        </g>
+      </svg>
+    </div>
   );
 }
 
@@ -7132,8 +7190,12 @@ function MiniLogo({ team, badge, size = 42 }) {
 function RailMatchCard({ m, minute, breakLeft, captainName, stars = 0, onOpen }) {
   const live = m.status === "Live";
   const awaiting = m.status === "AwaitingScore";
+  /* minute and breakLeft are functions of the match, not numbers — the whole
+     timer is derived per render from timestamps. */
+  const mins = live ? minute(m) : null;
+  const brk = m.onBreak ? breakLeft(m) : 0;
   const clock = live
-    ? (m.onBreak ? "HT" : `${minute}'`)
+    ? (m.onBreak ? `HT ${Math.floor(brk / 60)}:${String(brk % 60).padStart(2, "0")}` : `${mins}'`)
     : awaiting ? "FT · unconfirmed" : m.time;
   const phase = live
     ? (m.onBreak ? "break" : m.secondHalf ? "2nd half" : "1st half")
@@ -7153,7 +7215,7 @@ function RailMatchCard({ m, minute, breakLeft, captainName, stars = 0, onOpen })
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 11 }}>
         <span style={{ fontSize: 10.5, fontWeight: 700, color: live ? "#E8442E" : "#D6A81D", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
           {live && <span className="pulse" style={{ width: 5, height: 5, borderRadius: 999, background: "#E8442E", display: "inline-block" }} />}
-          {m.onBreak && breakLeft ? `HT ${breakLeft}` : clock}
+          {clock}
         </span>
         <span style={{ fontSize: 9.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".08em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{phase}</span>
       </div>
@@ -7169,72 +7231,82 @@ function RailMatchCard({ m, minute, breakLeft, captainName, stars = 0, onOpen })
   );
 }
 
-function MatchCard({ m, minute, breakLeft, onOpen, onPoster, mineView, tournamentName, tournamentPositions }) {
-  const showScore = m.status === "ResultPublished";
+/* One card design across the app. Status decides the left edge and the label;
+   everything else stays put, so a live match and a finished one read the same
+   way down the page. Props are unchanged from the old scoreboard version. */
+function MatchCard({ m, minute, breakLeft, onOpen, onPoster, tournamentName, tournamentPositions }) {
+  const live = m.status === "Live";
+  const awaiting = m.status === "AwaitingScore";
+  const done = m.status === "ResultPublished";
+  const cancelled = m.status === "Cancelled";
+  const ht = live && (m.halfPrompt || m.onBreak);
+  const brk = m.onBreak ? breakLeft(m) : 0;
+
+  const edge = live ? "#E8442E" : awaiting ? "#E6B31E" : done ? "#2c4433" : cancelled ? "#5c3a34" : "#243128";
+  const statusColor = live ? "#E8442E" : awaiting ? "#D6A81D" : done ? "#6f8a79" : cancelled ? "#b8705f" : "#D6A81D";
+  const status = ht
+    ? `HT ${Math.floor(brk / 60)}:${String(brk % 60).padStart(2, "0")}`
+    : live && !m.running ? `⏸ ${m.pauseReason || "Paused"}`
+    : live ? `${minute(m)}'`
+    : awaiting ? "FT · unconfirmed"
+    : done ? (m.shootout ? "Full time · pens" : "Full time")
+    : cancelled ? "Cancelled"
+    : m.time;
+  const phase = live
+    ? (m.onBreak ? "half-time break" : m.secondHalf ? "2nd half" : "1st half")
+    : `${m.location}${m.date ? ` · ${m.date}` : ""}`;
+
+  const showScore = done || live;
+  const a = done ? m.finalA : m.liveA ?? 0;
+  const b = done ? m.finalB : m.liveB ?? 0;
+  const loserA = done && a < b;
+  const loserB = done && b < a;
+
+  const side = (team, badge, score, dim) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+      <MiniLogo team={team} badge={badge} size={26} />
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 500, color: dim ? "#6f8a79" : "#F7F4EA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
+      <span className="display" style={{ fontSize: 20, lineHeight: 1, minWidth: 22, textAlign: "right", color: dim ? "#6f8a79" : "#F7F4EA" }}>
+        {showScore ? score : "–"}
+      </span>
+    </div>
+  );
+
   return (
-    <div className="card" style={{ display: "grid", gap: 12, cursor: "pointer", alignContent: "start" }} onClick={onOpen}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <StatusChip m={m} />
-        {m.postponed && m.status === "Scheduled" && <span className="chip" style={{ background: "#141c16", color: "#E6B31E" }}>📅 Rescheduled</span>}
+    <div className="card matchcard tappable" onClick={onOpen} style={{ borderLeft: `2px solid ${edge}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 11 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: statusColor, display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+          {live && !ht && m.running && <span className="pulse" style={{ width: 5, height: 5, borderRadius: 999, background: "#E8442E", display: "inline-block" }} />}
+          {status}
+        </span>
+        <span style={{ fontSize: 9.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".08em", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {m.postponed && m.status === "Scheduled" ? "rescheduled" : phase}
+        </span>
       </div>
-      <div className="scoreboard">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
-          <MiniLogo team={m.teamA} badge={m.badgeA} />
-          <div className="sb-name">{m.teamA.name}</div>
-        </div>
-        <div className="sb-center">
-          {showScore ? (
-            <div className="display" style={{ fontSize: 26, color: "#E6B31E" }}>{m.finalA} – {m.finalB}</div>
-          ) : m.status === "Live" && (m.halfPrompt || m.onBreak) ? (
-            <>
-              <div className="display" style={{ fontSize: 22, color: "#E6B31E" }}>HT</div>
-              <div style={{ fontSize: 11, color: "#E6B31E", fontWeight: 700 }}>
-                {m.onBreak ? `Break · ${Math.floor(breakLeft(m) / 60)}:${String(breakLeft(m) % 60).padStart(2, "0")}` : "Half-time break"}
-              </div>
-            </>
-          ) : m.status === "Live" && !m.running ? (
-            <>
-              <div className="display" style={{ fontSize: 24, color: "#F5F0E1" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
-              <div style={{ fontSize: 11, color: "#E6B31E", fontWeight: 700 }}>⏸ {m.pauseReason || "Paused"}</div>
-            </>
-          ) : m.status === "Live" ? (
-            <>
-              <div className="display" style={{ fontSize: 24, color: "#E8442E" }}>{m.liveA ?? 0} – {m.liveB ?? 0}</div>
-              <div className="pulse" style={{ fontSize: 12, color: "#E8442E", fontWeight: 700 }}>LIVE {minute(m)}'</div>
-              {m.streamUrl && <div className="chip pulse" style={{ background: "#E8442E", color: "#ffffff", fontSize: 9, marginTop: 2 }}>🔴 LIVE STREAM</div>}
-            </>
-          ) : m.status === "AwaitingScore" ? (
-            <>
-              <div className="display" style={{ fontSize: 20, color: "#E6B31E" }}>FT</div>
-              <div style={{ fontSize: 11, color: "#7d8f83", fontWeight: 700 }}>Result awaiting</div>
-            </>
-          ) : (
-            <div className="display" style={{ fontSize: 18, color: "#E6B31E" }}>{m.time}</div>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0, justifyContent: "flex-end" }}>
-          <div className="sb-name" style={{ textAlign: "right" }}>{m.teamB.name}</div>
-          <MiniLogo team={m.teamB} badge={m.badgeB} />
-        </div>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#7d8f83", flexWrap: "wrap", gap: 8 }}>
-        <span>📍 {m.location} · {m.date} · ⏱ {m.duration || 90}'</span>
-        {tournamentName && (
-          <span style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5 }}>
-            <svg width="11" height="11" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
-              <path d="M28 30 L50 20 L72 30 L72 54 Q72 72 50 82 Q28 72 28 54 Z" fill="none" stroke="#E6B31E" strokeWidth="7" />
-            </svg>
-            <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "1.1px", color: "#E6B31E", textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {tournamentName}{m.roundNumber ? ` · Round ${m.roundNumber}` : ""}
-            </span>
+
+      {side(m.teamA, m.badgeA, a, loserA)}
+      {side(m.teamB, m.badgeB, b, loserB)}
+
+      {tournamentName && (
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 10 }}>
+          <svg width="11" height="11" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
+            <path d="M28 30 L50 20 L72 30 L72 54 Q72 72 50 82 Q28 72 28 54 Z" fill="none" stroke="#E6B31E" strokeWidth="7" />
+          </svg>
+          <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "1.1px", color: "#E6B31E", textTransform: "uppercase", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {tournamentName}{m.roundNumber ? ` · Round ${m.roundNumber}` : ""}
           </span>
-        )}
-        {tournamentName && tournamentPositions && (
-          <span style={{ display: "block", fontSize: 8, color: "#5a6a5f", marginTop: 3 }}>{tournamentPositions}</span>
-        )}
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onPoster(); }}>🎨 Artwork</button>
         </div>
+      )}
+      {tournamentName && tournamentPositions && (
+        <div style={{ fontSize: 8, color: "#5a6a5f", marginTop: 3 }}>{tournamentPositions}</div>
+      )}
+
+      <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid #1a231b", display: "flex", alignItems: "center", gap: 10, fontSize: 10.5, color: "#7d8f83" }}>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {m.shootout ? `${m.pensA}–${m.pensB} on pens · ` : ""}⏱ {m.duration || 90}'
+          {live && m.streamUrl ? " · 🔴 streaming" : ""}
+        </span>
+        <button className="linkbtn" onClick={(e) => { e.stopPropagation(); onPoster(); }}>Artwork ›</button>
       </div>
     </div>
   );
