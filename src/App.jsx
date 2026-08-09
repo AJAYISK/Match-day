@@ -1094,9 +1094,15 @@ export default function App() {
   };
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
   const [stateSheetOpen, setStateSheetOpen] = useState(false);
+  /* Which status a list is filtered to. Keyed by list so My Matches and the
+     feed's state section don't fight over one selection. */
+  const [statusFilter, setStatusFilter] = useState({});
+  const [dayFilter, setDayFilter] = useState("all");        // upcoming: all | Today | Tomorrow | ...
+  const [scorerState, setScorerState] = useState("All");    // top scorers, independent of the feed state
+  const [hlFilter, setHlFilter] = useState("all");          // highlights: all | captains | teams
+  const [liveFollowFilter, setLiveFollowFilter] = useState(false);
   const [stateSearch, setStateSearch] = useState("");
   const [heroSlide, setHeroSlide] = useState(0);
-  const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
   /* Notification bell. Read state is persisted per item id, so "mark all read"
@@ -2995,6 +3001,51 @@ export default function App() {
   /* A rail with one card in it looks broken, so a section has to clear a
      minimum before it renders at all. */
   const enough = (list, n) => Array.isArray(list) && list.length >= n;
+  /* One row of status filters, shared by every list that needs it. Counts come
+     from the unfiltered list, and a chip is hidden when its count is zero —
+     an empty filter is a dead end, not a choice. */
+  const STATUS_TABS = [
+    ["all", "All", null],
+    ["live", "Live", (m) => m.status === "Live"],
+    ["awaiting", "Awaiting results", (m) => m.status === "AwaitingScore"],
+    ["scheduled", "Scheduled", (m) => m.status === "Scheduled"],
+    ["played", "Played", (m) => m.status === "ResultPublished"],
+  ];
+  const applyStatusFilter = (key, list) => {
+    const tab = STATUS_TABS.find((t) => t[0] === (statusFilter[key] || "all"));
+    return tab && tab[2] ? list.filter(tab[2]) : list;
+  };
+  /* One chip row, reused wherever a list needs narrowing. Options with a zero
+     count are dropped — an empty filter is a dead end, not a choice. */
+  const ChipRow = ({ options, value, onPick, style }) => (
+    <div className="chiprow" style={{ marginBottom: 12, ...(style || {}) }}>
+      {options.filter((o) => o.key === value || o.n === undefined || o.n > 0).map((o) => (
+        <button key={o.key} className={`statechip ${value === o.key ? "on" : ""}`} onClick={() => onPick(o.key)}>
+          {o.dot && <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 999, background: value === o.key ? "#0A0D0A" : "#E8442E", marginRight: 5, verticalAlign: "middle" }} />}
+          {o.label}{o.n !== undefined && <span className="n">{o.n}</span>}
+        </button>
+      ))}
+    </div>
+  );
+
+  const StatusTabs = ({ k, list }) => {
+    const active = statusFilter[k] || "all";
+    return (
+      <div className="chiprow" style={{ marginBottom: 12 }}>
+        {STATUS_TABS.map(([key, label, fn]) => {
+          const n = fn ? list.filter(fn).length : list.length;
+          if (key !== "all" && n === 0) return null;
+          return (
+            <button key={key} className={`statechip ${active === key ? "on" : ""}`}
+              onClick={() => setStatusFilter((prev) => ({ ...prev, [k]: key }))}>
+              {key === "live" && <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: 999, background: active === key ? "#0A0D0A" : "#E8442E", marginRight: 5, verticalAlign: "middle" }} />}
+              {label}<span className="n">{n}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
   /* Shared by the fixtures page and every scheduled list, so "This week" means
      the same thing everywhere. */
   const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -3028,6 +3079,11 @@ export default function App() {
   })();
   /* Feed sections are state-filtered, but a quiet state shouldn't leave a hole.
      Fall back to nationwide and say so in the heading. */
+  /* Top scorers answers "who is scoring in <state>", which is a different
+     question from what the rest of the feed is filtered to — so it carries its
+     own state selection rather than following feedState. */
+  const scorersForState = (st) =>
+    buildLeaderboards(st === "All" ? publishedResults : publishedResults.filter((m) => captainState(m) === st)).topScorers;
   const scorerRail = enough(leaderboards.topScorers, 3)
     ? { list: leaderboards.topScorers, scope: feedState === "All" ? "" : feedState }
     : enough(leaderboardsAll.topScorers, 3)
@@ -3048,8 +3104,11 @@ export default function App() {
     (m.assignedTo === me.id && m.assignmentState !== "declined"));
   /* 🔴 Live tab — "Captains I follow" and state are alternate modes, not combinable filters:
      when follow mode is on, state is ignored entirely, and vice versa. */
+  /* State and follow filters stack instead of cancelling each other — picking a
+     state narrows to that state and nothing widens it back. */
   const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
-    (liveFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
+    (feedState === "All" || captainState(m) === feedState) &&
+    (!liveFollowFilter || follows.includes(m.createdBy)));
   const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
@@ -3649,9 +3708,35 @@ export default function App() {
               const followed = published.filter((m) => follows.includes(m.createdBy) && m.status !== "ResultPublished");
               return followed.length > 0 ? (
                 <>
-                  <SectionTitle color={"#E6B31E"}>🔔 From Captains You Follow</SectionTitle>
-                  <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                  {/* A rail of the captains themselves, not their matches — a shortcut
+                      to each profile that grows sideways as you follow more. */}
+                  <div className="railhead">
+                    <span className="lbl">🔔 Captains you follow</span>
+                    <button className="more" onClick={() => { setCaptainCameFrom(null); setViewCaptain(null); setPage("captains"); }}>See all {follows.length} ›</button>
+                  </div>
+                  <div className={`rail ${follows.length === 1 ? "solo" : ""}`}>
+                    {follows.map((cid) => {
+                      const cap = users.find((u) => u.id === cid);
+                      if (!cap) return null;
+                      const theirs = matches.filter((m) => m.published && m.createdBy === cid);
+                      const isLive = theirs.some((m) => m.status === "Live");
+                      const next = theirs.filter((m) => m.status === "Scheduled")
+                        .sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`))[0];
+                      const sub = isLive ? "live now"
+                        : next ? (dayGroupOf(next) === "Today" ? `plays ${next.time}` : dayGroupOf(next).toLowerCase())
+                        : "no fixtures";
+                      return (
+                        <div key={cid} className="railcard tappable" style={{ width: 100, textAlign: "center", position: "relative" }}
+                          onClick={() => { setCaptainCameFrom("feed"); setViewCaptain(cid); setPage("captains"); }}>
+                          {isLive && <span style={{ position: "absolute", top: 9, right: 11, width: 6, height: 6, borderRadius: 999, background: "#E8442E", boxShadow: "0 0 0 3px rgba(232,68,46,.18)" }} />}
+                          <div style={{ width: 42, height: 42, borderRadius: 999, margin: "0 auto 8px", background: "#1b2a1f", border: "1.5px solid #E6B31E", display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
+                            {(cap.name || "?").trim().slice(0, 2).toUpperCase()}
+                          </div>
+                          <div style={{ fontSize: 11, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cap.name}</div>
+                          <div style={{ fontSize: 9, color: isLive ? "#E8442E" : "#4e5c53", marginTop: 3 }}>{sub}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               ) : null;
@@ -3748,11 +3833,17 @@ export default function App() {
             {scorerRail && (
               <>
                 <div className="railhead">
-                  <span className="lbl">Top scorers{scorerRail.scope ? ` · ${scorerRail.scope}` : ""}</span>
+                  <span className="lbl">Top scorers</span>
                   <button className="more" onClick={openLeaderboards}>Leaderboard ›</button>
                 </div>
-                <div className={`rail ${scorerRail.list.length === 1 ? "solo" : ""}`}>
-                  {scorerRail.list.slice(0, 8).map((sc, i) => {
+                {/* Its own state row. Every state that has published results is a
+                    chip here — there's no sheet, because the list is short. */}
+                <ChipRow value={scorerState} onPick={setScorerState}
+                  options={[{ key: "All", label: "All states" },
+                    ...NG_STATES.filter((st) => publishedResults.some((m) => captainState(m) === st))
+                      .map((st) => ({ key: st, label: st, n: scorersForState(st).length }))]} />
+                <div className="rail">
+                  {(scorerState === "All" ? scorersForState("All") : scorersForState(scorerState)).slice(0, 8).map((sc, i) => {
                     const team = savedTeams.find((t) => normName(t.name) === normName(sc.team));
                     const linked = team && users.find((u) => u.role === "Player" && u.teamId === team.id && normName(u.rosterName) === normName(sc.name));
                     return (
@@ -3896,30 +3987,78 @@ export default function App() {
             {inMyState.length > 0 && feedState === "All" && !feedFollowedOnly && (
               <>
                 <SectionTitle color={"#E6B31E"}>📍 Matches in {me.state}</SectionTitle>
-                <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
-                </div>
-                <SeeMoreBtn k="mystate" list={inMyState} />
+                <StatusTabs k="mystate" list={inMyState} />
+                {(() => {
+                  const shown = applyStatusFilter("mystate", inMyState);
+                  if (shown.length === 0) {
+                    return <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>Nothing here right now.</div>;
+                  }
+                  return (
+                    <>
+                      <div className="feedgrid" style={{ marginBottom: 8 }}>
+                        {capped("mystate", shown).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                      </div>
+                      <SeeMoreBtn k="mystate" list={shown} />
+                    </>
+                  );
+                })()}
               </>
             )}
 
             <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>No upcoming published matches yet.</div>}
-            {groupByDay(upcoming).map(([g, list]) => (
-              <div key={g} style={{ marginBottom: 18 }}>
-                <div className="daygroup">{g}<span>{list.length}</span></div>
-                <div className="feedgrid">
-                  {list.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
-                </div>
-              </div>
-            ))}
+            {upcoming.length > 0 && (() => {
+              const counts = {};
+              upcoming.forEach((m) => { const g = dayGroupOf(m); counts[g] = (counts[g] || 0) + 1; });
+              const shown = dayFilter === "all" ? upcoming : upcoming.filter((m) => dayGroupOf(m) === dayFilter);
+              return (
+                <>
+                  <ChipRow value={dayFilter} onPick={setDayFilter}
+                    options={[{ key: "all", label: "All", n: upcoming.length },
+                      ...DAY_GROUP_ORDER.map((g) => ({ key: g, label: g, n: counts[g] || 0 }))]} />
+                  {shown.length === 0
+                    ? <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>Nothing scheduled for {dayFilter.toLowerCase()}.</div>
+                    : (
+                      <>
+                        <div className="feedgrid" style={{ marginBottom: 8 }}>
+                          {capped("upcoming", shown).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                        </div>
+                        <SeeMoreBtn k="upcoming" list={shown} />
+                      </>
+                    )}
+                </>
+              );
+            })()}
 
-            <SectionTitle color={"#F5F0E1"}>Results</SectionTitle>
-            {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Results appear here once captains submit final scores.</div>}
-            <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
-            </div>
-            <SeeMoreBtn k="results" list={results} />
+            <SectionTitle color={"#F5F0E1"}>Highlights</SectionTitle>
+            {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Highlights appear here once captains submit final scores.</div>}
+            {results.length > 0 && (() => {
+              const myTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
+              const byCaptains = results.filter((m) => follows.includes(m.createdBy));
+              const byTeams = results.filter((m) => {
+                const t = savedTeams.filter((st) => myTeamIds.includes(st.id));
+                return t.some((st) => normName(st.name) === normName(m.teamA.name) || normName(st.name) === normName(m.teamB.name));
+              });
+              const shown = hlFilter === "captains" ? byCaptains : hlFilter === "teams" ? byTeams : results;
+              return (
+                <>
+                  <ChipRow value={hlFilter} onPick={setHlFilter}
+                    options={[{ key: "all", label: "All", n: results.length },
+                      { key: "captains", label: "🔔 Captains I follow", n: byCaptains.length },
+                      { key: "teams", label: "🛡 Teams I follow", n: byTeams.length }]} />
+                  {shown.length === 0
+                    ? <div className="card" style={{ color: "#7d8f83" }}>Nothing here yet.</div>
+                    : (
+                      <>
+                        <div className="feedgrid" style={{ marginBottom: 8 }}>
+                          {capped("results", shown).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                        </div>
+                        <SeeMoreBtn k="results" list={shown} />
+                      </>
+                    )}
+                </>
+              );
+            })()}
 
             {(leaderboards.topScorers.length > 0 || leaderboards.teamForm.length > 0) && (
               <div className="tappable" onClick={() => { openLeaderboards(); }}
@@ -3945,14 +4084,18 @@ export default function App() {
               </div>
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
-            {groupByDay(mine).map(([g, list]) => (
-              <div key={g} style={{ marginBottom: 18 }}>
-                <div className="daygroup">{g}<span>{list.length}</span></div>
+            <StatusTabs k="mine" list={mine} />
+            {(() => {
+              const shown = applyStatusFilter("mine", mine);
+              if (shown.length === 0) {
+                return <div className="card" style={{ color: "#7d8f83" }}>Nothing here right now.</div>;
+              }
+              return (
                 <div className="feedgrid">
-                  {list.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                  {shown.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                 </div>
-              </div>
-            ))}
+              );
+            })()}
           </>
         )}
 
@@ -5301,21 +5444,26 @@ export default function App() {
           <div>
             <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>🔴 Live</div>
             <div style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>
-              Every live match — filter by state, or just the captains you follow.
+              Every live match. Filter by state and by the captains you follow — the two stack.
             </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ minWidth: 190, flex: "1 1 190px" }}>
-                <StatePicker value={feedState} counts={stateCounts} disabled={liveFollowedOnly}
-                  onChange={(st) => { setLiveFollowedOnly(false); setStateFilter(st); }} />
-              </div>
-              {me.role === "Fan" && follows.length > 0 && (
-                <button className={`btn ${liveFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
-                  onClick={() => { setLiveFollowedOnly(!liveFollowedOnly); if (!liveFollowedOnly) setStateFilter("All"); }}>🔔 Captains I follow</button>
+            <div className="chiprow">
+              <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>All states</button>
+              {chipStates.map((st) => (
+                <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
+                  {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
+                </button>
+              ))}
+              <button className="statechip" onClick={openStateSheet}>More ▾</button>
+              {follows.length > 0 && (
+                <button className={`statechip ${liveFollowFilter ? "on" : ""}`} onClick={() => setLiveFollowFilter(!liveFollowFilter)}>🔔 Captains I follow</button>
               )}
             </div>
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
-                {liveFollowedOnly ? "None of the captains you follow are live right now." : feedState !== "All" ? `No live matches in ${feedState} right now.` : "Nothing live right now — check back on match day. ⚽"}
+                {liveFollowFilter && feedState !== "All" ? `No captains you follow are live in ${feedState} right now.`
+                  : liveFollowFilter ? "None of the captains you follow are live right now."
+                  : feedState !== "All" ? `No live matches in ${feedState} right now.`
+                  : "Nothing live right now — check back on match day. ⚽"}
               </div>
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
