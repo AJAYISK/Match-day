@@ -135,7 +135,7 @@ const T = {
    screen has far less for glare to wash out. */
 const PALETTES = {
   night: {
-    bg: "#0A0D0A",           // page background
+    bg: "#060907",           // page background
     surface: "#0E140F",      // cards and panels
     surfaceAlt: "#141c16",   // crest wells, insets
     line: "#243128",         // visible dividers
@@ -379,6 +379,25 @@ const FORMATIONS = {
 const LEGACY_BADGE_MAP = { "⚽": "ball", "🦁": "lion", "🦅": "eagle", "🛡️": "shield", "⭐": "star", "🔥": "fire", "🐆": "leopard", "🦂": "scorpion", "👑": "crown", "🚀": "rocket", "⚡": "bolt", "🐘": "elephant" };
 const resolveBadgeIcon = (b) => (b && BADGES.includes(b)) ? b : (b && LEGACY_BADGE_MAP[b]) || null;
 const BADGE_ICON_SCALE = { ball: 1.1, lion: 1.15, eagle: 1.3, shield: 1.2, star: 1.25, fire: 1.2, leopard: 1.15, scorpion: 1.2, crown: 1.2, rocket: 1.2, bolt: 1.3, elephant: 1.15 };
+/* Feed tile icons. Same construction as the crests below — 24x24, stroked, no
+   fill — because emoji render differently on every phone and these six sit at
+   the top of the feed where that shows most. */
+function TileIcon({ name, color = "#E6B31E", size = 25 }) {
+  const d = {
+    live: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3.2" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></>,
+    fixtures: <><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>,
+    leaders: <><path d="M7 4h10v5a5 5 0 0 1-10 0V4Z" /><path d="M7 6H4.5v1.5A3.5 3.5 0 0 0 8 11M17 6h2.5v1.5A3.5 3.5 0 0 1 16 11" /><path d="M12 14v3M9 20h6" /></>,
+    tournaments: <><path d="M4 5h16M4 5v5a8 8 0 0 0 8 8 8 8 0 0 0 8-8V5" /><path d="M12 18v3M8.5 21h7" /></>,
+    teams: <><path d="M12 3 5 6v5.5c0 4 3 7.4 7 9.5 4-2.1 7-5.5 7-9.5V6l-7-3Z" /><path d="m9.5 12.2 1.8 1.8 3.4-3.6" /></>,
+    captains: <><circle cx="9" cy="8.5" r="3.2" /><path d="M3.5 19c.6-3.1 2.9-4.8 5.5-4.8s4.9 1.7 5.5 4.8" /><path d="M16 6.2a3 3 0 0 1 0 5.6M17.5 14.6c1.7.7 2.8 2.2 3.2 4.4" /></>,
+  }[name];
+  if (!d) return null;
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color}
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+  );
+}
+
 function BadgeIconPaths({ name }) {
   switch (name) {
     case "ball": return (<g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -497,7 +516,7 @@ function BulkResultsModal({ tournament, fixtures, onPublish, onClose }) {
   });
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 93, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 93, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
         <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
           <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
@@ -672,7 +691,7 @@ function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
   const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.concat(id)));
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 93, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 93, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
         <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
           <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
@@ -2594,7 +2613,7 @@ export default function App() {
   const css = `
     ${FONT}
     * { box-sizing: border-box; margin: 0; }
-    .md-root { min-height: 100vh; min-height: 100dvh; background: #0A0D0A; color: #F5F0E1; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
+    .md-root { min-height: 100vh; min-height: 100dvh; background: #060907; color: #F5F0E1; font-family: 'Space Grotesk', sans-serif; -webkit-user-select: none; user-select: none; }
     input, textarea, select { -webkit-user-select: text; user-select: text; }
     .display { font-family: 'Anton', sans-serif; letter-spacing: .02em; text-transform: uppercase; }
     .btn { border: 0; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-weight: 700; border-radius: 10px; padding: 12px 18px; font-size: 15px; transition: transform .08s; }
@@ -2632,7 +2651,7 @@ export default function App() {
     .chiprow { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; padding-bottom: 2px; }
     .chiprow::-webkit-scrollbar { display: none; }
     .statechip { flex: none; font-family: inherit; font-size: 12px; font-weight: 500; padding: 7px 13px; border-radius: 999px; background: #0E140F; border: 1px solid #243128; color: #8FA396; cursor: pointer; white-space: nowrap; }
-    .statechip.on { background: #E6B31E; border-color: #E6B31E; color: #0A0D0A; font-weight: 700; }
+    .statechip.on { background: #E6B31E; border-color: #E6B31E; color: #060907; font-weight: 700; }
     .statechip .n { opacity: .6; font-size: 10.5px; margin-left: 4px; }
     .tilecard { background: #0E140F; border: 1px solid #243128; border-radius: 14px; padding: 6px 4px; margin-bottom: 22px; }
     .tiles { display: grid; grid-template-columns: repeat(3, 1fr); }
@@ -2640,10 +2659,26 @@ export default function App() {
     .tile .ico { font-size: 20px; line-height: 1; }
     .tile .lbl { font-size: 11px; color: #c8d2cb; }
     .tile .live-dot { position: absolute; top: 9px; right: calc(50% - 27px); width: 6px; height: 6px; border-radius: 999px; background: #E8442E; box-shadow: 0 0 0 3px rgba(232,68,46,.18); }
-    .fab { position: fixed; right: 16px; bottom: 22px; z-index: 60; display: flex; align-items: center; gap: 7px; padding: 13px 18px; border: 0; cursor: pointer; border-radius: 999px; background: #E6B31E; color: #0A0D0A; font-family: inherit; font-weight: 700; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
+    .tbl { background: #0E140F; border: 1px solid #243128; border-left: 2px solid #E6B31E; border-radius: 0 13px 13px 0; padding: 13px; margin-bottom: 24px; cursor: pointer; }
+    .ticker { display: flex; align-items: center; gap: 9px; background: #141c16; border: 1px solid #243128; border-radius: 12px; padding: 8px 12px; margin-bottom: 14px; overflow: hidden; }
+    .ticker .tag { flex: none; font-size: 9px; font-weight: 700; letter-spacing: .1em; color: #E8442E; }
+    .tickertrack { display: flex; overflow: hidden; }
+    .tickerset { display: flex; gap: 26px; white-space: nowrap; font-size: 12.5px; color: #cfd8d0; padding-right: 26px; animation: tickerslide 26s linear infinite; }
+    @keyframes tickerslide { from { transform: translateX(0) } to { transform: translateX(-100%) } }
+    @media (prefers-reduced-motion: reduce) { .tickerset { animation: none } }
+    .fab { position: fixed; right: 16px; bottom: 22px; z-index: 60; display: flex; align-items: center; gap: 7px; padding: 13px 18px; border: 0; cursor: pointer; border-radius: 999px; background: #E6B31E; color: #060907; font-family: inherit; font-weight: 700; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
     .feedgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-    .hero { background: radial-gradient(circle at 50% -30%, rgba(245,240,225,.08), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.04) 46px 48px), linear-gradient(160deg, ${T.turfDeep}, ${T.night}); border: 1px solid #243128; border-radius: 20px; padding: 36px; margin-bottom: 24px; }
-    .hero-title { font-size: 38px; line-height: 1.1; color: #F7F4EA; }
+    /* Gold bloom top-right, halfway line and centre circle underneath — the
+       pitch itself as the backdrop rather than a plain gradient. */
+    .hero { background:
+        radial-gradient(120% 90% at 80% 15%, rgba(230,179,30,.26), transparent 60%),
+        linear-gradient(160deg, #12301c 0%, #0a1a10 55%, #060907 100%);
+      border: 1px solid #1d2a20; border-radius: 16px; padding: 20px 18px; margin-bottom: 24px; justify-content: flex-end !important; }
+    .hero::before { content: ""; position: absolute; inset: 0; opacity: .14; pointer-events: none;
+      background-image:
+        linear-gradient(90deg, transparent 49.6%, #dff2e4 49.6%, #dff2e4 50.4%, transparent 50.4%),
+        radial-gradient(circle at 50% 50%, transparent 52px, #dff2e4 52px, #dff2e4 53px, transparent 53px); }
+    .hero-title { font-family: 'Anton', sans-serif; font-size: 28px; line-height: 1.02; color: #F7F4EA; letter-spacing: .01em; }
     .banner { background: #E8442E; color: #ffffff; border-radius: 12px; padding: 14px 18px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     @media (prefers-reduced-motion: reduce) { .pulse { animation: none } }
     .md-root { overflow-x: hidden; }
@@ -2690,6 +2725,7 @@ export default function App() {
     @media (max-width: 640px) {
       .hero { padding: 22px }
       .hero-title { font-size: 27px }
+      .hero { padding: 18px 16px }
       .user-avatar-simple { width: 32px; height: 32px; font-size: 13px }
       .user-pill { gap: 7px }
       .scoreboard { padding: 10px 8px; gap: 6px }
@@ -2960,11 +2996,6 @@ export default function App() {
     : enough(leaderboardsAll.mostSupported, 3)
       ? { list: leaderboardsAll.mostSupported, scope: "nationwide" }
       : null;
-  /* Newest first — the feed strip is "latest", so it can't inherit whatever
-     order the matches query happened to return. */
-  const recentResults = published.filter((m) => m.status === "ResultPublished")
-    .slice()
-    .sort((a, b) => new Date(`${b.date}T${b.time || "00:00"}`) - new Date(`${a.date}T${a.time || "00:00"}`));
   const upcoming = published.filter((m) => m.status === "Scheduled");
   const liveNow = published.filter((m) => m.status === "Live")
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
@@ -3483,16 +3514,20 @@ export default function App() {
         {/* ---------- NEWS FEED (homepage) ---------- */}
         {page === "feed" && (
           <>
-            {/* LIVE TICKER */}
+            {/* LIVE TICKER — one line that scrolls, so it reads as a running feed
+                rather than a stacked list eating the top of the screen. */}
             {events.length > 0 && (
-              <div style={{ background: "#141c16", border: `1px solid #243128`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#E8442E", letterSpacing: ".1em" }}>⚡ LIVE UPDATES</div>
-                {events.slice(0, 3).map((e) => (
-                  <div key={e.id} style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <span style={{ flex: 1 }}>{e.message}</span>
-                    <span style={{ color: "#7d8f83", fontSize: 11, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                  </div>
-                ))}
+              <div className="ticker">
+                <span className="tag">⚡ LIVE</span>
+                <div className="tickertrack">
+                  {[0, 1].map((pass) => (
+                    <div key={pass} className="tickerset" aria-hidden={pass === 1}>
+                      {events.slice(0, 6).map((e) => (
+                        <span key={`${pass}-${e.id}`}>{e.message}</span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -3514,13 +3549,17 @@ export default function App() {
               )}
             </div>
 
-            <div className="hero-carousel" style={{ position: "relative", overflow: "hidden", borderRadius: 16, marginBottom: 20, height: 280 }}>
+            <div className="hero-carousel" style={{ position: "relative", overflow: "hidden", borderRadius: 16, marginBottom: 20, height: 200 }}>
               <div className="hero" style={{ opacity: heroSlide === 0 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 0 ? "auto" : "none", display: "flex", flexDirection: "column", justifyContent: "center", overflow: "hidden", marginBottom: 0 }}>
-                <div className="display hero-title">
-                  Your community.<br /><span style={{ color: "#E6B31E" }}>Your matches. Live.</span>
+                <div style={{ fontSize: 9.5, letterSpacing: ".16em", textTransform: "uppercase", color: "#E6B31E", fontWeight: 700, marginBottom: 7 }}>
+                  {new Date(now).toLocaleDateString(undefined, { weekday: "long" })}
+                  {published.length > 0 ? ` · ${published.length} ${published.length === 1 ? "match" : "matches"}${feedState !== "All" ? ` in ${feedState}` : ""}` : ""}
                 </div>
-                <div style={{ color: "#7d8f83", marginTop: 10, maxWidth: 520 }}>
-                  Follow published matches from local captains, and catch every score update the moment it happens on 🔴 Live. Results go live the moment the captain submits the final score.
+                <div className="display hero-title">
+                  YOUR COMMUNITY.<br /><span style={{ color: "#E6B31E" }}>YOUR MATCHES. LIVE.</span>
+                </div>
+                <div style={{ color: "#9fb0a5", marginTop: 8, fontSize: 12, maxWidth: "78%" }}>
+                  Scores from local pitches, the minute they happen.
                 </div>
               </div>
               <div style={{ opacity: heroSlide === 1 ? 1 : 0, transition: "opacity 1s ease", position: "absolute", inset: 0, pointerEvents: heroSlide === 1 ? "auto" : "none", backgroundImage: "url('/hero-photo.jpeg')", backgroundSize: "cover", backgroundPosition: "center", borderRadius: 16 }}>
@@ -3536,16 +3575,16 @@ export default function App() {
             <div className="tilecard">
               <div className="tiles">
                 {[
-                  { ico: "🔴", lbl: "Live", go: () => setPage("live"), dot: liveNow.length > 0 },
-                  { ico: "📅", lbl: "Fixtures", go: openFixtures },
-                  { ico: "🏅", lbl: "Leaders", go: openLeaderboards },
-                  { ico: "🏆", lbl: "Tournaments", go: () => { setViewTournament(null); setPage("tournaments"); } },
-                  { ico: "🛡", lbl: "Teams", go: () => { if (me.role === "Captain") return setPage("myteams"); setLbTab("supported"); openLeaderboards(); } },
-                  { ico: "👥", lbl: "Captains", go: () => { setCaptainCameFrom(null); setViewCaptain(null); setPage("captains"); } },
+                  { ico: "live", lbl: "Live", go: () => setPage("live"), dot: liveNow.length > 0 },
+                  { ico: "fixtures", lbl: "Fixtures", go: openFixtures },
+                  { ico: "leaders", lbl: "Leaders", go: openLeaderboards },
+                  { ico: "tournaments", lbl: "Tournaments", go: () => { setViewTournament(null); setPage("tournaments"); } },
+                  { ico: "teams", lbl: "Teams", go: () => { if (me.role === "Captain") return setPage("myteams"); setLbTab("supported"); openLeaderboards(); } },
+                  { ico: "captains", lbl: "Captains", go: () => { setCaptainCameFrom(null); setViewCaptain(null); setPage("captains"); } },
                 ].map((t) => (
                   <button key={t.lbl} className="tile" onClick={t.go}>
                     {t.dot && <span className="live-dot" />}
-                    <span className="ico">{t.ico}</span>
+                    <TileIcon name={t.ico} />
                     <span className="lbl">{t.lbl}</span>
                   </button>
                 ))}
@@ -3556,7 +3595,7 @@ export default function App() {
             {adminPosts.length > 0 && adminPosts.slice(0, 3).map((p) => (
               <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#E6B31E", borderWidth: 1.5 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                  <span className="chip" style={{ background: "#E6B31E", color: "#0A0D0A" }}>📢 Area Match</span>
+                  <span className="chip" style={{ background: "#E6B31E", color: "#060907" }}>📢 Area Match</span>
                   <span style={{ fontSize: 11, color: "#7d8f83" }}>{(p.created_at || "").slice(0, 10)}</span>
                 </div>
                 <div style={{ fontSize: 14, lineHeight: 1.5 }}>{p.message}</div>
@@ -3602,7 +3641,12 @@ export default function App() {
                   {liveNow.length > 1 && <button className="more" onClick={() => setPage("live")}>All {liveNow.length} ›</button>}
                 </div>
                 <div className="rail">
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                  {liveNow.map((m) => (
+                    <RailMatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft}
+                      captainName={(users.find((u) => u.id === m.createdBy) || {}).name}
+                      stars={likeCounts[m.id] || 0}
+                      onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} />
+                  ))}
                 </div>
               </>
             )}
@@ -3642,7 +3686,11 @@ export default function App() {
                   <span className="lbl" style={{ color: "#E6B31E" }}>⏳ Awaiting results</span>
                 </div>
                 <div className="rail">
-                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                  {awaitingResults.map((m) => (
+                    <RailMatchCard key={m.id} m={m} minute={minute} breakLeft={breakLeft}
+                      captainName={(users.find((u) => u.id === m.createdBy) || {}).name}
+                      onOpen={() => openMatchDetail(m.id)} />
+                  ))}
                 </div>
               </>
             )}
@@ -3660,10 +3708,10 @@ export default function App() {
                     const team = savedTeams.find((t) => normName(t.name) === normName(sc.team));
                     const linked = team && users.find((u) => u.role === "Player" && u.teamId === team.id && normName(u.rosterName) === normName(sc.name));
                     return (
-                      <div key={`${sc.name}-${sc.team}`} className={`railcard ${linked ? "tappable" : ""}`}
-                        style={{ width: 126, textAlign: "center", cursor: linked ? "pointer" : "default" }}
-                        onClick={linked ? () => openPlayerProfile(linked.id) : undefined}>
-                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 11, color: i < 3 ? "#D6A81D" : "#4e5c53", textAlign: "left" }}>{i + 1}</div>
+                      <div key={`${sc.name}-${sc.team}`} className="railcard tappable"
+                        style={{ width: 126, textAlign: "center" }}
+                        onClick={() => { if (linked) return openPlayerProfile(linked.id); setLbTab("scorers"); openLeaderboards(); }}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 11, color: i < 3 ? "#D6A81D" : "#4e5c53", textAlign: "left" }}>{String(i + 1).padStart(2, "0")}</div>
                         <div style={{ width: 44, height: 44, borderRadius: 999, margin: "2px auto 8px", background: "#1b2a1f", border: "1.5px solid #E6B31E", display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
                           {(sc.name || "?").trim().slice(0, 2).toUpperCase()}
                         </div>
@@ -3701,73 +3749,54 @@ export default function App() {
               </>
             )}
 
-            {/* LATEST RESULTS — a compact strip; the full list is further down. */}
-            {enough(recentResults, 2) && (
-              <>
-                <div className="railhead"><span className="lbl">Latest results</span></div>
-                <div style={{ background: "#0E140F", border: "1px solid #243128", borderRadius: 13, overflow: "hidden", marginBottom: 24 }}>
-                  {recentResults.slice(0, 5).map((m, i) => (
-                    <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", borderTop: i === 0 ? "none" : "1px solid #18211a", cursor: "pointer" }}>
-                      <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".09em", color: "#4e5c53", border: "1px solid #243128", borderRadius: 4, padding: "2px 5px", flexShrink: 0 }}>
-                        {m.shootout ? "PEN" : "FT"}
-                      </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {m.teamA.name} v {m.teamB.name}
-                      </span>
-                      <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, letterSpacing: ".06em", flexShrink: 0 }}>{m.finalA}–{m.finalB}</span>
-                      {m.shootout && <span style={{ fontSize: 9.5, color: "#3FA35B", flexShrink: 0 }}>{m.pensA}–{m.pensB}</span>}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* TOURNAMENTS — live standings straight on the feed. */}
+            {/* TOURNAMENTS — the standings themselves, not a summary of them.
+                A table is the thing people actually want to look at. */}
             {(() => {
               const live = tournaments.filter((t) => t.status === "active" &&
                 (feedState === "All" || !t.state || t.state === feedState));
               if (live.length === 0) return null;
+              const t = live[0];
+              const rows = tournamentTable(t.id).slice(0, 5);
+              if (rows.length === 0) return null;
+              const all = matches.filter((m) => m.tournamentId === t.id);
+              const done = all.filter((m) => m.status === "ResultPublished").length;
+              const host = users.find((u) => u.id === t.hostId);
+              const open = () => { setTnTab("table"); setViewTournament(t.id); setPage("tournaments"); };
               return (
-                <div style={{ marginBottom: 28 }}>
-                  <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>Tournaments{feedState !== "All" ? ` in ${feedState}` : " near you"}</span>
-                    {live.length > 2 && (
-                      <span className="tappable" onClick={() => { setViewTournament(null); setPage("tournaments"); }}
-                        style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
-                        All {live.length} ›
-                      </span>
-                    )}
+                <>
+                  <div className="railhead">
+                    <span className="lbl">🏆 {t.name}</span>
+                    <button className="more" onClick={open}>Full table ›</button>
                   </div>
-                  {live.slice(0, 2).map((t) => {
-                    const rows = tournamentTable(t.id);
-                    const all = matches.filter((m) => m.tournamentId === t.id);
-                    const done = all.filter((m) => m.status === "ResultPublished").length;
-                    const host = users.find((u) => u.id === t.hostId);
-                    return (
-                      <div key={t.id} className="tappable" onClick={() => { setTnTab("table"); setViewTournament(t.id); setPage("tournaments"); }}
-                        style={{ background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #E6B31E", borderRadius: "0 11px 11px 0", padding: 12, marginBottom: 9, cursor: "pointer" }}>
-                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14.5, color: "#F7F4EA", lineHeight: 1.15 }}>{t.name.toUpperCase()}</div>
-                        <div style={{ fontSize: 9.5, color: "#7d8f83", marginTop: 4 }}>
-                          {t.state ? `${t.state} · ` : ""}hosted by {host ? host.name : "a captain"}
-                        </div>
-                        <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
-                          {[[rows.length, "Teams"], [done, "Played"], [Math.max(0, all.length - done), "Left"]].map((f) => (
-                            <div key={f[1]} style={{ flex: 1, textAlign: "center", background: "rgba(0,0,0,.25)", borderRadius: 7, padding: "7px 3px" }}>
-                              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#E6B31E" }}>{f[0]}</div>
-                              <div style={{ fontSize: 7, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".7px", marginTop: 2 }}>{f[1]}</div>
-                            </div>
+                  <div className="tbl tappable" onClick={open}>
+                    <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", letterSpacing: ".02em" }}>
+                      {all.length > 0 ? `MATCHDAY ${done} OF ${all.length}` : "NOT STARTED"}
+                    </div>
+                    <div style={{ fontSize: 9.5, color: "#4e5c53", margin: "3px 0 11px" }}>
+                      {t.state ? `${t.state} · ` : ""}hosted by {host ? host.name : "a captain"}
+                    </div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          {["", "Team", "P", "GD", "Pts"].map((h, k) => (
+                            <th key={h + k} style={{ fontSize: 9, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".09em", fontWeight: 700, textAlign: k === 1 ? "left" : "right", paddingBottom: 7 }}>{h}</th>
                           ))}
-                        </div>
-                        {rows.length > 0 && rows[0].p > 0 && (
-                          <div style={{ fontSize: 9.5, color: "#5a6a5f", marginTop: 9 }}>
-                            Leading: <span style={{ color: "#E6B31E", fontWeight: 600 }}>{rows[0].team.name}</span> · {rows[0].pts} pts
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, k) => (
+                          <tr key={r.team.id}>
+                            <td style={{ width: 20, color: "#4e5c53", fontFamily: "'Anton', sans-serif", fontSize: 12, textAlign: "left", padding: "6px 0", borderTop: "1px solid #18211a" }}>{k + 1}</td>
+                            <td style={{ textAlign: "left", fontWeight: 500, padding: "6px 0", borderTop: "1px solid #18211a", color: k === 0 ? "#E6B31E" : "#F7F4EA", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.team.name}</td>
+                            <td style={{ textAlign: "right", padding: "6px 0", borderTop: "1px solid #18211a", color: "#7d8f83" }}>{r.p}</td>
+                            <td style={{ textAlign: "right", padding: "6px 0", borderTop: "1px solid #18211a", color: "#7d8f83" }}>{r.gd > 0 ? `+${r.gd}` : r.gd}</td>
+                            <td style={{ textAlign: "right", padding: "6px 0", borderTop: "1px solid #18211a", fontFamily: "'Anton', sans-serif", fontSize: 13, color: k === 0 ? "#E6B31E" : "#F7F4EA" }}>{r.pts}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               );
             })()}
             {upcomingFixtures.length > 0 && (
@@ -5622,7 +5651,7 @@ export default function App() {
         const msgs = chatMsgs.filter((c) => c.matchId === chatFor);
         const here = new Set(msgs.map((x) => x.userId)).size;
         return (
-          <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 96, display: "flex", flexDirection: "column" }}>
+          <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 96, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 15px", borderBottom: "1px solid #151c16", flexShrink: 0 }}>
               <button onClick={goBackPage} className="tappable"
                 style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
@@ -5789,7 +5818,7 @@ export default function App() {
         list.forEach((m) => { const g = groupOf(m); (grouped[g] = grouped[g] || []).push(m); });
         const statesWithFixtures = Array.from(new Set(allUpcomingFixtures.map((m) => captainState(m)).filter(Boolean)));
         return (
-          <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
+          <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
               <button onClick={goBackPage} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
               <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Fixtures</div>
@@ -5853,7 +5882,7 @@ export default function App() {
         );
       })()}
       {showLeaderboards && (
-        <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 91, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
             <button onClick={goBackPage} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
             <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Leaderboards</div>
@@ -5973,7 +6002,7 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, zIndex: 92, display: "flex", flexDirection: "column", justifyContent: "flex-end", background: "rgba(0,0,0,.6)" }}
           onClick={goBackPage}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ background: "#0A0D0A", borderTop: "1px solid #243128", borderRadius: "18px 18px 0 0", maxHeight: "78vh", display: "flex", flexDirection: "column" }}>
+            style={{ background: "#060907", borderTop: "1px solid #243128", borderRadius: "18px 18px 0 0", maxHeight: "78vh", display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "15px 17px 11px" }}>
               <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Choose a state</div>
               <button onClick={goBackPage} className="tappable"
@@ -6437,7 +6466,7 @@ function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playe
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 92, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 92, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
         <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
           <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
@@ -6613,7 +6642,7 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 90, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 90, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
         <button onClick={onClose} className="tappable" style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 12px", border: "1px solid #1f2921", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
         <div style={{ flex: 1 }} />
@@ -6815,7 +6844,7 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
 
 /* ---------- PLAYER PROFILE — a real page, reachable from anywhere a name is clickable ---------- */
 /* ---------- PLAYER PROFILE — tabbed, stats-led. A real page, not a popup. ---------- */
-const PP = { gold: "#D6A81D", ink: "#F7F4EA", body: "#EDEAE0", dim: "#7d8f83", faint: "#5a6a5f", ghost: "#4e5c53", panel: "#0E140F", line: "#1b241c", hair: "#151c16", bg: "#0A0D0A" };
+const PP = { gold: "#D6A81D", ink: "#F7F4EA", body: "#EDEAE0", dim: "#7d8f83", faint: "#5a6a5f", ghost: "#4e5c53", panel: "#0E140F", line: "#1b241c", hair: "#151c16", bg: "#060907" };
 
 function PlayerProfilePage({ player, data, level, team, onClose, onOpenCard, onOpenAward, onOpenTeam, onShareProfile }) {
   const [tab, setTab] = useState("overview");
@@ -7094,6 +7123,49 @@ function MiniLogo({ team, badge, size = 42 }) {
         <BadgeIconPaths name={icon} />
       </g>
     </svg>
+  );
+}
+
+/* The card the feed rails use. Deliberately narrower and quieter than MatchCard:
+   a rail shows three at a time, so it carries only what you'd read while
+   scrolling — clock, crests, names, score, who's running it. */
+function RailMatchCard({ m, minute, breakLeft, captainName, stars = 0, onOpen }) {
+  const live = m.status === "Live";
+  const awaiting = m.status === "AwaitingScore";
+  const clock = live
+    ? (m.onBreak ? "HT" : `${minute}'`)
+    : awaiting ? "FT · unconfirmed" : m.time;
+  const phase = live
+    ? (m.onBreak ? "break" : m.secondHalf ? "2nd half" : "1st half")
+    : awaiting ? "awaiting score" : fmtDay(m.date).split(",")[0];
+  const scoreA = live ? (m.liveA ?? 0) : m.status === "ResultPublished" ? m.finalA : "–";
+  const scoreB = live ? (m.liveB ?? 0) : m.status === "ResultPublished" ? m.finalB : "–";
+  const side = (team, badge, score) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+      <MiniLogo team={team} badge={badge} size={26} />
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
+      <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, lineHeight: 1 }}>{score}</span>
+    </div>
+  );
+  return (
+    <div className="railcard tappable" onClick={onOpen}
+      style={{ width: "min(74vw, 245px)", borderLeft: live ? "2px solid #E8442E" : awaiting ? "2px solid #E6B31E" : "1px solid #243128" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 11 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: live ? "#E8442E" : "#D6A81D", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+          {live && <span className="pulse" style={{ width: 5, height: 5, borderRadius: 999, background: "#E8442E", display: "inline-block" }} />}
+          {m.onBreak && breakLeft ? `HT ${breakLeft}` : clock}
+        </span>
+        <span style={{ fontSize: 9.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".08em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{phase}</span>
+      </div>
+      {side(m.teamA, m.badgeA, scoreA)}
+      {side(m.teamB, m.badgeB, scoreB)}
+      <div style={{ marginTop: 11, paddingTop: 9, borderTop: "1px solid #1a231b", fontSize: 10, color: "#7d8f83", display: "flex", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {captainName ? <>Capt. <b style={{ color: "#D6A81D", fontWeight: 500 }}>{captainName}</b></> : m.location}
+        </span>
+        {stars > 0 && <span style={{ flexShrink: 0 }}>☆ {stars}</span>}
+      </div>
+    </div>
   );
 }
 
