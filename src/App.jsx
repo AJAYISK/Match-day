@@ -197,6 +197,10 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 // Strict email format check (RFC-style practical pattern)
 const isValidEmail = (v) => /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(v.trim());
 // Strip characters used in injection/XSS attempts, cap length
+/* Scorer names are typed by captains, so "Emeka A.", "emeka a" and "Emeka  A"
+   all arrive as different strings for the same player. Collapse punctuation and
+   spacing before tallying so one player is one row on the leaderboard. */
+const normName = (v) => (v || "").toLowerCase().replace(/[.,'`\u2019-]/g, "").replace(/\s+/g, " ").trim();
 const sanitizeText = (v, max = 60) => v.replace(/[<>\\{}$`]/g, "").slice(0, max);
 const isStrongPassword = (v) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,64}$/.test(v);
 const MAX_OTP_ATTEMPTS = 5;
@@ -983,6 +987,23 @@ export default function App() {
   const openLiveDetail = (id) => { setLiveDetailFor(id); pushCloseable(() => setLiveDetailFor(null)); };
   const openTeamProfile = (id) => { setViewTeamId(id); pushCloseable(() => setViewTeamId(null)); };
   const openPlayerProfile = (id) => { setViewPlayerId(id); pushCloseable(() => setViewPlayerId(null)); };
+  /* Every full-screen view opens through one of these, so it lands in the
+     history stack and the phone's back gesture closes it instead of leaving
+     the app. Opening a view any other way is a bug. */
+  const openFixtures = () => { setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); };
+  const openLeaderboards = () => { openLeaderboards(); };
+  const openPoster = (id) => { setPosterFor(id); pushCloseable(() => setPosterFor(null)); };
+  const openChat = (id) => { setChatFor(id); pushCloseable(() => setChatFor(null)); };
+  const openPlayerCard = (id) => { setPlayerCardFor(id); pushCloseable(() => setPlayerCardFor(null)); };
+  const openStateSheet = () => { setStateSheetOpen(true); pushCloseable(() => setStateSheetOpen(false)); };
+  /* The nav scrolls now instead of wrapping, so the current page's tab can sit
+     off-screen on a narrow phone. Bring it back into view on every page change.
+     block:"nearest" keeps the page itself from jumping vertically. */
+  const topnavRef = useRef(null);
+  useEffect(() => {
+    const el = topnavRef.current && topnavRef.current.querySelector("button.on");
+    if (el && el.scrollIntoView) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  }, [page]);
   const [liveDetailFor, setLiveDetailFor] = useState(null); // matchId shown in the 🔴 Live pitch view
   const [liveTimeline, setLiveTimeline] = useState([]);     // fresh per-match events for that view
   const [goalAlertIds, setGoalAlertIds] = useState([]);     // matchIds the fan opted into goal alerts for
@@ -1053,6 +1074,8 @@ export default function App() {
     try { localStorage.setItem("am-state", st); } catch (e) { /* private mode */ }
   };
   const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
+  const [stateSheetOpen, setStateSheetOpen] = useState(false);
+  const [stateSearch, setStateSearch] = useState("");
   const [heroSlide, setHeroSlide] = useState(0);
   const [liveFollowedOnly, setLiveFollowedOnly] = useState(false);
   const [seeMore, setSeeMore] = useState({});
@@ -2432,9 +2455,20 @@ export default function App() {
     return out;
   })();
 
-  const leaderboards = useMemo(() => {
-    const scoped = matches.filter((m) => m.status === "ResultPublished" &&
-      (feedState === "All" || captainState(m) === feedState));
+  /* Which states get a chip: the five with the most published matches, with the
+     user's own state pinned first so it's never the one hidden behind More. Any
+     state opened from the sheet joins the row for the rest of the session. */
+  const chipStates = (() => {
+    const busiest = Object.keys(stateCounts).sort((a, b) => stateCounts[b] - stateCounts[a]).slice(0, 5);
+    const out = [];
+    const add = (st) => { if (st && !out.includes(st)) out.push(st); };
+    add(me && me.state);
+    busiest.forEach(add);
+    if (feedState !== "All") add(feedState);
+    return out.slice(0, 6);
+  })();
+
+  const buildLeaderboards = (scoped) => {
     /* Goals per player name, resolved per team so identical names on different teams stay separate */
     const tally = {};
     scoped.forEach((m) => {
@@ -2446,7 +2480,7 @@ export default function App() {
           const nm = (mm ? mm[1] : part).trim();
           if (!nm) return;
           const n = mm ? parseInt(mm[2], 10) : 1;
-          const key = `${nm.toLowerCase()}|${teamName.toLowerCase()}`;
+          const key = `${normName(nm)}|${teamName.trim().toLowerCase()}`;
           if (!tally[key]) tally[key] = { name: nm, team: teamName, goals: 0 };
           tally[key].goals += n;
         });
@@ -2464,7 +2498,18 @@ export default function App() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
     return { topScorers, teamForm, mostSupported };
-  }, [matches, savedTeams, teamSupporters, feedState, matchIndex]);
+  };
+  const publishedResults = matches.filter((m) => m.status === "ResultPublished");
+  const leaderboards = useMemo(
+    () => buildLeaderboards(publishedResults.filter((m) => feedState === "All" || captainState(m) === feedState)),
+    [matches, savedTeams, teamSupporters, feedState, matchIndex, users]
+  );
+  /* Same tables with no state filter — what the feed falls back to when the
+     chosen state is too quiet to fill a rail. */
+  const leaderboardsAll = useMemo(
+    () => buildLeaderboards(publishedResults),
+    [matches, savedTeams, teamSupporters, matchIndex, users]
+  );
 
   /* Milestones — notable things that happened recently, phrased as news */
   const milestones = useMemo(() => {
@@ -2508,13 +2553,30 @@ export default function App() {
     return out.sort((a, b) => b.weight - a.weight).slice(0, 6);
   }, [users, savedTeams, teamSupporters, matchIndex]);
 
+  /* One team name per state. Two clubs called the same thing in Lagos and Kano
+     is fine — two in the same state makes every table and result ambiguous.
+     Checked here against loaded teams; a unique index is still worth adding
+     server-side once saved_teams carries a state column. */
+  const teamNameTaken = (name, exceptId = null) => {
+    const myState = (me && me.state) || "";
+    const key = normName(name);
+    return savedTeams.some((t) => {
+      if (t.id === exceptId) return false;
+      if (normName(t.name) !== key) return false;
+      const ownerState = (users.find((u) => u.id === t.captainId) || {}).state || "";
+      return ownerState === myState;
+    });
+  };
+
   const createSavedTeam = async (data) => {
+    if (teamNameTaken(data.name)) return notify(`A team called ${data.name.trim()} already exists in ${me.state || "your state"}. Pick another name.`);
     const { error } = await supabase.from("saved_teams").insert({ captain_id: me.id, name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions, jersey_pattern: data.jerseyPattern, jersey_trim: data.jerseyTrim });
     if (error) return notify(error.message);
     notify(`✔ ${data.name} saved to your teams.`);
     refreshAll();
   };
   const updateSavedTeam = async (id, data) => {
+    if (teamNameTaken(data.name, id)) return notify(`A team called ${data.name.trim()} already exists in ${me.state || "your state"}. Pick another name.`);
     const { error } = await supabase.from("saved_teams").update({ name: data.name, color: data.color, badge: data.badge, players: data.players, formation: data.formation, positions: data.positions, jersey_pattern: data.jerseyPattern, jersey_trim: data.jerseyTrim }).eq("id", id);
     if (error) return notify(error.message);
     notify("✔ Team updated.");
@@ -2552,10 +2614,33 @@ export default function App() {
     .scoreboard { background: radial-gradient(circle at 50% -20%, rgba(245,240,225,.10), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.05) 46px 48px), ${T.turfDeep}; border: 2px solid ${T.turf}; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .pulse { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
-    .topnav { display: flex; gap: 4px; flex-wrap: wrap; }
-    .topnav button { background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: 14px; padding: 10px 16px; cursor: pointer; border-radius: 8px; }
+    .topnav { display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity; }
+    .topnav::-webkit-scrollbar { display: none; }
+    .topnav button { flex: 1 1 0; min-width: max-content; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(11px, 3.3vw, 14px); padding: 10px clamp(7px, 2.6vw, 16px); cursor: pointer; border-radius: 8px; }
     .topnav button.on { color: #12160f; background: #E6B31E; }
     .topnav button:hover:not(.on) { color: #F5F0E1; }
+    /* ---------- Feed rails: sections scroll sideways instead of stacking, so a
+       phone screen shows several sections at once rather than two cards. ---------- */
+    .rail { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding-bottom: 4px; margin-bottom: 24px; }
+    .rail::-webkit-scrollbar { display: none; }
+    .rail > * { flex: none; scroll-snap-align: start; }
+    .rail > .card, .rail > .railcard { width: min(78vw, 268px); }
+    .railhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .railhead .lbl { font-family: 'Anton', sans-serif; font-size: 14.5px; letter-spacing: .03em; text-transform: uppercase; color: #F7F4EA; }
+    .railhead .more { font-size: 11px; color: #D6A81D; font-weight: 500; cursor: pointer; background: none; border: 0; font-family: inherit; padding: 0; }
+    .railcard { background: #0E140F; border: 1px solid #243128; border-radius: 13px; padding: 12px 13px; cursor: pointer; }
+    .chiprow { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; padding-bottom: 2px; }
+    .chiprow::-webkit-scrollbar { display: none; }
+    .statechip { flex: none; font-family: inherit; font-size: 12px; font-weight: 500; padding: 7px 13px; border-radius: 999px; background: #0E140F; border: 1px solid #243128; color: #8FA396; cursor: pointer; white-space: nowrap; }
+    .statechip.on { background: #E6B31E; border-color: #E6B31E; color: #0A0D0A; font-weight: 700; }
+    .statechip .n { opacity: .6; font-size: 10.5px; margin-left: 4px; }
+    .tilecard { background: #0E140F; border: 1px solid #243128; border-radius: 14px; padding: 6px 4px; margin-bottom: 22px; }
+    .tiles { display: grid; grid-template-columns: repeat(3, 1fr); }
+    .tile { background: none; border: 0; font-family: inherit; color: #F7F4EA; padding: 13px 4px 12px; display: grid; justify-items: center; gap: 7px; cursor: pointer; position: relative; }
+    .tile .ico { font-size: 20px; line-height: 1; }
+    .tile .lbl { font-size: 11px; color: #c8d2cb; }
+    .tile .live-dot { position: absolute; top: 9px; right: calc(50% - 27px); width: 6px; height: 6px; border-radius: 999px; background: #E8442E; box-shadow: 0 0 0 3px rgba(232,68,46,.18); }
+    .fab { position: fixed; right: 16px; bottom: 22px; z-index: 60; display: flex; align-items: center; gap: 7px; padding: 13px 18px; border: 0; cursor: pointer; border-radius: 999px; background: #E6B31E; color: #0A0D0A; font-family: inherit; font-weight: 700; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
     .feedgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
     .hero { background: radial-gradient(circle at 50% -30%, rgba(245,240,225,.08), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.04) 46px 48px), linear-gradient(160deg, ${T.turfDeep}, ${T.night}); border: 1px solid #243128; border-radius: 20px; padding: 36px; margin-bottom: 24px; }
     .hero-title { font-size: 38px; line-height: 1.1; color: #F7F4EA; }
@@ -2605,7 +2690,6 @@ export default function App() {
     @media (max-width: 640px) {
       .hero { padding: 22px }
       .hero-title { font-size: 27px }
-      .topnav button { padding: 8px 10px; font-size: 12px }
       .user-avatar-simple { width: 32px; height: 32px; font-size: 13px }
       .user-pill { gap: 7px }
       .scoreboard { padding: 10px 8px; gap: 6px }
@@ -2625,8 +2709,6 @@ export default function App() {
     }
     /* ---------- Fills the gap between the 640px and 400px breakpoints above ---------- */
     @media (max-width: 480px) {
-      .topnav { gap: 4px; row-gap: 6px }
-      .topnav button { padding: 7px 9px; font-size: 11.5px }
       header > div { padding: 10px 14px !important }
       .brand-title { font-size: 21px !important }
       .auth-title { font-size: 40px !important }
@@ -2837,6 +2919,52 @@ export default function App() {
       </button>
     );
   };
+  /* Both of these were repeated inline on every MatchCard. One definition each
+     means a card can't drift out of step with the table behind it. */
+  const tnName = (m) => (tournaments.find((t) => t.id === m.tournamentId) || {}).name;
+  const tnPositions = (m) => {
+    if (!m.tournamentId) return null;
+    const rows = tournamentTable(m.tournamentId);
+    if (rows.length === 0) return null;
+    const ord = (n) => (n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th");
+    const key = (nm) => (nm || "").trim().toLowerCase();
+    const ia = rows.findIndex((r) => key(r.team.name) === key(m.teamA.name));
+    const ib = rows.findIndex((r) => key(r.team.name) === key(m.teamB.name));
+    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
+  };
+  /* A rail with one card in it looks broken, so a section has to clear a
+     minimum before it renders at all. */
+  const enough = (list, n) => Array.isArray(list) && list.length >= n;
+  /* Local date, not UTC — toISOString() rolls over an hour early in WAT and
+     would empty this section before the evening kick-offs have played. */
+  const todayKey = new Date().toLocaleDateString("en-CA");
+  const tomorrowKey = new Date(now + 86400000).toLocaleDateString("en-CA");
+  /* Today if there's anything today, else tomorrow, else simply what's next —
+     the heading follows the data instead of promising a day that's empty. */
+  const kickoffs = (() => {
+    const today = allUpcomingFixtures.filter((m) => m.date === todayKey);
+    if (today.length > 0) return { label: "Kicking off today", list: today.slice(0, 8) };
+    const tom = allUpcomingFixtures.filter((m) => m.date === tomorrowKey);
+    if (tom.length > 0) return { label: "Tomorrow", list: tom.slice(0, 8) };
+    return { label: "Next up", list: allUpcomingFixtures.slice(0, 8) };
+  })();
+  /* Feed sections are state-filtered, but a quiet state shouldn't leave a hole.
+     Fall back to nationwide and say so in the heading. */
+  const scorerRail = enough(leaderboards.topScorers, 3)
+    ? { list: leaderboards.topScorers, scope: feedState === "All" ? "" : feedState }
+    : enough(leaderboardsAll.topScorers, 3)
+      ? { list: leaderboardsAll.topScorers, scope: "nationwide" }
+      : null;
+  const teamRail = enough(leaderboards.mostSupported, 3)
+    ? { list: leaderboards.mostSupported, scope: feedState === "All" ? "" : feedState }
+    : enough(leaderboardsAll.mostSupported, 3)
+      ? { list: leaderboardsAll.mostSupported, scope: "nationwide" }
+      : null;
+  /* Newest first — the feed strip is "latest", so it can't inherit whatever
+     order the matches query happened to return. */
+  const recentResults = published.filter((m) => m.status === "ResultPublished")
+    .slice()
+    .sort((a, b) => new Date(`${b.date}T${b.time || "00:00"}`) - new Date(`${a.date}T${a.time || "00:00"}`));
   const upcoming = published.filter((m) => m.status === "Scheduled");
   const liveNow = published.filter((m) => m.status === "Live")
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
@@ -2942,15 +3070,7 @@ export default function App() {
                     </div>
                   ))}
                   <div className="feedgrid" style={{ marginTop: 12 }}>
-                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {publishedAll.slice(0, 6).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                   </div>
                 </>
               )}
@@ -3296,12 +3416,12 @@ export default function App() {
               </div>
             </div>
           </div>
-          <nav className="topnav">
-            <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>News Feed</button>
+          <nav className="topnav" ref={topnavRef}>
+            <button className={page === "feed" ? "on" : ""} onClick={() => setPage("feed")}>Feed</button>
             {(me.role === "Fan" || me.role === "Player") && <button className={page === "captains" ? "on" : ""} onClick={() => { setCaptainCameFrom(null); setPage("captains"); setViewCaptain(null); }}>Captains</button>}
             <button className={page === "live" ? "on" : ""} onClick={() => setPage("live")}>Live</button>
-            {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>My Matches</button>}
-            <button onClick={() => notify("Tournaments are coming soon 🏆")}>Tournaments</button>
+            {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>Matches</button>}
+            <button className={page === "tournaments" ? "on" : ""} onClick={() => { setViewTournament(null); setPage("tournaments"); }}>Tournaments</button>
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
           </nav>
         </div>
@@ -3376,15 +3496,21 @@ export default function App() {
               </div>
             )}
 
-            {/* FILTERS */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ minWidth: 190, flex: "1 1 190px" }}>
-                <StatePicker value={feedState} counts={stateCounts} disabled={feedFollowedOnly}
-                  onChange={(st) => { setFeedFollowedOnly(false); setStateFilter(st); }} />
-              </div>
+            {/* STATE CHIPS — the five busiest states plus your own, always one tap
+                away. Everything else lives behind More, which opens the full list. */}
+            <div className="chiprow">
+              <button className={`statechip ${feedState === "All" && !feedFollowedOnly ? "on" : ""}`}
+                onClick={() => { setFeedFollowedOnly(false); setStateFilter("All"); }}>All states</button>
+              {chipStates.map((st) => (
+                <button key={st} className={`statechip ${feedState === st && !feedFollowedOnly ? "on" : ""}`}
+                  onClick={() => { setFeedFollowedOnly(false); setStateFilter(st); }}>
+                  {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
+                </button>
+              ))}
+              <button className="statechip" onClick={openStateSheet}>More ▾</button>
               {me.role === "Fan" && follows.length > 0 && (
-                <button className={`btn ${feedFollowedOnly ? "btn-gold" : "btn-ghost"}`} style={{ padding: "9px 14px", fontSize: 13 }}
-                  onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setStateFilter("All"); }}>🔔 Captains I follow</button>
+                <button className={`statechip ${feedFollowedOnly ? "on" : ""}`}
+                  onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setStateFilter("All"); }}>🔔 Following</button>
               )}
             </div>
 
@@ -3406,6 +3532,26 @@ export default function App() {
               </div>
             </div>
 
+            {/* QUICK TILES — six destinations that already exist, one tap each. */}
+            <div className="tilecard">
+              <div className="tiles">
+                {[
+                  { ico: "🔴", lbl: "Live", go: () => setPage("live"), dot: liveNow.length > 0 },
+                  { ico: "📅", lbl: "Fixtures", go: openFixtures },
+                  { ico: "🏅", lbl: "Leaders", go: openLeaderboards },
+                  { ico: "🏆", lbl: "Tournaments", go: () => { setViewTournament(null); setPage("tournaments"); } },
+                  { ico: "🛡", lbl: "Teams", go: () => { if (me.role === "Captain") return setPage("myteams"); setLbTab("supported"); openLeaderboards(); } },
+                  { ico: "👥", lbl: "Captains", go: () => { setCaptainCameFrom(null); setViewCaptain(null); setPage("captains"); } },
+                ].map((t) => (
+                  <button key={t.lbl} className="tile" onClick={t.go}>
+                    {t.dot && <span className="live-dot" />}
+                    <span className="ico">{t.ico}</span>
+                    <span className="lbl">{t.lbl}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Admin announcements */}
             {adminPosts.length > 0 && adminPosts.slice(0, 3).map((p) => (
               <div key={p.id} className="card" style={{ marginBottom: 12, borderColor: "#E6B31E", borderWidth: 1.5 }}>
@@ -3424,15 +3570,7 @@ export default function App() {
                 <>
                   <SectionTitle color={"#E6B31E"}>🔔 From Captains You Follow</SectionTitle>
                   <div className="feedgrid" style={{ marginBottom: 28 }}>
-                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                    {followed.map((m) => <MatchCard key={"f" + m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                   </div>
                 </>
               ) : null;
@@ -3459,40 +3597,134 @@ export default function App() {
 
             {liveNow.length > 0 && (
               <>
-                <SectionTitle color={"#E8442E"}>● Live Now</SectionTitle>
-                <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {liveNow.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                <div className="railhead">
+                  <span className="lbl" style={{ color: "#E8442E" }}>● Live now</span>
+                  {liveNow.length > 1 && <button className="more" onClick={() => setPage("live")}>All {liveNow.length} ›</button>}
+                </div>
+                <div className="rail">
+                  {liveNow.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
+                </div>
+              </>
+            )}
+
+            {/* KICK-OFFS — today if there are any, otherwise tomorrow, otherwise
+                whatever is next. The heading always matches what's listed. */}
+            {kickoffs.list.length > 0 && (
+              <>
+                <div className="railhead">
+                  <span className="lbl">{kickoffs.label}</span>
+                  <button className="more" onClick={openFixtures}>All fixtures ›</button>
+                </div>
+                <div className="rail">
+                  {kickoffs.list.map((m) => {
+                    const kickoff = new Date(`${m.date}T${m.time}`).getTime();
+                    const hrs = (kickoff - now) / 3600000;
+                    return (
+                      <div key={m.id} className="railcard tappable" style={{ width: 178 }} onClick={() => openMatchDetail(m.id)}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: "#E6B31E", lineHeight: 1 }}>{m.time}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", letterSpacing: ".06em", textTransform: "uppercase", margin: "3px 0 10px" }}>
+                          {hrs < 1 ? "kicking off" : hrs < 24 ? `in ${Math.round(hrs)}h` : new Date(kickoff).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                        </div>
+                        <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                          {m.teamA.name}<span style={{ color: "#4e5c53", fontSize: 10, margin: "0 5px" }}>v</span>{m.teamB.name}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.location}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}
 
             {awaitingResults.length > 0 && (
               <>
-                <SectionTitle color={"#E6B31E"}>⏳ Awaiting Results</SectionTitle>
-                <div className="feedgrid" style={{ marginBottom: 28 }}>
-                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                <div className="railhead">
+                  <span className="lbl" style={{ color: "#E6B31E" }}>⏳ Awaiting results</span>
+                </div>
+                <div className="rail">
+                  {awaitingResults.map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                 </div>
               </>
             )}
 
-            {/* TOURNAMENTS — hidden while the feature is marked coming soon. */}
-            {false && (() => {
+            {/* TOP SCORERS — tappable only where the typed name matches a player
+                on that team's roster; unmatched names stay plain text. */}
+            {scorerRail && (
+              <>
+                <div className="railhead">
+                  <span className="lbl">Top scorers{scorerRail.scope ? ` · ${scorerRail.scope}` : ""}</span>
+                  <button className="more" onClick={openLeaderboards}>Leaderboard ›</button>
+                </div>
+                <div className="rail">
+                  {scorerRail.list.slice(0, 8).map((sc, i) => {
+                    const team = savedTeams.find((t) => normName(t.name) === normName(sc.team));
+                    const linked = team && users.find((u) => u.role === "Player" && u.teamId === team.id && normName(u.rosterName) === normName(sc.name));
+                    return (
+                      <div key={`${sc.name}-${sc.team}`} className={`railcard ${linked ? "tappable" : ""}`}
+                        style={{ width: 126, textAlign: "center", cursor: linked ? "pointer" : "default" }}
+                        onClick={linked ? () => openPlayerProfile(linked.id) : undefined}>
+                        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 11, color: i < 3 ? "#D6A81D" : "#4e5c53", textAlign: "left" }}>{i + 1}</div>
+                        <div style={{ width: 44, height: 44, borderRadius: 999, margin: "2px auto 8px", background: "#1b2a1f", border: "1.5px solid #E6B31E", display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
+                          {(sc.name || "?").trim().slice(0, 2).toUpperCase()}
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.team}</div>
+                        <div style={{ marginTop: 8, fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
+                          {sc.goals}<span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 9, color: "#7d8f83", fontWeight: 500, marginLeft: 3 }}>gls</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* TEAMS — ranked by supporters, so this fills up as fans back teams. */}
+            {teamRail && (
+              <>
+                <div className="railhead">
+                  <span className="lbl">Teams{teamRail.scope ? ` · ${teamRail.scope}` : " near you"}</span>
+                  <button className="more" onClick={openLeaderboards}>All teams ›</button>
+                </div>
+                <div className="rail">
+                  {teamRail.list.slice(0, 8).map((x) => (
+                    <div key={x.team.id} className="railcard tappable" style={{ width: 108, textAlign: "center" }}
+                      onClick={() => openTeamProfile(x.team.id)}>
+                      <div style={{ display: "grid", placeItems: "center", marginBottom: 8 }}>
+                        <MiniLogo team={x.team} badge={x.team.badge} size={40} />
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.25, height: 28, overflow: "hidden" }}>{x.team.name}</div>
+                      <div style={{ fontSize: 9, color: "#4e5c53", marginTop: 4 }}>{x.count} {x.count === 1 ? "fan" : "fans"}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* LATEST RESULTS — a compact strip; the full list is further down. */}
+            {enough(recentResults, 2) && (
+              <>
+                <div className="railhead"><span className="lbl">Latest results</span></div>
+                <div style={{ background: "#0E140F", border: "1px solid #243128", borderRadius: 13, overflow: "hidden", marginBottom: 24 }}>
+                  {recentResults.slice(0, 5).map((m, i) => (
+                    <div key={m.id} className="tappable" onClick={() => openMatchDetail(m.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", borderTop: i === 0 ? "none" : "1px solid #18211a", cursor: "pointer" }}>
+                      <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".09em", color: "#4e5c53", border: "1px solid #243128", borderRadius: 4, padding: "2px 5px", flexShrink: 0 }}>
+                        {m.shootout ? "PEN" : "FT"}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {m.teamA.name} v {m.teamB.name}
+                      </span>
+                      <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, letterSpacing: ".06em", flexShrink: 0 }}>{m.finalA}–{m.finalB}</span>
+                      {m.shootout && <span style={{ fontSize: 9.5, color: "#3FA35B", flexShrink: 0 }}>{m.pensA}–{m.pensB}</span>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* TOURNAMENTS — live standings straight on the feed. */}
+            {(() => {
               const live = tournaments.filter((t) => t.status === "active" &&
                 (feedState === "All" || !t.state || t.state === feedState));
               if (live.length === 0) return null;
@@ -3543,7 +3775,7 @@ export default function App() {
                 <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 11, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span>Coming up{feedState !== "All" ? ` in ${feedState}` : " near you"}</span>
                   {allUpcomingFixtures.length > upcomingFixtures.length && (
-                    <span className="tappable" onClick={() => { setStateFilter(feedState); setShowFixtures(true); pushCloseable(() => setShowFixtures(false)); }}
+                    <span className="tappable" onClick={() => { openFixtures(); }}
                       style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontSize: 10.5, fontWeight: 500, cursor: "pointer" }}>
                       All {allUpcomingFixtures.length} ›
                     </span>
@@ -3588,15 +3820,7 @@ export default function App() {
               <>
                 <SectionTitle color={"#E6B31E"}>📍 Matches in {me.state}</SectionTitle>
                 <div className="feedgrid" style={{ marginBottom: 8 }}>
-                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                  {capped("mystate", inMyState).map((m) => <MatchCard key={"st" + m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                 </div>
                 <SeeMoreBtn k="mystate" list={inMyState} />
               </>
@@ -3605,15 +3829,7 @@ export default function App() {
             <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
             {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>No upcoming published matches yet.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("upcoming", upcoming).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
             </div>
 
             <SeeMoreBtn k="upcoming" list={upcoming} />
@@ -3621,20 +3837,12 @@ export default function App() {
             <SectionTitle color={"#F5F0E1"}>Results</SectionTitle>
             {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results published yet. Results appear here once captains submit final scores.</div>}
             <div className="feedgrid" style={{ marginBottom: 8 }}>
-              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+              {capped("results", results).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
             </div>
             <SeeMoreBtn k="results" list={results} />
 
             {(leaderboards.topScorers.length > 0 || leaderboards.teamForm.length > 0) && (
-              <div className="tappable" onClick={() => { setShowLeaderboards(true); pushCloseable(() => setShowLeaderboards(false)); }}
+              <div className="tappable" onClick={() => { openLeaderboards(); }}
                 style={{ background: "#0E140F", border: `1px solid #243128`, borderRadius: 10, padding: 13, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 20 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 600, color: "#F7F4EA" }}>Leaderboards</div>
@@ -3658,15 +3866,7 @@ export default function App() {
             </div>
             {mine.length === 0 && <div className="card" style={{ color: T.muted }}>You haven't created any matches yet. Create your first one to get started.</div>}
             <div className="feedgrid">
-              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} mineView />)}
+              {capped("mymatches", mine).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} mineView />)}
             </div>
             <SeeMoreBtn k="mymatches" list={mine} />
           </>
@@ -3748,7 +3948,7 @@ export default function App() {
                       else { await navigator.clipboard.writeText(`${txt}\n${window.location.href}`); notify("Profile copied — paste it anywhere 📋"); }
                     } catch (e) { /* dismissed */ }
                   }} style={{ flex: 1, borderRadius: 8, padding: 11, fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: "none", border: "1px solid #1b241c", color: "#B9C7BC", cursor: "pointer" }}>Share profile</button>
-                  {stats.ready && <button onClick={() => setPlayerCardFor(me.id)} style={{ flex: 1, borderRadius: 8, padding: 11, fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: "#D6A81D", color: "#12160f", border: 0, cursor: "pointer" }}>Download card</button>}
+                  {stats.ready && <button onClick={() => openPlayerCard(me.id)} style={{ flex: 1, borderRadius: 8, padding: 11, fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: "#D6A81D", color: "#12160f", border: 0, cursor: "pointer" }}>Download card</button>}
                 </div>
               </div>
 
@@ -4994,28 +5194,12 @@ export default function App() {
                         {theirs.length === 0 && <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>This captain hasn't published any matches yet.</div>}
                         {theirs.filter((x) => x.status !== "ResultPublished").length > 0 && <Lbl>Current &amp; upcoming</Lbl>}
                         <div className="feedgrid" style={{ marginBottom: 20 }}>
-                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-up-" + c.id, theirs.filter((x) => x.status !== "ResultPublished")).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-up-" + c.id} list={theirs.filter((x) => x.status !== "ResultPublished")} />
                         {theirs.filter((x) => x.status === "ResultPublished").length > 0 && <Lbl>Past results</Lbl>}
                         <div className="feedgrid">
-                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => setPosterFor(m.id)} />)}
+                          {capped("captain-past-" + c.id, theirs.filter((x) => x.status === "ResultPublished" && isFresh(x)).sort((a, b) => (a.date < b.date ? 1 : -1))).map((m) => <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />)}
                         </div>
                         <SeeMoreBtn k={"captain-past-" + c.id} list={theirs.filter((x) => x.status === "ResultPublished" && isFresh(x))} />
                       </>
@@ -5052,15 +5236,7 @@ export default function App() {
             )}
             <div style={{ display: "grid", gap: 12, maxWidth: 640 }}>
               {capped("live", liveForUser).map((m) => (
-                <MatchCard key={"lv" + m.id} m={m} tournamentName={(tournaments.find((t) => t.id === m.tournamentId) || {}).name} tournamentPositions={(() => {
-                    if (!m.tournamentId) return null;
-                    const rows = tournamentTable(m.tournamentId);
-                    if (rows.length === 0) return null;
-                    const ord = (n) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : n + "th";
-                    const ia = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamA.name || "").trim().toLowerCase());
-                    const ib = rows.findIndex((r) => (r.team.name || "").trim().toLowerCase() === (m.teamB.name || "").trim().toLowerCase());
-                    return ia >= 0 && ib >= 0 ? `${ord(ia + 1)} vs ${ord(ib + 1)} in the table` : null;
-                  })()} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => setPosterFor(m.id)} />
+                <MatchCard key={"lv" + m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)} minute={minute} breakLeft={breakLeft} onOpen={() => (me.role === "Captain" && m.createdBy === me.id ? openMatchDetail(m.id) : openLiveDetail(m.id))} onPoster={() => openPoster(m.id)} />
               ))}
             </div>
             <SeeMoreBtn k="live" list={liveForUser} />
@@ -5082,6 +5258,12 @@ export default function App() {
 
         {/* ---------- ADMIN ---------- */}
       </main>
+
+      {/* One always-reachable action. Hidden while a full-screen view is open so
+          it can't sit on top of a poster or a match page. */}
+      {me.role === "Captain" && (page === "feed" || page === "mymatches") && !openMatch && !liveDetailFor && !showFixtures && !showLeaderboards && !stateSheetOpen && !posterFor && !chatFor && (
+        <button className="fab" onClick={() => setPage("create")}>+ Create match</button>
+      )}
 
       {/* ---------- MATCH DETAIL ---------- */}
       {openMatch && (
@@ -5119,7 +5301,7 @@ export default function App() {
           onSendChat={sendChat}
           onReportChat={reportChat}
           onDeleteChat={deleteChat}
-          onOpenChat={(id) => setChatFor(id)}
+          onOpenChat={(id) => openChat(id)}
           notify={notify}
           minute={minute}
           breakLeft={breakLeft}
@@ -5201,7 +5383,7 @@ export default function App() {
           onPostpone={postponeMatch}
           onPublish={(m) => { patchMatch(m.id, { published: !m.published }); notify(m.published ? "Match unpublished — now private" : "Published to News Feed 📣"); }}
           onSubmitScore={submitFinalScore}
-          onPoster={() => setPosterFor(openMatch)}
+          onPoster={() => openPoster(openMatch)}
         />
       )}
 
@@ -5317,7 +5499,7 @@ export default function App() {
           if (ib >= 0) posB = `${ord(ib + 1)} · ${top[ib].pts} PTS`;
         }
         return <PosterModal m={pm} tournament={tn} posA={posA} posB={posB} tableTop={top}
-          onClose={() => setPosterFor(null)} notify={notify} />;
+          onClose={goBackPage} notify={notify} />;
       })()}
       {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={() => setStatsPosterFor(null)} notify={notify} />}
       {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={() => setLineupPosterFor(null)} notify={notify} />}
@@ -5442,7 +5624,7 @@ export default function App() {
         return (
           <div style={{ position: "fixed", inset: 0, background: "#0A0D0A", zIndex: 96, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 15px", borderBottom: "1px solid #151c16", flexShrink: 0 }}>
-              <button onClick={() => setChatFor(null)} className="tappable"
+              <button onClick={goBackPage} className="tappable"
                 style={{ display: "flex", alignItems: "center", gap: 5, height: 29, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>
                 <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
               </button>
@@ -5641,7 +5823,7 @@ export default function App() {
                     const d = new Date(kickoff);
                     const soon = hoursOut < 24;
                     return (
-                      <div key={m.id} className="tappable" onClick={() => { setShowFixtures(false); openMatchDetail(m.id); }}
+                      <div key={m.id} className="tappable" onClick={() => { goBackPage(); openMatchDetail(m.id); }}
                         style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                         <div style={{ width: 42, textAlign: "center", flexShrink: 0 }}>
                           <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 14, lineHeight: 1, color: soon ? "#D6A81D" : "#F7F4EA" }}>
@@ -5711,7 +5893,7 @@ export default function App() {
               leaderboards.teamForm.length === 0
                 ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams have played enough matches yet (3 minimum).</div>
                 : leaderboards.teamForm.map((x, i) => (
-                    <div key={x.team.id} onClick={() => { setShowLeaderboards(false); openTeamProfile(x.team.id); }}
+                    <div key={x.team.id} onClick={() => { goBackPage(); openTeamProfile(x.team.id); }}
                       style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                       <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
                       <MiniLogo team={x.team} badge={x.team.badge} size={26} />
@@ -5733,7 +5915,7 @@ export default function App() {
                 : leaderboards.mostSupported.map((x, i) => {
                     const cap = users.find((u) => u.id === x.team.captainId);
                     return (
-                      <div key={x.team.id} onClick={() => { setShowLeaderboards(false); openTeamProfile(x.team.id); }}
+                      <div key={x.team.id} onClick={() => { goBackPage(); openTeamProfile(x.team.id); }}
                         style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                         <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
                         <MiniLogo team={x.team} badge={x.team.badge} size={26} />
@@ -5763,7 +5945,7 @@ export default function App() {
             level={playerLevel(p)}
             team={pd.team}
             onClose={goBackPage}
-            onOpenCard={(id) => setPlayerCardFor(id)}
+            onOpenCard={(id) => openPlayerCard(id)}
             onOpenAward={(id) => setAwardCardFor(id)}
             onOpenTeam={(id) => openTeamProfile(id)}
             onShareProfile={async () => {
@@ -5778,7 +5960,7 @@ export default function App() {
       })()}
       {playerCardFor && (() => {
         const p = users.find((u) => u.id === playerCardFor) || (me.id === playerCardFor ? me : null);
-        return p ? <PlayerCardModal player={p} stats={playerStats(p)} awards={playerAwards.filter((a) => a.playerId === p.id)} level={playerLevel(p)} onClose={() => setPlayerCardFor(null)} notify={notify} /> : null;
+        return p ? <PlayerCardModal player={p} stats={playerStats(p)} awards={playerAwards.filter((a) => a.playerId === p.id)} level={playerLevel(p)} onClose={goBackPage} notify={notify} /> : null;
       })()}
       {awardCardFor && (() => {
         const award = playerAwards.find((a) => a.id === awardCardFor);
@@ -5787,10 +5969,71 @@ export default function App() {
         const team = savedTeams.find((t) => t.id === award.teamId);
         return <AwardCardModal award={award} player={p} team={team} onClose={() => setAwardCardFor(null)} notify={notify} />;
       })()}
+      {stateSheetOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 92, display: "flex", flexDirection: "column", justifyContent: "flex-end", background: "rgba(0,0,0,.6)" }}
+          onClick={goBackPage}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background: "#0A0D0A", borderTop: "1px solid #243128", borderRadius: "18px 18px 0 0", maxHeight: "78vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "15px 17px 11px" }}>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Choose a state</div>
+              <button onClick={goBackPage} className="tappable"
+                style={{ height: 28, padding: "0 12px", border: "1px solid #1b241c", borderRadius: 8, background: "none", color: "#B9C7BC", fontSize: 12, fontFamily: "inherit", cursor: "pointer" }}>Close</button>
+            </div>
+            <div style={{ padding: "0 17px 10px" }}>
+              <input className="input" placeholder="Search states…" value={stateSearch}
+                onChange={(e) => setStateSearch(sanitizeText(e.target.value, 24))} />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 17px 26px" }}>
+              {(() => {
+                const q = stateSearch.trim().toLowerCase();
+                const match = (st) => !q || st.toLowerCase().includes(q);
+                const withMatches = NG_STATES.filter((st) => stateCounts[st] > 0 && match(st))
+                  .sort((a, b) => stateCounts[b] - stateCounts[a]);
+                const quiet = NG_STATES.filter((st) => !stateCounts[st] && match(st));
+                const row = (st, count) => (
+                  <div key={st} className="tappable"
+                    onClick={() => { setFeedFollowedOnly(false); setStateFilter(st); setStateSearch(""); goBackPage(); }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                    <span style={{ flex: 1, fontSize: 13, color: feedState === st ? "#E6B31E" : "#F7F4EA", fontWeight: feedState === st ? 600 : 400 }}>
+                      {st}{me && me.state === st ? <span style={{ fontSize: 9.5, color: "#4e5c53", marginLeft: 7 }}>your state</span> : null}
+                    </span>
+                    {count > 0 && <span style={{ fontSize: 11, color: "#7d8f83" }}>{count}</span>}
+                  </div>
+                );
+                return (
+                  <>
+                    {!q && (
+                      <div className="tappable" onClick={() => { setFeedFollowedOnly(false); setStateFilter("All"); goBackPage(); }}
+                        style={{ display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                        <span style={{ flex: 1, fontSize: 13, color: feedState === "All" ? "#E6B31E" : "#F7F4EA", fontWeight: feedState === "All" ? 600 : 400 }}>All states</span>
+                      </div>
+                    )}
+                    {withMatches.map((st) => row(st, stateCounts[st]))}
+                    {quiet.length > 0 && (
+                      <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, margin: "18px 0 4px" }}>No matches yet</div>
+                    )}
+                    {quiet.map((st) => (
+                      <div key={st} className="tappable"
+                        onClick={() => { setFeedFollowedOnly(false); setStateFilter(st); setStateSearch(""); goBackPage(); }}
+                        style={{ padding: "11px 0", borderBottom: "1px solid #121a14", fontSize: 12.5, color: "#4e5c53", cursor: "pointer" }}>{st}</div>
+                    ))}
+                    {withMatches.length === 0 && quiet.length === 0 && (
+                      <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "20px 0", textAlign: "center" }}>No state matches “{stateSearch}”.</div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
       {teamFormOpen && (
         <TeamFormModal
           existing={teamFormOpen === "new" ? null : savedTeams.find((t) => t.id === teamFormOpen)}
           onSave={async (data) => {
+            if (teamNameTaken(data.name, teamFormOpen === "new" ? null : teamFormOpen)) {
+              return notify(`A team called ${data.name.trim()} already exists in ${me.state || "your state"}. Pick another name.`);
+            }
             if (teamFormOpen === "new") await createSavedTeam(data);
             else await updateSavedTeam(teamFormOpen, data);
             setTeamFormOpen(null);
@@ -5839,12 +6082,12 @@ export default function App() {
           onSendChat={sendChat}
           onReportChat={reportChat}
           onDeleteChat={deleteChat}
-          onOpenChat={(id) => setChatFor(id)}
+          onOpenChat={(id) => openChat(id)}
           minute={minute}
           timeline={liveTimeline}
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
-          onShare={() => { goBackPage(); setPosterFor(liveDetailMatch.id); }}
+          onShare={() => { goBackPage(); openPoster(liveDetailMatch.id); }}
           onShareLineup={() => { goBackPage(); setLineupPosterFor(liveDetailMatch.id); }}
           allMatches={matches}
           onShareStats={() => { goBackPage(); setStatsPosterFor(liveDetailMatch.id); }}
