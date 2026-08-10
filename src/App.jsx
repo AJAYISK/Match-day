@@ -2685,7 +2685,11 @@ export default function App() {
       border: 1.5px solid rgba(230,179,30,.55); border-radius: 999px; padding: 9px 18px; cursor: pointer;
       white-space: nowrap; }
     .goldpill:active { background: rgba(230,179,30,.18); }
-    .goldpill.sm { font-size: 11px; padding: 7px 14px; border-width: 1px; }
+    /* 44px is the smallest reliable touch target on a phone; the small variant
+       was 29px tall, which is why some back buttons felt unresponsive. */
+    .goldpill.sm { font-size: 11.5px; padding: 11px 16px; border-width: 1px; }
+    .goldpill, .goldpill.sm { min-height: 44px; position: relative; z-index: 1; touch-action: manipulation; }
+    .linkbtn, .railhead .more, .statechip { min-height: 38px; touch-action: manipulation; }
     .railhead .more { font-size: 11px; font-weight: 700; color: #E6B31E; background: rgba(230,179,30,.05);
       border: 1px solid rgba(230,179,30,.55); border-radius: 999px; padding: 7px 14px; cursor: pointer;
       font-family: inherit; white-space: nowrap; }
@@ -3086,26 +3090,39 @@ export default function App() {
     </div>
   );
 
-  /* The feed's state row, reusable. Every page that filters by state uses this
-     one so the chips, counts and More sheet behave identically everywhere. */
-  const StateChips = ({ extra = null }) => (
-    <div className="chiprow">
-      <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>All states</button>
-      {chipStates.map((st) => (
-        <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
-          {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
+  /* The state row, reusable. `counts` is whatever the page is listing — teams on
+     Teams, captains on Captains — because a chip's number has to count the thing
+     the chip filters. The chips are drawn from those same counts, so a state
+     with teams but no matches still gets a chip. */
+  const StateChips = ({ extra = null, counts = null, total = null }) => {
+    const n = counts || ((st) => stateCounts[st] || 0);
+    const base = counts
+      ? NG_STATES.filter((st) => n(st) > 0).sort((a, b) => n(b) - n(a)).slice(0, 5)
+      : chipStates;
+    const shown = base.includes(feedState) || feedState === "All" ? base : [feedState, ...base].slice(0, 6);
+    return (
+      <div className="chiprow">
+        <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>
+          All states{total !== null ? <span className="n">{total}</span> : null}
         </button>
-      ))}
-      <button className="statechip" onClick={() => openStateSheet("feed")}>More ▾</button>
-      {extra}
-    </div>
-  );
+        {shown.map((st) => (
+          <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
+            {st}{n(st) ? <span className="n">{n(st)}</span> : null}
+          </button>
+        ))}
+        <button className="statechip" onClick={() => openStateSheet("feed")}>More ▾</button>
+        {extra}
+      </div>
+    );
+  };
 
   /* The follow row every destination page carries. State is inherited from the
      feed, so this only ever asks "whose matches". */
   const FollowTabs = ({ k, list, defaultKind = "all", combined = false }) => {
     const active = pageLens[k] || defaultKind;
     const allLabel = feedState === "All" ? "All states" : `All in ${feedState}`;
+    /* Counts come off the state-scoped list this row was handed, so each number
+       is exactly what you get when you tap it. */
     const opts = combined
       ? [["all", allLabel, list.length],
          ["following", "🔔 Captains & teams I follow", list.filter((m) => followedBy(m, "following")).length]]
@@ -3227,11 +3244,22 @@ export default function App() {
     : enough(leaderboardsAll.topScorers, 3)
       ? { list: leaderboardsAll.topScorers, scope: "nationwide" }
       : null;
-  const teamRail = enough(leaderboards.mostSupported, 3)
-    ? { list: leaderboards.mostSupported, scope: feedState === "All" ? "" : feedState }
-    : enough(leaderboardsAll.mostSupported, 3)
-      ? { list: leaderboardsAll.mostSupported, scope: "nationwide" }
-      : null;
+  /* A team belongs where its own captain is, not where the match was organised —
+     the same correction the Leaderboard got. Read straight off saved_teams so an
+     away fixture can't move a team into another state's rail. */
+  const teamsInState = (st) => {
+    const stOf = (t) => ((users.find((u) => u.id === t.captainId) || {}).state) || "";
+    return savedTeams
+      .filter((t) => st === "All" || stOf(t) === st)
+      .map((t) => ({ team: t, count: teamSupporters.filter((x) => x.teamId === t.id).length }))
+      .sort((a, b) => b.count - a.count);
+  };
+  const teamRail = (() => {
+    const here = teamsInState(feedState);
+    if (enough(here, 1)) return { list: here, scope: feedState === "All" ? "" : feedState };
+    const all = teamsInState("All");
+    return enough(all, 1) ? { list: all, scope: "nationwide" } : null;
+  })();
   /* published is already state-scoped, so Upcoming follows whichever state the
      feed is on without a filter of its own. */
   const upcoming = publishedAll.filter((m) => m.status === "Scheduled" && inScope(m));
@@ -5294,6 +5322,9 @@ export default function App() {
                 const base = feedState === "All"
                   ? [["state", "All states", everywhere.length]]
                   : [["state", feedState, inMyState.length], ["allstates", "All states", everywhere.length]];
+                /* Follow counts are nationwide on purpose — following a captain in
+                   Ogun should still surface their match while you're browsing
+                   Lagos, and the number has to match what tapping it shows. */
                 const opts = [...base,
                   ["captains", "🔔 Captains I follow", everywhere.filter((m) => followedBy(m, "captains")).length],
                   ["teams", "🛡 Teams I follow", everywhere.filter((m) => followedBy(m, "teams")).length]];
@@ -5354,7 +5385,10 @@ export default function App() {
             </button>
             <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Teams</div>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Every team on Area Match. Follow the ones you want to keep up with.</div>
-            <StateChips />
+            {(() => {
+              const stOf = (t) => ((users.find((u) => u.id === t.captainId) || {}).state) || "";
+              return <StateChips counts={(st) => savedTeams.filter((t) => stOf(t) === st).length} total={savedTeams.length} />;
+            })()}
             <input className="input" placeholder="🔍 Search a team or captain…" value={teamSearch}
               onChange={(e) => setTeamSearch(sanitizeText(e.target.value, 40))} style={{ marginBottom: 14 }} />
             {(() => {
@@ -5433,9 +5467,14 @@ export default function App() {
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 {/* Same controls as Teams: state chips, a search box, and the one
                     filter that isn't about place. */}
-                <StateChips extra={follows.length > 0 ? (
-                  <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>🔔 Captains I follow</button>
-                ) : null} />
+                <StateChips
+                  counts={(st) => users.filter((u) => u.role === "Captain" && u.state === st).length}
+                  total={users.filter((u) => u.role === "Captain").length}
+                  extra={follows.length > 0 ? (
+                    <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>
+                      🔔 Captains I follow<span className="n">{follows.length}</span>
+                    </button>
+                  ) : null} />
                 <input className="input" placeholder="🔍 Search a captain…" value={captainSearch}
                   onChange={(e) => setCaptainSearch(sanitizeText(e.target.value, 40))} style={{ marginBottom: 14 }} />
                 {(() => {
@@ -6321,33 +6360,40 @@ export default function App() {
         );
       })()}
       {showFixtures && (() => {
-        const list = allUpcomingFixtures.filter((m) => feedState === "All" || captainState(m) === feedState);
+        /* Same two axes as every other list page: where, then whose. */
+        const inState = allUpcomingFixtures.filter((m) => feedState === "All" || captainState(m) === feedState);
+        const list = applyLens("fixtures", inState);
         const groups = groupByDay(list);
         const statesWithFixtures = Array.from(new Set(allUpcomingFixtures.map((m) => captainState(m)).filter(Boolean)));
+        const fixtureCount = (st) => allUpcomingFixtures.filter((m) => captainState(m) === st).length;
         return (
           <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
               <button onClick={goBackPage} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
               <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Fixtures</div>
             </div>
-            {statesWithFixtures.length > 1 && (
-              <div style={{ padding: "0 17px 12px", display: "flex", gap: 6, overflowX: "auto", flexShrink: 0 }}>
-                {["All"].concat(statesWithFixtures).map((st) => (
-                  <button key={st} onClick={() => setStateFilter(st)}
-                    style={{ flexShrink: 0, fontSize: 10.5, padding: "5px 12px", borderRadius: 99, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap",
-                      background: feedState === st ? "#16211a" : "none",
-                      border: "1px solid " + (feedState === st ? "#2a3d31" : "#1b241c"),
-                      color: feedState === st ? "#EDEAE0" : "#5a6a5f", fontWeight: feedState === st ? 600 : 500 }}>
-                    {st === "All" ? "All states" : st}
+            <div style={{ padding: "0 17px 4px", flexShrink: 0 }}>
+              {statesWithFixtures.length > 1 && (
+                <div className="chiprow">
+                  <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>
+                    All states<span className="n">{allUpcomingFixtures.length}</span>
                   </button>
-                ))}
-              </div>
-            )}
+                  {statesWithFixtures.sort((a, b) => fixtureCount(b) - fixtureCount(a)).map((st) => (
+                    <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
+                      {st}<span className="n">{fixtureCount(st)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <FollowTabs k="fixtures" list={inState} />
+            </div>
             <div style={{ height: 1, background: "#151c16", flexShrink: 0 }} />
             <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "6px 17px 24px" }}>
               {list.length === 0 && (
                 <div style={{ fontSize: 12.5, color: "#7d8f83", textAlign: "center", padding: "30px 0" }}>
-                  No scheduled fixtures{feedState !== "All" ? " in " + feedState : ""} right now.
+                  {lensFor("fixtures") === "captains" ? "None of the captains you follow have fixtures here."
+                    : lensFor("fixtures") === "teams" ? "None of the teams you follow have fixtures here."
+                    : `No scheduled fixtures${feedState !== "All" ? " in " + feedState : ""} right now.`}
                 </div>
               )}
               {groups.map(([g, glist]) => (
@@ -7757,9 +7803,16 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, tournamentName, tou
   );
 
   return (
-    <div className="card matchcard tappable" onClick={onOpen} style={{ borderLeft: `2px solid ${edge}` }}>
+    <div className="card matchcard tappable" onClick={onOpen}
+      style={{ borderLeft: `${live || awaiting ? 4 : 2}px solid ${edge}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 11 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: statusColor, display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+        {/* The status is the first thing to read on a card, so it gets a filled
+            badge rather than coloured text that disappears against the panel. */}
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: statusColor, display: "flex", alignItems: "center", gap: 5,
+          whiteSpace: "nowrap", background: `${statusColor}1c`, border: `1px solid ${statusColor}59`,
+          borderRadius: 999, padding: "4px 10px", letterSpacing: ".02em",
+        }}>
           {live && !ht && !paused && <span className="pulse" style={{ width: 5, height: 5, borderRadius: 999, background: "#E8442E", display: "inline-block" }} />}
           {status}
         </span>
