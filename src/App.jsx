@@ -2479,15 +2479,14 @@ export default function App() {
     refreshAll();
   };
 
-  const stateCounts = (() => {
+  /* A chip's number has to count the thing the chip filters. One global total
+     put "Lagos 21" next to a row showing a single live match. */
+  const countsBy = (list) => {
     const out = {};
-    matches.forEach((m) => {
-      if (!m.published) return;
-      const st = captainState(m);
-      if (st) out[st] = (out[st] || 0) + 1;
-    });
+    list.forEach((m) => { const st = captainState(m); if (st) out[st] = (out[st] || 0) + 1; });
     return out;
-  })();
+  };
+  const stateCounts = countsBy(matches.filter((m) => m.published));
 
   /* Which states get a chip: the five with the most published matches, with the
      user's own state pinned first so it's never the one hidden behind More. Any
@@ -3867,15 +3866,23 @@ export default function App() {
                   </span>
                   {liveNow.length > 0 && <button className="more" onClick={() => { setPageLens((x) => ({ ...x, live: "all" })); setPage("live"); }}>All {liveNow.length} ›</button>}
                 </div>
-                <div className="chiprow">
-                  <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>All states</button>
-                  {chipStates.map((st) => (
-                    <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
-                      {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
-                    </button>
-                  ))}
-                  <button className="statechip" onClick={() => openStateSheet("feed")}>More ▾</button>
-                </div>
+                {(() => {
+                  const liveCounts = countsBy(publishedAll.filter((m) => m.status === "Live"));
+                  const total = publishedAll.filter((m) => m.status === "Live").length;
+                  return (
+                    <div className="chiprow">
+                      <button className={`statechip ${feedState === "All" ? "on" : ""}`} onClick={() => setStateFilter("All")}>
+                        All states{total ? <span className="n">{total}</span> : null}
+                      </button>
+                      {chipStates.map((st) => (
+                        <button key={st} className={`statechip ${feedState === st ? "on" : ""}`} onClick={() => setStateFilter(st)}>
+                          {st}{liveCounts[st] ? <span className="n">{liveCounts[st]}</span> : null}
+                        </button>
+                      ))}
+                      <button className="statechip" onClick={() => openStateSheet("feed")}>More ▾</button>
+                    </div>
+                  );
+                })()}
                 {liveNow.length === 0 && (
                   <div className="card" style={{ color: "#7d8f83", marginBottom: 24 }}>
                     Nothing live{feedState !== "All" ? ` in ${feedState}` : ""} right now.
@@ -3956,12 +3963,17 @@ export default function App() {
                 {/* Same chip row as Live now, but driving its own state — "who is
                     scoring in Ogun" is a different question from what the feed shows. */}
                 <div className="chiprow">
-                  <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>All states</button>
-                  {chipStates.map((st) => (
-                    <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
-                      {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
-                    </button>
-                  ))}
+                  <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>
+                    All states<span className="n">{scorersForState("All").length}</span>
+                  </button>
+                  {chipStates.map((st) => {
+                    const n = scorersForState(st).length;
+                    return (
+                      <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
+                        {st}{n ? <span className="n">{n}</span> : null}
+                      </button>
+                    );
+                  })}
                   <button className="statechip" onClick={() => openStateSheet("scorers")}>More ▾</button>
                 </div>
                 <div className="rail">
@@ -4083,7 +4095,7 @@ export default function App() {
                     <span className="lbl">📍 Matches in {scopeStateLabel}</span>
                     <span className="seccount">{inMyState.length} match{inMyState.length === 1 ? "" : "es"}</span>
                   </span>
-                  <button className="more" onClick={() => { setPageLens((x) => ({ ...x, mystate: "all" })); setPage("statematches"); }}>All {inMyState.length} ›</button>
+                  <button className="more" onClick={() => { setPageLens((x) => ({ ...x, mystate: "state" })); setPage("statematches"); }}>All {inMyState.length} ›</button>
                 </div>
                 {(() => {
                   const shown = applyStatusFilter("mystate", inMyState);
@@ -5209,11 +5221,17 @@ export default function App() {
             is the only control here. */}
         {(page === "statematches" || page === "upcoming" || page === "highlights") && (() => {
           const cfg = {
-            statematches: { key: "mystate", title: `Matches in ${scopeStateLabel}`, list: inMyState, fallback: "all", days: false },
+            statematches: { key: "mystate", title: `Matches in ${scopeStateLabel}`, list: inMyState, fallback: "all", days: false, states: true },
             upcoming: { key: "upcoming", title: "Upcoming matches", list: upcoming, fallback: "captains", days: true },
             highlights: { key: "highlights", title: "Highlights", list: results, fallback: "captains", days: false },
           }[page];
-          const shown = applyLens(cfg.key, cfg.list, cfg.fallback);
+          const everywhere = publishedAll.filter((m) => m.status !== "ResultPublished");
+          const mode = pageLens.mystate || "state";
+          const shown = cfg.states
+            ? (mode === "allstates" ? everywhere
+              : mode === "following" ? everywhere.filter((m) => followedBy(m, "following"))
+              : inMyState)
+            : applyLens(cfg.key, cfg.list, cfg.fallback);
           const counts = {};
           shown.forEach((m) => { const g = dayGroupOf(m); counts[g] = (counts[g] || 0) + 1; });
           const day = statusFilter[`${cfg.key}-day`] || "all";
@@ -5225,9 +5243,31 @@ export default function App() {
                 <div className="display" style={{ fontSize: 20, flex: 1, minWidth: 0 }}>{cfg.title}</div>
               </div>
               <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 12 }}>
-                Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{feedState === "All" ? "all states" : feedState}</b> — set on the feed
+                {cfg.states && mode !== "state"
+                  ? <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{mode === "allstates" ? "all states" : "who you follow"}</b></>
+                  : <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{feedState === "All" ? "all states" : feedState}</b> — set on the feed</>}
               </div>
-              <FollowTabs k={cfg.key} list={cfg.list} defaultKind={cfg.fallback} />
+              {/* Matches opens on the state you picked, but "All states" and the
+                  follow filter are one tap away rather than hidden. */}
+              {cfg.states ? (() => {
+                const everywhere = publishedAll.filter((m) => m.status !== "ResultPublished");
+                const mode = pageLens.mystate || "state";
+                const opts = [
+                  ["state", feedState === "All" ? "All states" : feedState, inMyState.length],
+                  ["allstates", "All states", everywhere.length],
+                  ["following", "🔔 Captains & teams I follow", everywhere.filter((m) => followedBy(m, "following")).length],
+                ].filter(([k]) => !(k === "allstates" && feedState === "All"));
+                return (
+                  <div className="chiprow" style={{ marginBottom: 12 }}>
+                    {opts.map(([k, label, n]) => (
+                      <button key={k} className={`statechip ${mode === k ? "on" : ""}`}
+                        onClick={() => setPageLens((x) => ({ ...x, mystate: k }))}>
+                        {label}<span className="n">{n}</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })() : <FollowTabs k={cfg.key} list={cfg.list} defaultKind={cfg.fallback} />}
               {cfg.days && shown.length > 0 && (
                 <div className="chiprow" style={{ marginBottom: 12 }}>
                   {[["all", "All", shown.length], ...DAY_GROUP_ORDER.map((g) => [g, g, counts[g] || 0])]
@@ -6298,11 +6338,14 @@ export default function App() {
             {/* Carries the state picked on Top scorers, and can be changed here. */}
             <div className="chiprow" style={{ marginBottom: 14 }}>
               <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>All states</button>
-              {chipStates.map((st) => (
-                <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
-                  {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
-                </button>
-              ))}
+              {chipStates.map((st) => {
+                const n = scorersForState(st).length;
+                return (
+                  <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
+                    {st}{n ? <span className="n">{n}</span> : null}
+                  </button>
+                );
+              })}
             </div>
 
             {lbTab === "teams" && (() => {
