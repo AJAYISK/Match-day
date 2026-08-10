@@ -1060,6 +1060,7 @@ export default function App() {
   const [bulkFor, setBulkFor] = useState(null); // tournament id for bulk entry
   const [playerAwards, setPlayerAwards] = useState([]);
   const [teamSearch, setTeamSearch] = useState("");
+  const [captainSearch, setCaptainSearch] = useState("");
   const [myProfileTab, setMyProfileTab] = useState("overview");
   /* Name field on the merged profile page. Seeded from the signed-in user and
      kept in sync if the profile reloads. */
@@ -5388,7 +5389,9 @@ export default function App() {
                         {cap ? " · " : ""}{stateOf(t) || "—"} · {count} {count === 1 ? "fan" : "fans"}
                       </div>
                     </div>
-                    {me.role !== "Captain" && (
+                    {/* Anyone can follow a team except its own captain — tracking a
+                        rival's form is a normal thing for a captain to want. */}
+                    {t.captainId !== me.id && (
                       <button className="linkbtn" style={following ? { background: "#E6B31E", borderColor: "#E6B31E", color: "#0A0D0A" } : null}
                         onClick={(e) => { e.stopPropagation(); toggleSupportTeam(t.id); }}>
                         {following ? "Following" : "Follow"}
@@ -5426,62 +5429,70 @@ export default function App() {
           <>
             {!viewCaptain ? (
               <>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                  <button className="statebtn" style={{ maxWidth: 210 }} onClick={() => openStateSheet("feed")}>
-                    <span style={{ minWidth: 0 }}>
-                      <span className="lbl">State</span>
-                      <span className="v">{feedState === "All" ? "All states" : feedState}</span>
-                    </span>
-                    <span style={{ color: "#7d8f83", fontSize: 11 }}>▾</span>
-                  </button>
-                  {follows.length > 0 && (
-                    <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>🔔 Captains I follow</button>
-                  )}
-                </div>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
-                {captainList.length === 0 && (
-                  <div className="card" style={{ color: "#7d8f83" }}>
-                    {capFollowFilter ? "You're not following any captains yet." : `No captains in ${feedState === "All" ? "the app" : feedState} yet.`}
-                  </div>
-                )}
-                <div className="feedgrid">
-                  {capped("captainsdir", captainList).map((c) => {
+                {/* Same controls as Teams: state chips, a search box, and the one
+                    filter that isn't about place. */}
+                <StateChips extra={follows.length > 0 ? (
+                  <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>🔔 Captains I follow</button>
+                ) : null} />
+                <input className="input" placeholder="🔍 Search a captain…" value={captainSearch}
+                  onChange={(e) => setCaptainSearch(sanitizeText(e.target.value, 40))} style={{ marginBottom: 14 }} />
+                {(() => {
+                  const q = captainSearch.trim().toLowerCase();
+                  const list = q ? captainList.filter((c) => (c.name || "").toLowerCase().includes(q)) : captainList;
+                  if (list.length === 0) {
+                    return <div className="card" style={{ color: "#7d8f83" }}>
+                      {q ? `No captain matching “${captainSearch}”.`
+                        : capFollowFilter ? "You're not following any captains yet."
+                        : `No captains in ${feedState === "All" ? "the app" : feedState} yet.`}
+                    </div>;
+                  }
+                  const today = new Date().toLocaleDateString("en-CA");
+                  /* Same compact row as the Teams page — avatar, name, one line of
+                     context, action on the right. */
+                  const row = (c) => {
                     const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
-                    const today = new Date().toISOString().slice(0, 10);
-                    const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
-                    const publishedToday = theirs.filter((x) => x.date === today).length;
+                    const liveNowCount = theirs.filter((x) => x.status === "Live").length;
+                    const todayCount = theirs.filter((x) => x.date === today).length;
+                    const following = follows.includes(c.id);
                     return (
-                      <div key={c.id} className="card" style={{ cursor: "pointer", display: "grid", gap: 10 }} onClick={() => { setCaptainCameFrom(null); setViewCaptain(c.id); pushCloseable(() => setViewCaptain(null)); }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <div style={{ width: 48, height: 48, borderRadius: "50%", background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 20, color: T.floodlight }}>
-                            {c.name.slice(0, 1).toUpperCase()}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: 16 }}>{c.name}</div>
-                            <div style={{ fontSize: 12, color: T.muted }}>Captain</div>
-                          </div>
-                          {liveToday > 0 && <span className="chip pulse" style={{ background: T.live, color: "#fff", marginLeft: "auto" }}>● {liveToday} LIVE</span>}
-                          {c.id === me.id && <span className="chip" style={{ background: T.floodlight, color: T.night, marginLeft: liveToday > 0 ? 0 : "auto" }}>You</span>}
+                      <div key={c.id} className="tappable"
+                        onClick={() => { setCaptainCameFrom(null); setViewCaptain(c.id); pushCloseable(() => setViewCaptain(null)); }}
+                        style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 13px", borderTop: "1px solid #1a231b", cursor: "pointer" }}>
+                        <div style={{ width: 38, height: 38, borderRadius: 999, flexShrink: 0, background: "#1b2a1f", border: "1.5px solid #E6B31E", display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
+                          {(c.name || "?").slice(0, 2).toUpperCase()}
                         </div>
-                        <div style={{ display: "flex", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
-                          <span className="chip" style={{ background: "#243128", color: T.floodlight }}>{publishedToday} match{publishedToday === 1 ? "" : "es"} today</span>
-                          <span className="chip" style={{ background: "#243128", color: T.chalk }}>{theirs.length} all-time</span>
-                          {c.state && <span className="chip" style={{ background: "#243128", color: T.chalk }}>📍 {c.state}</span>}
-                          <span className="chip" style={{ background: "#243128", color: T.floodlight }}>🔔 {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 7 }}>
+                            {c.name}
+                            {liveNowCount > 0 && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".08em", color: "#E8442E", border: "1px solid rgba(232,68,46,.4)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>● LIVE</span>}
+                            {c.id === me.id && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".08em", color: "#E6B31E", flexShrink: 0 }}>YOU</span>}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {c.state || "—"} · {theirs.length} match{theirs.length === 1 ? "" : "es"}
+                            {todayCount > 0 ? ` · ${todayCount} today` : ""} · {followerCounts[c.id] || 0} follower{(followerCounts[c.id] || 0) === 1 ? "" : "s"}
+                          </div>
                         </div>
-                        {c.contactInfo && <div style={{ fontSize: 12, color: T.muted }}>📞 Join the team: <span style={{ color: T.chalk }}>{c.contactInfo}</span></div>}
-                        {me.role === "Fan" && c.id !== me.id && (
-                          <button className={`btn ${follows.includes(c.id) ? "btn-turf" : "btn-gold"}`} style={{ padding: "8px 12px", fontSize: 13 }}
+                        {c.id !== me.id && (
+                          <button className="linkbtn" style={following ? { background: "#E6B31E", borderColor: "#E6B31E", color: "#0A0D0A" } : null}
                             onClick={(e) => { e.stopPropagation(); toggleFollow(c.id); }}>
-                            {follows.includes(c.id) ? "✓ Following" : "🔔 Follow"}
+                            {following ? "Following" : "Follow"}
                           </button>
                         )}
                       </div>
                     );
-                  })}
-                </div>
-                <SeeMoreBtn k="captainsdir" list={captainList} />
+                  };
+                  return (
+                    <>
+                      <div className="daygroup">{capFollowFilter ? "Captains you follow" : feedState === "All" ? "All captains" : `Captains in ${feedState}`}<span>{list.length}</span></div>
+                      <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+                        {capped("captainsdir", list).map(row)}
+                      </div>
+                    </>
+                  );
+                })()}
+                <SeeMoreBtn k="captainsdir" list={captainSearch.trim() ? captainList.filter((c) => (c.name || "").toLowerCase().includes(captainSearch.trim().toLowerCase())) : captainList} />
               </>
             ) : (
               (() => {
