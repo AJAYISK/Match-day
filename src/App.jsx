@@ -1094,7 +1094,6 @@ export default function App() {
     setFeedState(st);
     try { localStorage.setItem("am-state", st); } catch (e) { /* private mode */ }
   };
-  const [feedFollowedOnly, setFeedFollowedOnly] = useState(false);
   const [stateSheetOpen, setStateSheetOpen] = useState(false);
   /* Which status a list is filtered to. Keyed by list so My Matches and the
      feed's state section don't fight over one selection. */
@@ -1103,20 +1102,18 @@ export default function App() {
   const [scorerState, setScorerState] = useState("All");    // top scorers, independent of the feed state
   const [hlFilter, setHlFilter] = useState("all");          // highlights: all | captains | teams
   const [liveFollowFilter, setLiveFollowFilter] = useState(false);
-  /* Each section owns its filters outright. feedState stays as the app-wide
-     default every section starts from, but changing one section's state never
-     moves another — a fan comparing Lagos results against Ogun fixtures should
-     not have one undo the other. */
   const [capFollowFilter, setCapFollowFilter] = useState(false);   // captains page
-  const [capState, setCapState] = useState("All");
   const [teamFollowFilter, setTeamFollowFilter] = useState(false); // teams page
-  const [liveRailState, setLiveRailState] = useState("All");       // Live now, on the feed
-  const [liveRailTeams, setLiveRailTeams] = useState(false);
-  const [upState, setUpState] = useState("All");                   // Upcoming
-  const [upTeams, setUpTeams] = useState(false);
-  const [hlState, setHlState] = useState("All");                   // Highlights
-  const [livePageState, setLivePageState] = useState("All");       // Live nav page
-  const [livePageTeams, setLivePageTeams] = useState(false);
+  /* One scope for the whole app: which state, and whether to show everyone or
+     only who you follow. Six per-section filters became these two — a control
+     you set once and read everywhere beats six you have to find. */
+  const [lens, setLens] = useState(() => {
+    try { return localStorage.getItem("am-lens") || "all"; } catch { return "all"; }
+  });
+  const setLensFilter = (v) => {
+    setLens(v);
+    try { localStorage.setItem("am-lens", v); } catch {}
+  };
   const [stateSearch, setStateSearch] = useState("");
   const [heroSlide, setHeroSlide] = useState(0);
   const [seeMore, setSeeMore] = useState({});
@@ -1581,7 +1578,7 @@ export default function App() {
   const logout = async () => {
     await supabase.auth.signOut();
     setMe(null); setScreen("auth"); setOpenMatch(null);
-    setSeeMore({}); setStateFilter("All"); setFeedFollowedOnly(false); // fresh feed for whoever logs in next
+    setSeeMore({}); setStateFilter("All"); // fresh feed for whoever logs in next
   };
 
   useEffect(() => {
@@ -2701,6 +2698,17 @@ export default function App() {
     .rail.solo .kick-teams { flex: 1; min-width: 0; }
     .rail.solo > * { width: 100% !important; }
     .railcard { background: #0E140F; border: 1px solid #243128; border-radius: 13px; padding: 12px 13px; cursor: pointer; }
+    .scopebar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .statebtn { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      background: #0E140F; border: 1px solid rgba(230,179,30,.45); border-radius: 10px; padding: 9px 12px;
+      color: #F7F4EA; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .statebtn .lbl { display: block; font-size: 8.5px; letter-spacing: .13em; text-transform: uppercase; color: #4e5c53; font-weight: 700; margin-bottom: 2px; }
+    .statebtn .v { display: block; color: #E6B31E; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+    .lens { display: flex; flex: none; background: #0E140F; border: 1px solid #243128; border-radius: 10px; padding: 3px; }
+    .lens button { font-family: inherit; font-size: 11.5px; font-weight: 700; background: none; border: 0; color: #8FA396;
+      padding: 8px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+    .lens button.on { background: #E6B31E; color: #0A0D0A; }
+    .seccount { font-size: 10px; color: #4e5c53; letter-spacing: .05em; text-transform: uppercase; margin-top: 3px; }
     .chiprow { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; padding-bottom: 2px; }
     .chiprow::-webkit-scrollbar { display: none; }
     .statechip { flex: none; font-family: inherit; font-size: 12px; font-weight: 500; padding: 7px 13px; border-radius: 999px; background: #0E140F; border: 1px solid #243128; color: #8FA396; cursor: pointer; white-space: nowrap; }
@@ -2973,12 +2981,24 @@ export default function App() {
     const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
     return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
   };
+  /* Teams the signed-in user follows, and whether a given match involves one.
+     Names are normalised because a match stores team names as text. */
+  const myFollowedTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
+  const myFollowedTeamNames = savedTeams.filter((t) => myFollowedTeamIds.includes(t.id)).map((t) => normName(t.name));
+  const involvesFollowedTeam = (m) =>
+    myFollowedTeamNames.includes(normName(m.teamA.name)) || myFollowedTeamNames.includes(normName(m.teamB.name));
+  const inState = (m, st) => st === "All" || captainState(m) === st;
+  /* The single predicate every feed list runs through. */
+  const followsAnyone = follows.length > 0 || myFollowedTeamIds.length > 0;
+  const inScope = (m) => inState(m, feedState) &&
+    (lens === "all" || !followsAnyone || follows.includes(m.createdBy) || involvesFollowedTeam(m));
+
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
-  const published = publishedAll.filter((m) => m.status !== "AwaitingScore" &&
-    (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
-  const awaitingResults = publishedAll.filter((m) => m.status === "AwaitingScore" &&
-    (feedFollowedOnly ? follows.includes(m.createdBy) : (feedState === "All" || captainState(m) === feedState)));
-  const inMyState = me && me.state ? publishedAll.filter((m) => captainState(m) === me.state && m.status !== "ResultPublished") : [];
+  const published = publishedAll.filter((m) => m.status !== "AwaitingScore" && inScope(m));
+  const awaitingResults = publishedAll.filter((m) => m.status === "AwaitingScore" && inScope(m));
+  /* "Matches in <state>" follows whichever state is picked, not just the user's own. */
+  const inMyState = publishedAll.filter((m) => inScope(m) && m.status !== "ResultPublished");
+  const scopeStateLabel = feedState === "All" ? (me && me.state) || "Nigeria" : feedState;
 
   /* ---------- FEED INTELLIGENCE ----------
      Upcoming fixtures, auto-generated milestones and leaderboards — all derived from
@@ -3020,13 +3040,6 @@ export default function App() {
   /* A rail with one card in it looks broken, so a section has to clear a
      minimum before it renders at all. */
   const enough = (list, n) => Array.isArray(list) && list.length >= n;
-  /* Teams the signed-in user follows, and whether a given match involves one.
-     Names are normalised because a match stores team names as text. */
-  const myFollowedTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
-  const myFollowedTeamNames = savedTeams.filter((t) => myFollowedTeamIds.includes(t.id)).map((t) => normName(t.name));
-  const involvesFollowedTeam = (m) =>
-    myFollowedTeamNames.includes(normName(m.teamA.name)) || myFollowedTeamNames.includes(normName(m.teamB.name));
-  const inState = (m, st) => st === "All" || captainState(m) === st;
   /* One row of status filters, shared by every list that needs it. Counts come
      from the unfiltered list, and a chip is hidden when its count is zero —
      an empty filter is a dead end, not a choice. */
@@ -3142,15 +3155,13 @@ export default function App() {
       : null;
   /* published is already state-scoped, so Upcoming follows whichever state the
      feed is on without a filter of its own. */
-  const upcoming = publishedAll.filter((m) => m.status === "Scheduled" && inState(m, upState) &&
-    (!upTeams || involvesFollowedTeam(m)));
+  const upcoming = publishedAll.filter((m) => m.status === "Scheduled" && inScope(m));
   /* Live now answers "what is happening right now", so it filters off the full
      published set rather than inheriting whatever the feed is scoped to. */
-  const liveNow = publishedAll.filter((m) => m.status === "Live" && inState(m, liveRailState) &&
-    (!liveRailTeams || involvesFollowedTeam(m)))
+  const liveNow = publishedAll.filter((m) => m.status === "Live" && inScope(m))
     .sort((a, b) => (myLikes.includes(b.id) ? 1 : 0) - (myLikes.includes(a.id) ? 1 : 0));
   const anyLive = publishedAll.some((m) => m.status === "Live");
-  const results = publishedAll.filter((m) => m.status === "ResultPublished" && inState(m, hlState));
+  const results = publishedAll.filter((m) => m.status === "ResultPublished" && inScope(m));
   /* Own matches plus any delegated to me that I've accepted or not yet answered —
      a captain scoring someone else's fixture needs it in their own list. */
   const mine = matches.filter((m) => m.createdBy === me.id ||
@@ -3161,10 +3172,7 @@ export default function App() {
      state narrows to that state and nothing widens it back. */
   /* Three filters, none of them cancelling another: state, captains you follow,
      teams you follow. Everything here is live by definition. */
-  const liveForUser = matches.filter((m) => m.published && m.status === "Live" &&
-    inState(m, livePageState) &&
-    (!liveFollowFilter || follows.includes(m.createdBy)) &&
-    (!livePageTeams || involvesFollowedTeam(m)));
+  const liveForUser = matches.filter((m) => m.published && m.status === "Live" && inScope(m));
   const liveDetailMatch = liveDetailFor ? matches.find((m) => m.id === liveDetailFor) : null;
 
   return (
@@ -3688,21 +3696,21 @@ export default function App() {
               </div>
             )}
 
-            {/* STATE CHIPS — the five busiest states plus your own, always one tap
-                away. Everything else lives behind More, which opens the full list. */}
-            <div className="chiprow">
-              <button className={`statechip ${feedState === "All" && !feedFollowedOnly ? "on" : ""}`}
-                onClick={() => { setFeedFollowedOnly(false); setStateFilter("All"); }}>All states</button>
-              {chipStates.map((st) => (
-                <button key={st} className={`statechip ${feedState === st && !feedFollowedOnly ? "on" : ""}`}
-                  onClick={() => { setFeedFollowedOnly(false); setStateFilter(st); }}>
-                  {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
-                </button>
-              ))}
-              <button className="statechip" onClick={openStateSheet}>More ▾</button>
-              {me.role === "Fan" && follows.length > 0 && (
-                <button className={`statechip ${feedFollowedOnly ? "on" : ""}`}
-                  onClick={() => { setFeedFollowedOnly(!feedFollowedOnly); if (!feedFollowedOnly) setStateFilter("All"); }}>🔔 Following</button>
+            {/* THE scope control. Everything below it follows these two settings,
+                so there is one place to change what you are looking at. */}
+            <div className="scopebar">
+              <button className="statebtn" onClick={openStateSheet}>
+                <span style={{ minWidth: 0 }}>
+                  <span className="lbl">State</span>
+                  <span className="v">{feedState === "All" ? "All states" : feedState}</span>
+                </span>
+                <span style={{ color: "#7d8f83", fontSize: 11 }}>▾</span>
+              </button>
+              {followsAnyone && (
+                <div className="lens">
+                  <button className={lens === "all" ? "on" : ""} onClick={() => setLensFilter("all")}>All</button>
+                  <button className={lens === "following" ? "on" : ""} onClick={() => setLensFilter("following")}>Following</button>
+                </div>
               )}
             </div>
 
@@ -3820,20 +3828,15 @@ export default function App() {
             {anyLive && (
               <>
                 <div className="railhead">
-                  <span className="lbl" style={{ color: "#E8442E" }}>● Live now</span>
+                  <span>
+                    <span className="lbl" style={{ color: "#E8442E" }}>● Live now</span>
+                    <span className="seccount">{liveNow.length ? `${liveNow.length} in ${feedState === "All" ? "Nigeria" : feedState}` : `none in ${feedState === "All" ? "Nigeria" : feedState}`}</span>
+                  </span>
                   {liveNow.length > 1 && <button className="more" onClick={() => setPage("live")}>All {liveNow.length} ›</button>}
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-                  <div style={{ minWidth: 180, flex: "1 1 180px" }}>
-                    <StatePicker value={liveRailState} counts={stateCounts} label="State" onChange={setLiveRailState} />
-                  </div>
-                  {myFollowedTeamIds.length > 0 && (
-                    <button className={`statechip ${liveRailTeams ? "on" : ""}`} onClick={() => setLiveRailTeams(!liveRailTeams)}>🛡 My teams</button>
-                  )}
                 </div>
                 {liveNow.length === 0 && (
                   <div className="card" style={{ color: "#7d8f83", marginBottom: 24 }}>
-                    Nothing live{liveRailState !== "All" ? ` in ${liveRailState}` : ""}{liveRailTeams ? " from the teams you follow" : ""} right now.
+                    Nothing live{feedState !== "All" ? ` in ${feedState}` : ""}{lens === "following" ? " from who you follow" : ""} right now.
                   </div>
                 )}
                 <div className={`rail ${liveNow.length === 1 ? "solo" : ""}`}>
@@ -3852,8 +3855,11 @@ export default function App() {
             {kickoffs.list.length > 0 && (
               <>
                 <div className="railhead">
-                  <span className="lbl">{kickoffs.label}</span>
-                  <button className="more" onClick={openFixtures}>All fixtures ›</button>
+                  <span>
+                    <span className="lbl">{kickoffs.label}</span>
+                    <span className="seccount">{kickoffs.list.length} in {feedState === "All" ? "Nigeria" : feedState}</span>
+                  </span>
+                  <button className="more" onClick={openFixtures}>All {kickoffs.list.length} ›</button>
                 </div>
                 <div className={`rail ${kickoffs.list.length === 1 ? "solo" : ""}`}>
                   {kickoffs.list.map((m) => {
@@ -4023,9 +4029,9 @@ export default function App() {
               </div>
             )}
 
-            {inMyState.length > 0 && feedState === "All" && !feedFollowedOnly && (
+            {inMyState.length > 0 && (
               <>
-                <SectionTitle color={"#E6B31E"}>📍 Matches in {me.state}</SectionTitle>
+                <SectionTitle color={"#E6B31E"}>📍 Matches in {scopeStateLabel}</SectionTitle>
                 <StatusTabs k="mystate" list={inMyState} />
                 {(() => {
                   const shown = applyStatusFilter("mystate", inMyState);
@@ -4045,15 +4051,7 @@ export default function App() {
             )}
 
             <SectionTitle color={"#E6B31E"}>Upcoming Matches</SectionTitle>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 180, flex: "1 1 180px" }}>
-                <StatePicker value={upState} counts={stateCounts} label="State" onChange={setUpState} />
-              </div>
-              {myFollowedTeamIds.length > 0 && (
-                <button className={`statechip ${upTeams ? "on" : ""}`} onClick={() => setUpTeams(!upTeams)}>🛡 Teams I follow</button>
-              )}
-            </div>
-            {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>Nothing scheduled{upState !== "All" ? ` in ${upState}` : ""}{upTeams ? " for the teams you follow" : ""} yet.</div>}
+            {upcoming.length === 0 && <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>Nothing scheduled{feedState !== "All" ? ` in ${feedState}` : ""}{lens === "following" ? " from who you follow" : ""} yet.</div>}
             {upcoming.length > 0 && (() => {
               const counts = {};
               upcoming.forEach((m) => { const g = dayGroupOf(m); counts[g] = (counts[g] || 0) + 1; });
@@ -4085,12 +4083,7 @@ export default function App() {
                 </button>
               )}
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0 0 12px", flexWrap: "wrap" }}>
-              <div style={{ minWidth: 180, flex: "1 1 180px" }}>
-                <StatePicker value={hlState} counts={stateCounts} label="State" onChange={setHlState} />
-              </div>
-            </div>
-            {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results{hlState !== "All" ? ` in ${hlState}` : ""} yet. Highlights appear here once captains submit final scores.</div>}
+            {results.length === 0 && <div className="card" style={{ color: "#7d8f83" }}>No results{feedState !== "All" ? ` in ${feedState}` : ""} yet. Highlights appear here once captains submit final scores.</div>}
             {results.length > 0 && (() => {
               const byCaptains = results.filter((m) => follows.includes(m.createdBy));
               const byTeams = results.filter(involvesFollowedTeam);
@@ -5265,9 +5258,13 @@ export default function App() {
             {!viewCaptain ? (
               <>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                  <div style={{ minWidth: 190, flex: "1 1 190px" }}>
-                    <StatePicker value={capState} allLabel="Captains in all states" label="State" onChange={setCapState} />
-                  </div>
+                  <button className="statebtn" style={{ maxWidth: 210 }} onClick={openStateSheet}>
+                    <span style={{ minWidth: 0 }}>
+                      <span className="lbl">State</span>
+                      <span className="v">{feedState === "All" ? "All states" : feedState}</span>
+                    </span>
+                    <span style={{ color: "#7d8f83", fontSize: 11 }}>▾</span>
+                  </button>
                   {follows.length > 0 && (
                     <button className={`statechip ${capFollowFilter ? "on" : ""}`} onClick={() => setCapFollowFilter(!capFollowFilter)}>🔔 Captains I follow</button>
                   )}
@@ -5275,7 +5272,7 @@ export default function App() {
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 <div className="feedgrid">
-                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (capState === "All" || u.state === capState) && (!capFollowFilter || follows.includes(u.id))).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
+                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState) && (!capFollowFilter || follows.includes(u.id))).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
                     const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                     const today = new Date().toISOString().slice(0, 10);
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
@@ -5581,24 +5578,27 @@ export default function App() {
             </div>
             {/* Follow filter leads — it's the one most people want — and the state
                 chips sit after it. Both narrow the same live-only list. */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 190, flex: "1 1 190px" }}>
-                <StatePicker value={livePageState} counts={stateCounts} label="State" onChange={setLivePageState} />
-              </div>
-              {follows.length > 0 && (
-                <button className={`statechip ${liveFollowFilter ? "on" : ""}`} onClick={() => setLiveFollowFilter(!liveFollowFilter)}>🔔 Captains I follow</button>
-              )}
-              {myFollowedTeamIds.length > 0 && (
-                <button className={`statechip ${livePageTeams ? "on" : ""}`} onClick={() => setLivePageTeams(!livePageTeams)}>🛡 Teams I follow</button>
+            <div className="scopebar">
+              <button className="statebtn" onClick={openStateSheet}>
+                <span style={{ minWidth: 0 }}>
+                  <span className="lbl">State</span>
+                  <span className="v">{feedState === "All" ? "All states" : feedState}</span>
+                </span>
+                <span style={{ color: "#7d8f83", fontSize: 11 }}>▾</span>
+              </button>
+              {followsAnyone && (
+                <div className="lens">
+                  <button className={lens === "all" ? "on" : ""} onClick={() => setLensFilter("all")}>All</button>
+                  <button className={lens === "following" ? "on" : ""} onClick={() => setLensFilter("following")}>Following</button>
+                </div>
               )}
             </div>
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
                 {(() => {
                   const bits = [];
-                  if (livePageState !== "All") bits.push(`in ${livePageState}`);
-                  if (liveFollowFilter) bits.push("from captains you follow");
-                  if (livePageTeams) bits.push("from teams you follow");
+                  if (feedState !== "All") bits.push(`in ${feedState}`);
+                  if (lens === "following") bits.push("from who you follow");
                   return bits.length ? `Nothing live ${bits.join(" ")} right now.` : "Nothing live right now — check back on match day. ⚽";
                 })()}
               </div>
@@ -6349,7 +6349,7 @@ export default function App() {
                 const quiet = NG_STATES.filter((st) => !stateCounts[st] && match(st));
                 const row = (st, count) => (
                   <div key={st} className="tappable"
-                    onClick={() => { setFeedFollowedOnly(false); setStateFilter(st); setStateSearch(""); goBackPage(); }}
+                    onClick={() => { setStateFilter(st); setStateSearch(""); goBackPage(); }}
                     style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                     <span style={{ flex: 1, fontSize: 13, color: feedState === st ? "#E6B31E" : "#F7F4EA", fontWeight: feedState === st ? 600 : 400 }}>
                       {st}{me && me.state === st ? <span style={{ fontSize: 9.5, color: "#4e5c53", marginLeft: 7 }}>your state</span> : null}
@@ -6360,7 +6360,7 @@ export default function App() {
                 return (
                   <>
                     {!q && (
-                      <div className="tappable" onClick={() => { setFeedFollowedOnly(false); setStateFilter("All"); goBackPage(); }}
+                      <div className="tappable" onClick={() => { setStateFilter("All"); goBackPage(); }}
                         style={{ display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                         <span style={{ flex: 1, fontSize: 13, color: feedState === "All" ? "#E6B31E" : "#F7F4EA", fontWeight: feedState === "All" ? 600 : 400 }}>All states</span>
                       </div>
@@ -6371,7 +6371,7 @@ export default function App() {
                     )}
                     {quiet.map((st) => (
                       <div key={st} className="tappable"
-                        onClick={() => { setFeedFollowedOnly(false); setStateFilter(st); setStateSearch(""); goBackPage(); }}
+                        onClick={() => { setStateFilter(st); setStateSearch(""); goBackPage(); }}
                         style={{ padding: "11px 0", borderBottom: "1px solid #121a14", fontSize: 12.5, color: "#4e5c53", cursor: "pointer" }}>{st}</div>
                     ))}
                     {withMatches.length === 0 && quiet.length === 0 && (
