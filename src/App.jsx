@@ -1109,7 +1109,6 @@ export default function App() {
   const [scorerState, setScorerState] = useState("All");    // top scorers, independent of the feed state
   const [liveFollowFilter, setLiveFollowFilter] = useState(false);
   const [capFollowFilter, setCapFollowFilter] = useState(false);   // captains page
-  const [teamFollowFilter, setTeamFollowFilter] = useState(false); // teams page
   /* One scope for the whole app: which state, and whether to show everyone or
      only who you follow. Six per-section filters became these two — a control
      you set once and read everywhere beats six you have to find. */
@@ -2996,6 +2995,13 @@ export default function App() {
   /* The feed filters by state only. Follow filters live on the destination
      pages, where someone is browsing a full list rather than scanning. */
   const inScope = (m) => inState(m, feedState);
+  /* State and "captains I follow" answer different questions, so choosing the
+     follow filter ignores the state rather than intersecting with it and
+     showing nothing. */
+  const captainList = (capFollowFilter
+    ? users.filter((u) => u.role === "Captain" && follows.includes(u.id))
+    : users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState))
+  ).slice().sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
   const followedBy = (m, kind) =>
     kind === "captains" ? follows.includes(m.createdBy)
     : kind === "teams" ? involvesFollowedTeam(m)
@@ -3182,7 +3188,22 @@ export default function App() {
      own state selection rather than following feedState. */
   /* Everything on the Leaderboard reads this, so the tabs agree with each other
      and with the Top scorers rail that sent you here. */
-  const lbScoped = (st) => buildLeaderboards(st === "All" ? publishedResults : publishedResults.filter((m) => captainState(m) === st));
+  /* captainState is the ORGANISER's state, which is right for "matches in Lagos"
+     but wrong for a leaderboard: a Lagos team playing an away game in Anambra
+     was being counted as an Anambra team. A team belongs where its own captain
+     is, so the leaderboards resolve the team first and fall back to the
+     organiser only for free-text teams that were never saved. */
+  const teamStateOf = (name) => {
+    const t = savedTeams.find((x) => normName(x.name) === normName(name));
+    if (!t) return null;
+    return ((users.find((u) => u.id === t.captainId) || {}).state) || null;
+  };
+  const matchTouchesState = (m, st) => {
+    const a = teamStateOf(m.teamA.name), b = teamStateOf(m.teamB.name);
+    if (!a && !b) return captainState(m) === st;   // neither team saved
+    return a === st || b === st;
+  };
+  const lbScoped = (st) => buildLeaderboards(st === "All" ? publishedResults : publishedResults.filter((m) => matchTouchesState(m, st)));
   /* Top teams: form first, followers as the tiebreak — a team that wins matters
      more than a team that is merely popular, but popularity separates equals. */
   const topTeamsFor = (st) => {
@@ -3190,11 +3211,12 @@ export default function App() {
     const supp = {};
     lb.mostSupported.forEach((x) => { supp[x.team.id] = x.count; });
     return lb.teamForm
+      /* Their opponents played in this state, but they don't belong to it. */
+      .filter((x) => st === "All" || teamStateOf(x.team.name) === st)
       .map((x) => ({ ...x, supporters: supp[x.team.id] || 0 }))
       .sort((a, b) => (b.rec.rating - a.rec.rating) || (b.supporters - a.supporters));
   };
-  const scorersForState = (st) =>
-    buildLeaderboards(st === "All" ? publishedResults : publishedResults.filter((m) => captainState(m) === st)).topScorers;
+  const scorersForState = (st) => lbScoped(st).topScorers;
   /* The section shows whenever anyone anywhere has scored — the state chips are
      the filter, so gating the whole block on the current state was what made the
      filter look missing. */
@@ -5331,15 +5353,20 @@ export default function App() {
             </button>
             <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Teams</div>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Every team on Area Match. Follow the ones you want to keep up with.</div>
-            <StateChips extra={
-              <button className={`statechip ${teamFollowFilter ? "on" : ""}`} onClick={() => setTeamFollowFilter(!teamFollowFilter)}>🛡 Teams I follow</button>
-            } />
+            <StateChips />
+            <input className="input" placeholder="🔍 Search a team or captain…" value={teamSearch}
+              onChange={(e) => setTeamSearch(sanitizeText(e.target.value, 40))} style={{ marginBottom: 14 }} />
             {(() => {
               const myFollowed = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
               const stateOf = (t) => ((users.find((u) => u.id === t.captainId) || {}).state) || "";
+              const q = teamSearch.trim().toLowerCase();
               const all = savedTeams
                 .filter((t) => feedState === "All" || stateOf(t) === feedState)
-                .filter((t) => !teamFollowFilter || myFollowed.includes(t.id));
+                .filter((t) => {
+                  if (!q) return true;
+                  const cap = users.find((u) => u.id === t.captainId);
+                  return (t.name || "").toLowerCase().includes(q) || (cap && (cap.name || "").toLowerCase().includes(q));
+                });
               const mine = all.filter((t) => t.captainId === me.id);
               const others = all.filter((t) => t.captainId !== me.id)
                 .sort((a, b) => teamSupporters.filter((x) => x.teamId === b.id).length - teamSupporters.filter((x) => x.teamId === a.id).length);
@@ -5372,7 +5399,7 @@ export default function App() {
               };
               if (all.length === 0) {
                 return <div className="card" style={{ color: "#7d8f83" }}>
-                  {teamFollowFilter ? "You're not following any teams here yet." : `No teams in ${feedState === "All" ? "the app" : feedState} yet.`}
+                  {q ? `No team or captain matching “${teamSearch}”.` : `No teams in ${feedState === "All" ? "the app" : feedState} yet.`}
                 </div>;
               }
               return (
@@ -5413,14 +5440,19 @@ export default function App() {
                 </div>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
+                {captainList.length === 0 && (
+                  <div className="card" style={{ color: "#7d8f83" }}>
+                    {capFollowFilter ? "You're not following any captains yet." : `No captains in ${feedState === "All" ? "the app" : feedState} yet.`}
+                  </div>
+                )}
                 <div className="feedgrid">
-                  {capped("captainsdir", users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState) && (!capFollowFilter || follows.includes(u.id))).sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0))).map((c) => {
+                  {capped("captainsdir", captainList).map((c) => {
                     const theirs = matches.filter((x) => x.createdBy === c.id && x.published && isFresh(x));
                     const today = new Date().toISOString().slice(0, 10);
                     const liveToday = theirs.filter((x) => x.date === today && (x.status === "Live" || x.status === "AwaitingScore")).length;
                     const publishedToday = theirs.filter((x) => x.date === today).length;
                     return (
-                      <div key={c.id} className="card" style={{ cursor: "pointer", display: "grid", gap: 10 }} onClick={() => { setCaptainCameFrom(null); setViewCaptain(c.id); }}>
+                      <div key={c.id} className="card" style={{ cursor: "pointer", display: "grid", gap: 10 }} onClick={() => { setCaptainCameFrom(null); setViewCaptain(c.id); pushCloseable(() => setViewCaptain(null)); }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                           <div style={{ width: 48, height: 48, borderRadius: "50%", background: T.turf, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Anton', sans-serif", fontSize: 20, color: T.floodlight }}>
                             {c.name.slice(0, 1).toUpperCase()}
@@ -5449,7 +5481,7 @@ export default function App() {
                     );
                   })}
                 </div>
-                <SeeMoreBtn k="captainsdir" list={users.filter((u) => u.role === "Captain" && (feedState === "All" || u.state === feedState))} />
+                <SeeMoreBtn k="captainsdir" list={captainList} />
               </>
             ) : (
               (() => {
