@@ -2702,7 +2702,7 @@ export default function App() {
     .lens button { font-family: inherit; font-size: 11.5px; font-weight: 700; background: none; border: 0; color: #8FA396;
       padding: 8px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
     .lens button.on { background: #E6B31E; color: #0A0D0A; }
-    .seccount { font-size: 10px; color: #4e5c53; letter-spacing: .05em; text-transform: uppercase; margin-top: 3px; }
+    .seccount { display: block; font-size: 10px; color: #4e5c53; letter-spacing: .05em; text-transform: uppercase; margin-top: 3px; }
     .chiprow { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; padding-bottom: 2px; }
     .chiprow::-webkit-scrollbar { display: none; }
     .statechip { flex: none; font-family: inherit; font-size: 12px; font-weight: 500; padding: 7px 13px; border-radius: 999px; background: #0E140F; border: 1px solid #243128; color: #8FA396; cursor: pointer; white-space: nowrap; }
@@ -2990,6 +2990,7 @@ export default function App() {
   const followedBy = (m, kind) =>
     kind === "captains" ? follows.includes(m.createdBy)
     : kind === "teams" ? involvesFollowedTeam(m)
+    : kind === "following" ? (follows.includes(m.createdBy) || involvesFollowedTeam(m))
     : true;
 
   const publishedAll = matches.filter((m) => m.published && isFresh(m) && m.status !== "Cancelled");
@@ -3083,18 +3084,21 @@ export default function App() {
 
   /* The follow row every destination page carries. State is inherited from the
      feed, so this only ever asks "whose matches". */
-  const FollowTabs = ({ k, list, defaultKind = "all" }) => {
+  const FollowTabs = ({ k, list, defaultKind = "all", combined = false }) => {
     const active = pageLens[k] || defaultKind;
-    const opts = [
-      ["all", "All", list.length],
-      ["captains", "🔔 Captains I follow", list.filter((m) => followedBy(m, "captains")).length],
-      ["teams", "🛡 Teams I follow", list.filter((m) => followedBy(m, "teams")).length],
-    ];
+    const allLabel = feedState === "All" ? "All states" : `All in ${feedState}`;
+    const opts = combined
+      ? [["all", allLabel, list.length],
+         ["following", "🔔 Captains & teams I follow", list.filter((m) => followedBy(m, "following")).length]]
+      : [["all", allLabel, list.length],
+         ["captains", "🔔 Captains I follow", list.filter((m) => followedBy(m, "captains")).length],
+         ["teams", "🛡 Teams I follow", list.filter((m) => followedBy(m, "teams")).length]];
     return (
       <div className="chiprow" style={{ marginBottom: 12 }}>
         {opts.map(([key, label, n]) => {
           if (key === "captains" && follows.length === 0) return null;
           if (key === "teams" && myFollowedTeamIds.length === 0) return null;
+          if (key === "following" && !followsAnyone) return null;
           return (
             <button key={key} className={`statechip ${active === key ? "on" : ""}`}
               onClick={() => setPageLens((x) => ({ ...x, [k]: key }))}>
@@ -5637,13 +5641,14 @@ export default function App() {
             <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 10 }}>
               Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{feedState === "All" ? "all states" : feedState}</b> — set on the feed
             </div>
-            <FollowTabs k="live" list={liveAll} />
+            <FollowTabs k="live" list={liveAll} combined />
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
                 {(() => {
                   const bits = [];
                   if (feedState !== "All") bits.push(`in ${feedState}`);
                   const l = lensFor("live");
+                  if (l === "following") bits.push("from the captains and teams you follow");
                   if (l === "captains") bits.push("from captains you follow");
                   if (l === "teams") bits.push("from teams you follow");
                   return bits.length ? `Nothing live ${bits.join(" ")} right now.` : "Nothing live right now — check back on match day. ⚽";
