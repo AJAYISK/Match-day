@@ -1014,6 +1014,14 @@ export default function App() {
   const openPoster = (id) => { setPosterFor(id); pushCloseable(() => setPosterFor(null)); };
   const openChat = (id) => { setChatFor(id); pushCloseable(() => setChatFor(null)); };
   const openPlayerCard = (id) => { setPlayerCardFor(id); pushCloseable(() => setPlayerCardFor(null)); };
+  /* setPage on its own leaves nothing for Back to unwind, which is why Back did
+     nothing on Upcoming and Highlights. Any page reached from content opens
+     through here instead. */
+  const openPage = (name) => {
+    const from = page;
+    setPage(name);
+    pushCloseable(() => setPage(from));
+  };
   const openStateSheet = (target = "feed") => { setStateSheetFor(target); setStateSheetOpen(true); pushCloseable(() => setStateSheetOpen(false)); };
   const openLineupPoster = (id) => { setLineupPosterFor(id); pushCloseable(() => setLineupPosterFor(null)); };
   const openStatsPoster = (id) => { setStatsPosterFor(id); pushCloseable(() => setStatsPosterFor(null)); };
@@ -3776,7 +3784,7 @@ export default function App() {
                   { ico: "fixtures", lbl: "Fixtures", go: openFixtures },
                   { ico: "leaders", lbl: "Leaders", go: openLeaderboards },
                   { ico: "tournaments", lbl: "Tournaments", go: () => { setViewTournament(null); setPage("tournaments"); } },
-                  { ico: "teams", lbl: "Teams", go: () => setPage("teams") },
+                  { ico: "teams", lbl: "Teams", go: () => openPage("teams") },
                   { ico: "captains", lbl: "Captains", go: () => { setCaptainCameFrom(null); setViewCaptain(null); setPage("captains"); } },
                 ].map((t) => (
                   <button key={t.lbl} className="tile" onClick={t.go}>
@@ -4008,7 +4016,7 @@ export default function App() {
               <>
                 <div className="railhead">
                   <span className="lbl">Teams near you{feedState !== "All" ? ` · ${feedState}` : ""}</span>
-                  <button className="more" onClick={() => setPage("teams")}>All teams ›</button>
+                  <button className="more" onClick={() => openPage("teams")}>All teams ›</button>
                 </div>
                 {/* Same card as Top scorers — rank, portrait, name, and the number
                     that matters — so the two rails read as one family. */}
@@ -4098,7 +4106,7 @@ export default function App() {
                     <span className="lbl">📍 Matches in {scopeStateLabel}</span>
                     <span className="seccount">{inMyState.length} match{inMyState.length === 1 ? "" : "es"}</span>
                   </span>
-                  <button className="more" onClick={() => { setPageLens((x) => ({ ...x, mystate: "state" })); setPage("statematches"); }}>All {inMyState.length} ›</button>
+                  <button className="more" onClick={() => { setPageLens((x) => ({ ...x, mystate: "state" })); openPage("statematches"); }}>All {inMyState.length} ›</button>
                 </div>
                 {(() => {
                   const shown = applyStatusFilter("mystate", inMyState);
@@ -4122,7 +4130,7 @@ export default function App() {
                 <span className="lbl">Upcoming matches</span>
                 <span className="seccount">{upcoming.length} in {scopeStateLabel}</span>
               </span>
-              {upcoming.length > 0 && <button className="more" onClick={() => { setPageLens((x) => ({ ...x, upcoming: "captains" })); setPage("upcoming"); }}>All {upcoming.length} ›</button>}
+              {upcoming.length > 0 && <button className="more" onClick={() => { setPageLens((x) => ({ ...x, upcoming: "captains" })); openPage("upcoming"); }}>All {upcoming.length} ›</button>}
             </div>
             {upcoming.length === 0
               ? <div className="card" style={{ color: "#7d8f83", marginBottom: 28 }}>Nothing scheduled{feedState !== "All" ? ` in ${feedState}` : ""} yet.</div>
@@ -4135,7 +4143,7 @@ export default function App() {
             <div className="railhead">
               <span className="lbl">Highlights</span>
               {results.length > 0 && (
-                <button className="more" onClick={() => { setPageLens((x) => ({ ...x, highlights: "captains" })); setPage("highlights"); }}>All {results.length} ›</button>
+                <button className="more" onClick={() => { setPageLens((x) => ({ ...x, highlights: "captains" })); openPage("highlights"); }}>All {results.length} ›</button>
               )}
             </div>
             {results.length === 0
@@ -5232,7 +5240,8 @@ export default function App() {
           const mode = pageLens.mystate || "state";
           const shown = cfg.states
             ? (mode === "allstates" ? everywhere
-              : mode === "following" ? everywhere.filter((m) => followedBy(m, "following"))
+              : mode === "captains" ? everywhere.filter((m) => followedBy(m, "captains"))
+              : mode === "teams" ? everywhere.filter((m) => followedBy(m, "teams"))
               : inMyState)
             : applyLens(cfg.key, cfg.list, cfg.fallback);
           const counts = {};
@@ -5247,7 +5256,7 @@ export default function App() {
               </div>
               <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 12 }}>
                 {cfg.states && mode !== "state"
-                  ? <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{mode === "allstates" ? "all states" : "who you follow"}</b></>
+                  ? <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{mode === "allstates" ? "all states" : mode === "captains" ? "captains you follow" : "teams you follow"}</b></>
                   : <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{scopeStateLabel}</b> — set on the feed</>}
               </div>
               {/* Matches opens on the state you picked, but "All states" and the
@@ -5257,12 +5266,14 @@ export default function App() {
                 const mode = pageLens.mystate || "state";
                 /* With the Live chip on All states, the picked state and "all
                    states" are the same button — so only one of them renders. */
-                const opts = feedState === "All"
-                  ? [["state", "All states", everywhere.length],
-                     ["following", "🔔 Captains & teams I follow", everywhere.filter((m) => followedBy(m, "following")).length]]
-                  : [["state", feedState, inMyState.length],
-                     ["allstates", "All states", everywhere.length],
-                     ["following", "🔔 Captains & teams I follow", everywhere.filter((m) => followedBy(m, "following")).length]];
+                /* Following a team is not the same as following its captain, so
+                   the two are separate chips and each shows only its own. */
+                const base = feedState === "All"
+                  ? [["state", "All states", everywhere.length]]
+                  : [["state", feedState, inMyState.length], ["allstates", "All states", everywhere.length]];
+                const opts = [...base,
+                  ["captains", "🔔 Captains I follow", everywhere.filter((m) => followedBy(m, "captains")).length],
+                  ["teams", "🛡 Teams I follow", everywhere.filter((m) => followedBy(m, "teams")).length]];
                 return (
                   <div className="chiprow" style={{ marginBottom: 12 }}>
                     {opts.map(([k, label, n]) => (
@@ -5286,15 +5297,21 @@ export default function App() {
                     ))}
                 </div>
               )}
-              {final.length === 0 ? (
-                <div className="card" style={{ color: "#7d8f83" }}>
-                  Nothing here{feedState !== "All" ? ` in ${feedState}` : ""}.
-                  {lensFor(cfg.key, cfg.fallback) !== "all" && (
-                    <button className="linkbtn" style={{ marginLeft: 8 }}
-                      onClick={() => setPageLens((x) => ({ ...x, [cfg.key]: "all" }))}>Show everyone ›</button>
-                  )}
-                </div>
-              ) : (
+              {final.length === 0 ? (() => {
+                const active = cfg.states ? mode : lensFor(cfg.key, cfg.fallback);
+                const msg = active === "captains" ? "None of the captains you follow have matches here."
+                  : active === "teams" ? "None of the teams you follow have matches here."
+                  : `Nothing here${feedState !== "All" ? ` in ${feedState}` : ""}.`;
+                return (
+                  <div className="card" style={{ color: "#7d8f83" }}>
+                    {msg}
+                    {active !== "all" && active !== "state" && (
+                      <button className="linkbtn" style={{ marginLeft: 8 }}
+                        onClick={() => setPageLens((x) => ({ ...x, [cfg.key]: cfg.states ? "state" : "all" }))}>Show everyone ›</button>
+                    )}
+                  </div>
+                );
+              })() : (
                 <div className="feedgrid">
                   {final.map((m) => (
                     <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)}
@@ -5309,7 +5326,7 @@ export default function App() {
 
         {page === "teams" && (
           <>
-            <button onClick={() => setPage("feed")} className="goldpill sm" style={{ marginBottom: 14 }}>
+            <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
               <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
             </button>
             <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Teams</div>
@@ -5706,14 +5723,16 @@ export default function App() {
             <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 10 }}>
               Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{feedState === "All" ? "all states" : feedState}</b> — set on the feed
             </div>
-            <FollowTabs k="live" list={liveAll} combined />
+            <button onClick={() => setPage("feed")} className="goldpill sm" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Feed
+            </button>
+            <FollowTabs k="live" list={liveAll} />
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
                 {(() => {
                   const bits = [];
                   if (feedState !== "All") bits.push(`in ${feedState}`);
                   const l = lensFor("live");
-                  if (l === "following") bits.push("from the captains and teams you follow");
                   if (l === "captains") bits.push("from captains you follow");
                   if (l === "teams") bits.push("from teams you follow");
                   return bits.length ? `Nothing live ${bits.join(" ")} right now.` : "Nothing live right now — check back on match day. ⚽";
