@@ -2999,7 +2999,10 @@ export default function App() {
   const awaitingResults = publishedAll.filter((m) => m.status === "AwaitingScore" && inScope(m));
   /* "Matches in <state>" follows whichever state is picked, not just the user's own. */
   const inMyState = publishedAll.filter((m) => inScope(m) && m.status !== "ResultPublished");
-  const scopeStateLabel = feedState === "All" ? (me && me.state) || "Nigeria" : feedState;
+  /* Whatever the Live now chip says, this says. It used to fall back to the
+     user's own state when the chip was on All, so the heading claimed "Lagos"
+     over a list of every state. */
+  const scopeStateLabel = feedState === "All" ? "all states" : feedState;
 
   /* ---------- FEED INTELLIGENCE ----------
      Upcoming fixtures, auto-generated milestones and leaderboards — all derived from
@@ -5221,7 +5224,7 @@ export default function App() {
             is the only control here. */}
         {(page === "statematches" || page === "upcoming" || page === "highlights") && (() => {
           const cfg = {
-            statematches: { key: "mystate", title: `Matches in ${scopeStateLabel}`, list: inMyState, fallback: "all", days: false, states: true },
+            statematches: { key: "mystate", title: feedState === "All" ? "Matches in all states" : `Matches in ${feedState}`, list: inMyState, fallback: "all", days: false, states: true },
             upcoming: { key: "upcoming", title: "Upcoming matches", list: upcoming, fallback: "captains", days: true },
             highlights: { key: "highlights", title: "Highlights", list: results, fallback: "captains", days: false },
           }[page];
@@ -5245,18 +5248,21 @@ export default function App() {
               <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 12 }}>
                 {cfg.states && mode !== "state"
                   ? <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{mode === "allstates" ? "all states" : "who you follow"}</b></>
-                  : <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{feedState === "All" ? "all states" : feedState}</b> — set on the feed</>}
+                  : <>Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{scopeStateLabel}</b> — set on the feed</>}
               </div>
               {/* Matches opens on the state you picked, but "All states" and the
                   follow filter are one tap away rather than hidden. */}
               {cfg.states ? (() => {
                 const everywhere = publishedAll.filter((m) => m.status !== "ResultPublished");
                 const mode = pageLens.mystate || "state";
-                const opts = [
-                  ["state", feedState === "All" ? "All states" : feedState, inMyState.length],
-                  ["allstates", "All states", everywhere.length],
-                  ["following", "🔔 Captains & teams I follow", everywhere.filter((m) => followedBy(m, "following")).length],
-                ].filter(([k]) => !(k === "allstates" && feedState === "All"));
+                /* With the Live chip on All states, the picked state and "all
+                   states" are the same button — so only one of them renders. */
+                const opts = feedState === "All"
+                  ? [["state", "All states", everywhere.length],
+                     ["following", "🔔 Captains & teams I follow", everywhere.filter((m) => followedBy(m, "following")).length]]
+                  : [["state", feedState, inMyState.length],
+                     ["allstates", "All states", everywhere.length],
+                     ["following", "🔔 Captains & teams I follow", everywhere.filter((m) => followedBy(m, "following")).length]];
                 return (
                   <div className="chiprow" style={{ marginBottom: 12 }}>
                     {opts.map(([k, label, n]) => (
@@ -6335,18 +6341,39 @@ export default function App() {
             ))}
           </div>
           <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "18px 17px 24px" }}>
-            {/* Carries the state picked on Top scorers, and can be changed here. */}
-            <div className="chiprow" style={{ marginBottom: 14 }}>
-              <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>All states</button>
-              {chipStates.map((st) => {
-                const n = scorersForState(st).length;
-                return (
-                  <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
-                    {st}{n ? <span className="n">{n}</span> : null}
+            {/* Carries the state picked on Top scorers, and can be changed here.
+                The count follows the tab you're on — a chip reading "Lagos 5"
+                above a list of teams was counting scorers. More ▾ reaches the
+                states that have no chip yet. */}
+            {(() => {
+              const countFor = (st) => {
+                const lb = lbScoped(st);
+                return lbTab === "scorers" ? lb.topScorers.length
+                  : lbTab === "teams" ? topTeamsFor(st).length
+                  : lbTab === "form" ? lb.teamForm.length
+                  : lb.mostSupported.length;
+              };
+              /* Any state already picked joins the row, so choosing one from the
+                 sheet doesn't leave the chips showing something else as active. */
+              const rowStates = chipStates.includes(scorerState) || scorerState === "All"
+                ? chipStates : [scorerState, ...chipStates].slice(0, 6);
+              return (
+                <div className="chiprow" style={{ marginBottom: 14 }}>
+                  <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>
+                    All states<span className="n">{countFor("All")}</span>
                   </button>
-                );
-              })}
-            </div>
+                  {rowStates.map((st) => {
+                    const n = countFor(st);
+                    return (
+                      <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
+                        {st}{n ? <span className="n">{n}</span> : null}
+                      </button>
+                    );
+                  })}
+                  <button className="statechip" onClick={() => openStateSheet("scorers")}>More ▾</button>
+                </div>
+              );
+            })()}
 
             {lbTab === "teams" && (() => {
               const rows = topTeamsFor(scorerState);
