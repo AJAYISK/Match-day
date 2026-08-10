@@ -1014,7 +1014,7 @@ export default function App() {
   const openPoster = (id) => { setPosterFor(id); pushCloseable(() => setPosterFor(null)); };
   const openChat = (id) => { setChatFor(id); pushCloseable(() => setChatFor(null)); };
   const openPlayerCard = (id) => { setPlayerCardFor(id); pushCloseable(() => setPlayerCardFor(null)); };
-  const openStateSheet = () => { setStateSheetOpen(true); pushCloseable(() => setStateSheetOpen(false)); };
+  const openStateSheet = (target = "feed") => { setStateSheetFor(target); setStateSheetOpen(true); pushCloseable(() => setStateSheetOpen(false)); };
   const openLineupPoster = (id) => { setLineupPosterFor(id); pushCloseable(() => setLineupPosterFor(null)); };
   const openStatsPoster = (id) => { setStatsPosterFor(id); pushCloseable(() => setStatsPosterFor(null)); };
   /* The nav scrolls now instead of wrapping, so the current page's tab can sit
@@ -1109,6 +1109,8 @@ export default function App() {
      Highlights can differ; the state itself is shared and set on the feed. */
   const [pageLens, setPageLens] = useState({});
   const [stateSearch, setStateSearch] = useState("");
+  /* The sheet is shared — this says which filter the chosen state lands on. */
+  const [stateSheetFor, setStateSheetFor] = useState("feed");
   const [heroSlide, setHeroSlide] = useState(0);
   const [seeMore, setSeeMore] = useState({});
   const [pwaPromptOpen, setPwaPromptOpen] = useState(false);
@@ -3077,7 +3079,7 @@ export default function App() {
           {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
         </button>
       ))}
-      <button className="statechip" onClick={openStateSheet}>More ▾</button>
+      <button className="statechip" onClick={() => openStateSheet("feed")}>More ▾</button>
       {extra}
     </div>
   );
@@ -3096,9 +3098,8 @@ export default function App() {
     return (
       <div className="chiprow" style={{ marginBottom: 12 }}>
         {opts.map(([key, label, n]) => {
-          if (key === "captains" && follows.length === 0) return null;
-          if (key === "teams" && myFollowedTeamIds.length === 0) return null;
-          if (key === "following" && !followsAnyone) return null;
+          /* Every option stays visible even at zero. A chip that appears only
+             once you follow someone can't teach you that following exists. */
           return (
             <button key={key} className={`statechip ${active === key ? "on" : ""}`}
               onClick={() => setPageLens((x) => ({ ...x, [k]: key }))}>
@@ -3169,6 +3170,19 @@ export default function App() {
   /* Top scorers answers "who is scoring in <state>", which is a different
      question from what the rest of the feed is filtered to — so it carries its
      own state selection rather than following feedState. */
+  /* Everything on the Leaderboard reads this, so the tabs agree with each other
+     and with the Top scorers rail that sent you here. */
+  const lbScoped = (st) => buildLeaderboards(st === "All" ? publishedResults : publishedResults.filter((m) => captainState(m) === st));
+  /* Top teams: form first, followers as the tiebreak — a team that wins matters
+     more than a team that is merely popular, but popularity separates equals. */
+  const topTeamsFor = (st) => {
+    const lb = lbScoped(st);
+    const supp = {};
+    lb.mostSupported.forEach((x) => { supp[x.team.id] = x.count; });
+    return lb.teamForm
+      .map((x) => ({ ...x, supporters: supp[x.team.id] || 0 }))
+      .sort((a, b) => (b.rec.rating - a.rec.rating) || (b.supporters - a.supporters));
+  };
   const scorersForState = (st) =>
     buildLeaderboards(st === "All" ? publishedResults : publishedResults.filter((m) => captainState(m) === st)).topScorers;
   /* The section shows whenever anyone anywhere has scored — the state chips are
@@ -3860,7 +3874,7 @@ export default function App() {
                       {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
                     </button>
                   ))}
-                  <button className="statechip" onClick={openStateSheet}>More ▾</button>
+                  <button className="statechip" onClick={() => openStateSheet("feed")}>More ▾</button>
                 </div>
                 {liveNow.length === 0 && (
                   <div className="card" style={{ color: "#7d8f83", marginBottom: 24 }}>
@@ -3939,12 +3953,17 @@ export default function App() {
                   <span className="lbl">Top scorers</span>
                   <button className="more" onClick={openLeaderboards}>Leaderboard ›</button>
                 </div>
-                {/* Its own state row. Every state that has published results is a
-                    chip here — there's no sheet, because the list is short. */}
-                <ChipRow value={scorerState} onPick={setScorerState}
-                  options={[{ key: "All", label: "All states" },
-                    ...NG_STATES.filter((st) => publishedResults.some((m) => captainState(m) === st))
-                      .map((st) => ({ key: st, label: st, n: scorersForState(st).length }))]} />
+                {/* Same chip row as Live now, but driving its own state — "who is
+                    scoring in Ogun" is a different question from what the feed shows. */}
+                <div className="chiprow">
+                  <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>All states</button>
+                  {chipStates.map((st) => (
+                    <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
+                      {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
+                    </button>
+                  ))}
+                  <button className="statechip" onClick={() => openStateSheet("scorers")}>More ▾</button>
+                </div>
                 <div className="rail">
                   {(scorerState === "All" ? scorersForState("All") : scorersForState(scorerState)).slice(0, 8).map((sc, i) => {
                     const team = savedTeams.find((t) => normName(t.name) === normName(sc.team));
@@ -5318,7 +5337,7 @@ export default function App() {
             {!viewCaptain ? (
               <>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                  <button className="statebtn" style={{ maxWidth: 210 }} onClick={openStateSheet}>
+                  <button className="statebtn" style={{ maxWidth: 210 }} onClick={() => openStateSheet("feed")}>
                     <span style={{ minWidth: 0 }}>
                       <span className="lbl">State</span>
                       <span className="v">{feedState === "All" ? "All states" : feedState}</span>
@@ -6268,7 +6287,7 @@ export default function App() {
             <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Leaderboards</div>
           </div>
           <div style={{ display: "flex", padding: "0 17px", borderBottom: "1px solid #151c16", gap: 24 }}>
-            {[["scorers", "Top scorers"], ["form", "Team form"], ["supported", "Most supported"]].map(([key, lbl]) => (
+            {[["scorers", "Top scorers"], ["teams", "Top teams"], ["form", "Team form"], ["supported", "Most followed"]].map(([key, lbl]) => (
               <button key={key} onClick={() => setLbTab(key)}
                 style={{ background: "none", border: 0, fontFamily: "inherit", fontSize: 12, color: lbTab === key ? "#F7F4EA" : "#5a6a5f", fontWeight: lbTab === key ? 600 : 500, padding: "12px 0", cursor: "pointer", borderBottom: `1.5px solid ${lbTab === key ? "#D6A81D" : "transparent"}`, marginBottom: -1 }}>
                 {lbl}
@@ -6276,14 +6295,49 @@ export default function App() {
             ))}
           </div>
           <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto", padding: "18px 17px 24px" }}>
-            <div style={{ fontSize: 9.5, letterSpacing: "1.5px", textTransform: "uppercase", color: "#4e5c53", fontWeight: 700, marginBottom: 13 }}>
-              {feedState === "All" ? "All states" : feedState}
+            {/* Carries the state picked on Top scorers, and can be changed here. */}
+            <div className="chiprow" style={{ marginBottom: 14 }}>
+              <button className={`statechip ${scorerState === "All" ? "on" : ""}`} onClick={() => setScorerState("All")}>All states</button>
+              {chipStates.map((st) => (
+                <button key={st} className={`statechip ${scorerState === st ? "on" : ""}`} onClick={() => setScorerState(st)}>
+                  {st}{stateCounts[st] ? <span className="n">{stateCounts[st]}</span> : null}
+                </button>
+              ))}
             </div>
 
+            {lbTab === "teams" && (() => {
+              const rows = topTeamsFor(scorerState);
+              if (rows.length === 0) return <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams have played enough matches yet (3 minimum).</div>;
+              return rows.map((x, i) => {
+                const cap = users.find((u) => u.id === x.team.captainId);
+                return (
+                  <div key={x.team.id} onClick={() => { goBackPage(); openTeamProfile(x.team.id); }}
+                    style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
+                    <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
+                    <MiniLogo team={x.team} badge={x.team.badge} size={26} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.team.name}</div>
+                      <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {cap && (
+                          <span className="tappable" onClick={(e) => { e.stopPropagation(); goBackPage(); setCaptainCameFrom("feed"); setViewCaptain(cap.id); setPage("captains"); }}
+                            style={{ color: "#D6A81D", textDecoration: "underline", textUnderlineOffset: 2 }}>{cap.name}</span>
+                        )}
+                        {cap ? " · " : ""}{x.rec.wins}W {x.rec.draws}D {x.rec.losses}L · {x.supporters} {x.supporters === 1 ? "fan" : "fans"}
+                      </div>
+                    </div>
+                    <div style={{ flexShrink: 0 }}>
+                      <span style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#D6A81D" }}>{x.rec.rating}</span>
+                      <span style={{ fontSize: 8.5, color: "#4e5c53", marginLeft: 3 }}>★</span>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+
             {lbTab === "scorers" && (
-              leaderboards.topScorers.length === 0
-                ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No goals recorded yet.</div>
-                : leaderboards.topScorers.map((s, i) => (
+              lbScoped(scorerState).topScorers.length === 0
+                ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No goals recorded{scorerState !== "All" ? ` in ${scorerState}` : ""} yet.</div>
+                : lbScoped(scorerState).topScorers.map((s, i) => (
                     <div key={`${s.name}-${s.team}`} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14" }}>
                       <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -6299,9 +6353,9 @@ export default function App() {
             )}
 
             {lbTab === "form" && (
-              leaderboards.teamForm.length === 0
+              lbScoped(scorerState).teamForm.length === 0
                 ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams have played enough matches yet (3 minimum).</div>
-                : leaderboards.teamForm.map((x, i) => (
+                : lbScoped(scorerState).teamForm.map((x, i) => (
                     <div key={x.team.id} onClick={() => { goBackPage(); openTeamProfile(x.team.id); }}
                       style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                       <div style={{ width: 17, fontFamily: "'Anton', sans-serif", fontSize: 13, color: i < 3 ? "#D6A81D" : "#4e5c53", flexShrink: 0 }}>{i + 1}</div>
@@ -6319,9 +6373,9 @@ export default function App() {
             )}
 
             {lbTab === "supported" && (
-              leaderboards.mostSupported.length === 0
+              lbScoped(scorerState).mostSupported.length === 0
                 ? <div style={{ fontSize: 12.5, color: "#7d8f83", padding: "10px 0" }}>No teams have supporters yet.</div>
-                : leaderboards.mostSupported.map((x, i) => {
+                : lbScoped(scorerState).mostSupported.map((x, i) => {
                     const cap = users.find((u) => u.id === x.team.captainId);
                     return (
                       <div key={x.team.id} onClick={() => { goBackPage(); openTeamProfile(x.team.id); }}
@@ -6401,9 +6455,9 @@ export default function App() {
                 const quiet = NG_STATES.filter((st) => !stateCounts[st] && match(st));
                 const row = (st, count) => (
                   <div key={st} className="tappable"
-                    onClick={() => { setStateFilter(st); setStateSearch(""); goBackPage(); }}
+                    onClick={() => { if (stateSheetFor === "scorers") setScorerState(st); else setStateFilter(st); setStateSearch(""); goBackPage(); }}
                     style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
-                    <span style={{ flex: 1, fontSize: 13, color: feedState === st ? "#E6B31E" : "#F7F4EA", fontWeight: feedState === st ? 600 : 400 }}>
+                    <span style={{ flex: 1, fontSize: 13, color: (stateSheetFor === "scorers" ? scorerState : feedState) === st ? "#E6B31E" : "#F7F4EA", fontWeight: (stateSheetFor === "scorers" ? scorerState : feedState) === st ? 600 : 400 }}>
                       {st}{me && me.state === st ? <span style={{ fontSize: 9.5, color: "#4e5c53", marginLeft: 7 }}>your state</span> : null}
                     </span>
                     {count > 0 && <span style={{ fontSize: 11, color: "#7d8f83" }}>{count}</span>}
@@ -6412,7 +6466,7 @@ export default function App() {
                 return (
                   <>
                     {!q && (
-                      <div className="tappable" onClick={() => { setStateFilter("All"); goBackPage(); }}
+                      <div className="tappable" onClick={() => { if (stateSheetFor === "scorers") setScorerState("All"); else setStateFilter("All"); goBackPage(); }}
                         style={{ display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #121a14", cursor: "pointer" }}>
                         <span style={{ flex: 1, fontSize: 13, color: feedState === "All" ? "#E6B31E" : "#F7F4EA", fontWeight: feedState === "All" ? 600 : 400 }}>All states</span>
                       </div>
@@ -6423,7 +6477,7 @@ export default function App() {
                     )}
                     {quiet.map((st) => (
                       <div key={st} className="tappable"
-                        onClick={() => { setStateFilter(st); setStateSearch(""); goBackPage(); }}
+                        onClick={() => { if (stateSheetFor === "scorers") setScorerState(st); else setStateFilter(st); setStateSearch(""); goBackPage(); }}
                         style={{ padding: "11px 0", borderBottom: "1px solid #121a14", fontSize: 12.5, color: "#4e5c53", cursor: "pointer" }}>{st}</div>
                     ))}
                     {withMatches.length === 0 && quiet.length === 0 && (
