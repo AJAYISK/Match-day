@@ -2738,10 +2738,13 @@ export default function App() {
        The negative margin pulls the row back so "Feed" lines up with the logo
        above it, while the active pill still has room to breathe. */
     .topnav { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
-      scrollbar-width: none; scroll-snap-type: x proximity; margin-left: -12px; padding-left: 12px; }
+      scrollbar-width: none; scroll-snap-type: x proximity; }
     .topnav::-webkit-scrollbar { display: none; }
-    .topnav button { flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(12px, 3.4vw, 14.5px); padding: 10px 12px; cursor: pointer; border-radius: 8px; }
-    .topnav button:first-child { margin-left: -12px; }
+    /* Four tabs should fill the row on any screen rather than bunching to the
+       left with dead space beside them. flex:1 shares the width equally;
+       min-width:max-content stops a label breaking if the row ever overflows,
+       at which point it scrolls instead. */
+    .topnav button { flex: 1 1 0; min-width: max-content; text-align: center; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(12px, 3.4vw, 14.5px); padding: 10px 6px; cursor: pointer; border-radius: 8px; }
     .topnav button.on { color: #12160f; background: #E6B31E; }
     .topnav button:hover:not(.on) { color: #F5F0E1; }
     /* ---------- Feed rails: sections scroll sideways instead of stacking, so a
@@ -3774,8 +3777,10 @@ export default function App() {
 
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px 60px" }}>
 
-        {/* KICK-OFF PERMISSION BANNER — scheduled time is due, captain decides */}
-        {me.role === "Captain" && (() => {
+        {/* KICK-OFF PERMISSION BANNER — scheduled time is due, captain decides.
+            Feed only: a prompt that follows you onto every page is nagging, and
+            the bell already carries it wherever you are. */}
+        {page === "feed" && me.role === "Captain" && (() => {
           const due = matches.filter((m) => m.status === "Scheduled" && m.createdBy === me.id && isDue(m));
           if (due.length === 0) return null;
           /* One compact line however many are due — the bell holds the detail. */
@@ -3798,8 +3803,9 @@ export default function App() {
           );
         })()}
 
-        {/* SCORE REQUEST BANNER — carousel when a captain has more than one overdue score */}
-        {pendingScores.length > 0 && (() => {
+        {/* SCORE REQUEST BANNER — carousel when a captain has more than one
+            overdue score. Feed only, for the same reason. */}
+        {page === "feed" && pendingScores.length > 0 && (() => {
           const idx = pendingScoreSlide % pendingScores.length;
           const m = pendingScores[idx];
           const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
