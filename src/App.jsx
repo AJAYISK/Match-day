@@ -10,6 +10,7 @@ const rowToMatchBase = (r) => ({
   playersB: r.players_b || "",
   location: r.location,
   referee: r.referee || "",
+  pitchId: r.pitch_id || null,
   date: r.match_date,
   time: (r.match_time || "").slice(0, 5),
   status: r.status,
@@ -201,7 +202,7 @@ const isValidEmail = (v) => /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.t
 /* Scorer names are typed by captains, so "Emeka A.", "emeka a" and "Emeka  A"
    all arrive as different strings for the same player. Collapse punctuation and
    spacing before tallying so one player is one row on the leaderboard. */
-const normName = (v) => (v || "").toLowerCase().replace(/[.,'`\u2019-]/g, "").replace(/\s+/g, " ").trim();
+const normName = (v) => (v || "").toLowerCase().replace(/[.,'`’-]/g, "").replace(/\s+/g, " ").trim();
 const sanitizeText = (v, max = 60) => v.replace(/[<>\\{}$`]/g, "").slice(0, max);
 const isStrongPassword = (v) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,64}$/.test(v);
 const MAX_OTP_ATTEMPTS = 5;
@@ -344,6 +345,19 @@ function TrophyIcon({ art, size = 24 }) {
    it back. Flip to true to restore it. Matches that belong to a tournament are
    hidden from every list while this is false. */
 const TOURNAMENTS_ENABLED = false;
+
+/* The pitch questionnaire. Answers are crowdsourced — anyone can answer, and a
+   prompt appears after a match you played in. Keep this list short: a form
+   nobody finishes is worse than three fields everybody does. */
+const PITCH_QUESTIONS = [
+  { key: "real", q: "Is this a real place?", opts: ["Yes, I've played here", "No, I don't think so"] },
+  { key: "area", q: "Where exactly is it?", free: true, hint: "Nearest landmark or bus stop" },
+  { key: "surface", q: "What's the surface?", opts: ["Grass", "Turf", "Sand", "Concrete"] },
+  { key: "lights", q: "Are there floodlights?", opts: ["Yes", "No"] },
+  { key: "cost", q: "What does it cost?", opts: ["Free", "Pay per match", "Pay per hour"] },
+  { key: "size", q: "What size is it?", opts: ["5-a-side", "7-a-side", "Full 11-a-side"] },
+  { key: "besttime", q: "Best time to find a game?", opts: ["Weekday evenings", "Saturday", "Sunday", "Any day"] },
+];
 
 const FORMATIONS = {
   "4-4-2": [
@@ -1072,6 +1086,10 @@ export default function App() {
   const [teamSearch, setTeamSearch] = useState("");
   const [captainSearch, setCaptainSearch] = useState("");
   const [playerSearch, setPlayerSearch] = useState("");
+  const [pitchSearch, setPitchSearch] = useState("");
+  const [pitches, setPitches] = useState([]);
+  const [pitchAnswers, setPitchAnswers] = useState([]);
+  const [viewPitch, setViewPitch] = useState(null);
   const [myProfileTab, setMyProfileTab] = useState("overview");
   /* Name field on the merged profile page. Seeded from the signed-in user and
      kept in sync if the profile reloads. */
@@ -1305,6 +1323,14 @@ export default function App() {
       const { data: trRows2 } = await supabase.from("tournament_rounds").select("*").order("round_number");
       if (trRows2) setTournamentRounds(trRows2.map((r) => ({ id: r.id, tournamentId: r.tournament_id, roundNumber: r.round_number, matchDate: r.match_date })));
     } catch (e) { /* tables not created yet — tournaments simply stay empty */ }
+    /* Pitches load defensively too — if the SQL hasn't been applied yet the app
+       carries on with an empty directory rather than failing to start. */
+    try {
+      const { data: pRows } = await supabase.from("pitches").select("*").order("created_at", { ascending: false });
+      if (pRows) setPitches(pRows.map((r) => ({ id: r.id, name: r.name, state: r.state || "", createdBy: r.created_by, createdAt: r.created_at })));
+      const { data: paRows2 } = await supabase.from("pitch_answers").select("*");
+      if (paRows2) setPitchAnswers(paRows2.map((r) => ({ id: r.id, pitchId: r.pitch_id, userId: r.user_id, question: r.question, answer: r.answer })));
+    } catch (e) { /* tables not created yet — the directory stays empty */ }
     const { data: tsRows } = await supabase.from("team_supporters").select("*");
     if (tsRows) setTeamSupporters(tsRows.map((r) => ({ fanId: r.fan_id, teamId: r.team_id })));
     const { data: paRows } = await supabase.from("player_awards").select("*").order("created_at", { ascending: false });
@@ -1711,6 +1737,21 @@ export default function App() {
   const bellItems = useMemo(() => {
     if (!me) return [];
     const out = [];
+
+    /* After a match you were part of, ask one thing about the pitch. One
+       question, not seven — a form nobody finishes is worse than three fields
+       everybody does. It rotates to whatever is still unanswered there. */
+    matches.filter((m) => m.status === "ResultPublished" && m.pitchId &&
+      (m.createdBy === me.id || (`${m.playersA},${m.playersB}`).toLowerCase().includes((me.rosterName || "~none~").toLowerCase())))
+      .slice(0, 3).forEach((m) => {
+        const pit = pitches.find((x) => x.id === m.pitchId);
+        if (!pit) return;
+        const next = PITCH_QUESTIONS.find((qq) => !pitchAnswers.some((a) => a.pitchId === pit.id && a.userId === me.id && a.question === qq.key));
+        if (!next) return;
+        out.push({ id: "pq-" + m.id, kind: "pitch", icon: "🥅",
+          title: `You played at ${pit.name}`, sub: next.q,
+          pitchId: pit.id, at: new Date(m.date || 0).getTime() });
+      });
 
     /* A warning from an admin — every role can receive one, so it sits above
        the role-specific sections. */
@@ -2535,6 +2576,47 @@ export default function App() {
   const homeMatchCount = matches.filter((m) => m.published && captainState(m) === myState).length;
   const stateFallback = !myState || homeMatchCount < 3;
   const inScope = (m) => stateFallback || captainState(m) === myState;
+  /* A pitch is found or created from the location text a captain types. Matching
+     on the normalised name stops "Campos", "campos" and "Campos Field" becoming
+     three pages for one pitch — the thing that would fragment the directory and
+     kill it. */
+  const findPitch = (name, st) => pitches.find((x) => normName(x.name) === normName(name) && (!st || x.state === st));
+  const ensurePitch = async (name, st) => {
+    const clean = (name || "").trim();
+    if (!clean) return null;
+    const found = findPitch(clean, st);
+    if (found) return found.id;
+    try {
+      const { data, error } = await supabase.from("pitches")
+        .insert({ name: clean, state: st || "", created_by: me.id }).select().single();
+      if (error || !data) return null;
+      setPitches((prev) => [{ id: data.id, name: data.name, state: data.state || "", createdBy: data.created_by, createdAt: data.created_at }, ...prev]);
+      return data.id;
+    } catch (e) { return null; }
+  };
+  const answerPitch = async (pitchId, question, answer) => {
+    try {
+      await supabase.from("pitch_answers")
+        .upsert({ pitch_id: pitchId, user_id: me.id, question, answer }, { onConflict: "pitch_id,user_id,question" });
+      setPitchAnswers((prev) => [
+        ...prev.filter((a) => !(a.pitchId === pitchId && a.userId === me.id && a.question === question)),
+        { id: `local-${Date.now()}`, pitchId, userId: me.id, question, answer },
+      ]);
+    } catch (e) { notify("Couldn't save that — try again."); }
+  };
+  /* The consensus answer is simply the most common one. With a handful of
+     answers that's as good as anything more clever, and it's explainable. */
+  const pitchConsensus = (pitchId, question) => {
+    const rows = pitchAnswers.filter((a) => a.pitchId === pitchId && a.question === question);
+    if (rows.length === 0) return null;
+    const tally = {};
+    rows.forEach((r) => { tally[r.answer] = (tally[r.answer] || 0) + 1; });
+    const best = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0];
+    return { answer: best, count: tally[best], total: rows.length };
+  };
+  const pitchMatches = (pitchId) => matches.filter((m) => m.published && m.pitchId === pitchId);
+  const myAnswer = (pitchId, question) =>
+    (pitchAnswers.find((a) => a.pitchId === pitchId && a.userId === me.id && a.question === question) || {}).answer || null;
   const scopeStateLabel = stateFallback ? "Nigeria" : myState;
 
   const leaderboards = useMemo(
@@ -2651,9 +2733,15 @@ export default function App() {
     .scoreboard { background: radial-gradient(circle at 50% -20%, rgba(245,240,225,.10), transparent 55%), repeating-linear-gradient(90deg, transparent 0 46px, rgba(245,240,225,.05) 46px 48px), ${T.turfDeep}; border: 2px solid ${T.turf}; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .pulse { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
-    .topnav { display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity; }
+    /* The tabs size to their own text instead of stretching to fill — stretching
+       is what made the gaps uneven and left a gutter before the first label.
+       The negative margin pulls the row back so "Feed" lines up with the logo
+       above it, while the active pill still has room to breathe. */
+    .topnav { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; scroll-snap-type: x proximity; margin-left: -12px; padding-left: 12px; }
     .topnav::-webkit-scrollbar { display: none; }
-    .topnav button { flex: 1 1 0; min-width: max-content; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(11px, 3.3vw, 14px); padding: 10px clamp(7px, 2.6vw, 16px); cursor: pointer; border-radius: 8px; }
+    .topnav button { flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(12px, 3.4vw, 14.5px); padding: 10px 12px; cursor: pointer; border-radius: 8px; }
+    .topnav button:first-child { margin-left: -12px; }
     .topnav button.on { color: #12160f; background: #E6B31E; }
     .topnav button:hover:not(.on) { color: #F5F0E1; }
     /* ---------- Feed rails: sections scroll sideways instead of stacking, so a
@@ -4535,7 +4623,11 @@ export default function App() {
               myTournaments={TOURNAMENTS_ENABLED ? tournaments.filter((t) => t.hostId === me.id && t.status === "active") : []}
               onCancel={() => setPage("mymatches")}
               onSave={async (data) => {
+                /* The pitch is created from what the captain typed, so the
+                   directory fills itself as matches get made. */
+                const pitchId = await ensurePitch(data.location, me.state);
                 const { error } = await supabase.from("matches").insert({
+                  pitch_id: pitchId,
                   created_by: me.id,
                   team_a_name: data.teamA.name, team_a_color: data.teamA.color,
                   team_b_name: data.teamB.name, team_b_color: data.teamB.color,
@@ -5154,19 +5246,200 @@ export default function App() {
           );
         })()}
 
-        {/* PITCHES and REFEREES are next — the tiles route here rather than
-            nowhere, so nothing dead-ends while they're being built. */}
-        {(page === "pitches" || page === "referees") && (
+        {/* PITCHES — a directory that fills itself. Every match a captain
+            creates adds its venue here; the people who play there answer the
+            questions. Newcomers to a state get somewhere to start. */}
+        {page === "pitches" && !viewPitch && (
           <>
             <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
               <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
             </button>
-            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>{page === "pitches" ? "Pitches" : "Referees"}</div>
-            <div className="card" style={{ color: "#7d8f83", lineHeight: 1.6 }}>
-              {page === "pitches"
-                ? "Coming soon — every pitch a captain has played on in your state, with directions, surface, floodlights and cost filled in by the people who play there."
-                : "Coming soon — referees in your state, built from the names captains add to their matches."}
+            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Pitches</div>
+            <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+              Every pitch played on in {scopeStateLabel}. Tap one to see what it's like — or to tell others.
             </div>
+            <input className="input" placeholder="🔍 Search a pitch…" value={pitchSearch}
+              onChange={(e) => setPitchSearch(sanitizeText(e.target.value, 40))} style={{ marginBottom: 14 }} />
+            {(() => {
+              const q = pitchSearch.trim().toLowerCase();
+              const list = pitches
+                .filter((x) => stateFallback || x.state === myState)
+                .filter((x) => !q || (x.name || "").toLowerCase().includes(q))
+                .map((x) => ({ ...x, played: pitchMatches(x.id).length, answered: pitchAnswers.filter((a) => a.pitchId === x.id).length }))
+                .sort((a, b) => b.played - a.played);
+              if (list.length === 0) {
+                return <div className="card" style={{ color: "#7d8f83", lineHeight: 1.6 }}>
+                  {q ? `No pitch matching “${pitchSearch}”.`
+                    : `No pitches in ${scopeStateLabel} yet — they're added automatically when a captain creates a match.`}
+                </div>;
+              }
+              return (
+                <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+                  {list.map((x) => {
+                    const real = pitchConsensus(x.id, "real");
+                    const verified = real && real.answer.startsWith("Yes") && real.count >= 3;
+                    const area = pitchConsensus(x.id, "area");
+                    return (
+                      <div key={x.id} className="tappable"
+                        onClick={() => { setViewPitch(x.id); pushCloseable(() => setViewPitch(null)); }}
+                        style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 14px", borderTop: "1px solid #1a231b", cursor: "pointer" }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: "#16211a", border: "1px solid #243128", display: "grid", placeItems: "center", fontSize: 15 }}>🥅</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 500, display: "flex", alignItems: "center", gap: 7 }}>
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</span>
+                            {verified && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: ".07em", color: "#3FA35B", border: "1px solid rgba(63,163,91,.4)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>VERIFIED</span>}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {area ? `${area.answer} · ` : ""}{x.played} match{x.played === 1 ? "" : "es"} played
+                          </div>
+                        </div>
+                        <span style={{ color: "#4e5c53", fontSize: 13, flexShrink: 0 }}>›</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </>
+        )}
+
+        {/* A single pitch: what's known, what's still unanswered, and one tap to
+            answer it. Unanswered questions come first — that's the whole point. */}
+        {page === "pitches" && viewPitch && (() => {
+          const pit = pitches.find((x) => x.id === viewPitch);
+          if (!pit) return null;
+          const played = pitchMatches(pit.id);
+          const real = pitchConsensus(pit.id, "real");
+          const verified = real && real.answer.startsWith("Yes") && real.count >= 3;
+          const answered = PITCH_QUESTIONS.filter((qq) => pitchConsensus(pit.id, qq.key));
+          const unanswered = PITCH_QUESTIONS.filter((qq) => !pitchConsensus(pit.id, qq.key));
+          return (
+            <>
+              <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
+                <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+                <div style={{ width: 50, height: 50, borderRadius: 14, flexShrink: 0, background: "#16211a", border: "1px solid #243128", display: "grid", placeItems: "center", fontSize: 21 }}>🥅</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="display" style={{ fontSize: 22, lineHeight: 1.1 }}>{pit.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 3 }}>
+                    {pit.state || scopeStateLabel} · {played.length} match{played.length === 1 ? "" : "es"} played
+                    {verified ? <span style={{ color: "#3FA35B", fontWeight: 600 }}> · verified</span> : null}
+                  </div>
+                </div>
+              </div>
+
+              {unanswered.length > 0 && (
+                <>
+                  <div className="daygroup" style={{ marginTop: 20 }}>Help others find this pitch<span>{unanswered.length} to answer</span></div>
+                  {unanswered.slice(0, 2).map((qq) => (
+                    <div key={qq.key} className="card" style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 10 }}>{qq.q}</div>
+                      {qq.free ? (
+                        <input className="input" placeholder={qq.hint} maxLength={60}
+                          onKeyDown={(e) => { if (e.key === "Enter" && e.target.value.trim()) { answerPitch(pit.id, qq.key, sanitizeText(e.target.value, 60)); e.target.value = ""; } }} />
+                      ) : (
+                        <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                          {qq.opts.map((o) => (
+                            <button key={o} className="statechip" onClick={() => answerPitch(pit.id, qq.key, o)}>{o}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {answered.length > 0 && (
+                <>
+                  <div className="daygroup" style={{ marginTop: 20 }}>What people say<span>{answered.length}</span></div>
+                  <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+                    {answered.map((qq) => {
+                      const c = pitchConsensus(pit.id, qq.key);
+                      const mine2 = myAnswer(pit.id, qq.key);
+                      return (
+                        <div key={qq.key} style={{ padding: "12px 14px", borderTop: "1px solid #1a231b" }}>
+                          <div style={{ fontSize: 10.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".07em", fontWeight: 700 }}>{qq.q}</div>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+                            <span style={{ fontSize: 14, fontWeight: 500, flex: 1, minWidth: 0 }}>{c.answer}</span>
+                            <span style={{ fontSize: 10, color: "#4e5c53", flexShrink: 0 }}>{c.count} of {c.total}</span>
+                          </div>
+                          {!mine2 && !qq.free && (
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9 }}>
+                              {qq.opts.map((o) => (
+                                <button key={o} className="linkbtn" onClick={() => answerPitch(pit.id, qq.key, o)}>{o}</button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {played.length > 0 && (
+                <>
+                  <div className="daygroup">Played here<span>{played.length}</span></div>
+                  <div className="feedgrid">
+                    {played.slice(0, 4).map((m) => (
+                      <MatchCard key={m.id} m={m} tournamentName={tnName(m)} tournamentPositions={tnPositions(m)}
+                        minute={minute} breakLeft={breakLeft}
+                        onOpen={() => openMatchDetail(m.id)} onPoster={() => openPoster(m.id)} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
+
+        {page === "referees" && (
+          <>
+            <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
+              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+            </button>
+            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Referees</div>
+            <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+              Referees in {scopeStateLabel}, built from the names captains add to their matches.
+            </div>
+            {(() => {
+              /* No referee table — the directory is derived from the names typed
+                 on matches. If names never repeat, this stays empty and nothing
+                 was wasted building it. */
+              const tally = {};
+              publishedAll.forEach((m) => {
+                if (!m.referee) return;
+                const k = normName(m.referee);
+                if (!tally[k]) tally[k] = { name: m.referee, count: 0, last: m.date, pitches: new Set() };
+                tally[k].count += 1;
+                if (m.location) tally[k].pitches.add(m.location);
+                if (m.date > tally[k].last) tally[k].last = m.date;
+              });
+              const list = Object.values(tally).sort((a, b) => b.count - a.count);
+              if (list.length === 0) {
+                return <div className="card" style={{ color: "#7d8f83", lineHeight: 1.6 }}>
+                  No referees named yet — captains can add one when they create a match.
+                </div>;
+              }
+              return (
+                <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+                  {list.map((r) => (
+                    <div key={r.name} style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 14px", borderTop: "1px solid #1a231b" }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 999, flexShrink: 0, background: "#1b2a1f", border: "1.5px solid #8FA396", display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 14, color: "#8FA396" }}>
+                        {(r.name || "?").slice(0, 2).toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                        <div style={{ fontSize: 10.5, color: "#7d8f83", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.count} match{r.count === 1 ? "" : "es"} · {r.pitches.size} pitch{r.pitches.size === 1 ? "" : "es"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </>
         )}
 
@@ -5199,7 +5472,7 @@ export default function App() {
                 });
               if (all.length === 0) {
                 return <div className="card" style={{ color: "#7d8f83" }}>
-                  {q ? `No player matching \u201c${playerSearch}\u201d.` : `No players have claimed an account in ${scopeStateLabel} yet.`}
+                  {q ? `No player matching “${playerSearch}”.` : `No players have claimed an account in ${scopeStateLabel} yet.`}
                 </div>;
               }
               const claimed = all.filter((u) => teamOf(u));
@@ -5722,6 +5995,8 @@ export default function App() {
       {/* ---------- MATCH DETAIL ---------- */}
       {openMatch && (
         <MatchDetail
+          teamAObj={savedTeams.find((t) => normName(t.name) === normName((matches.find((x) => x.id === openMatch) || { teamA: {} }).teamA.name || "")) || null}
+          teamBObj={savedTeams.find((t) => normName(t.name) === normName((matches.find((x) => x.id === openMatch) || { teamB: {} }).teamB.name || "")) || null}
           m={matches.find((x) => x.id === openMatch)}
           me={me}
           linkedPlayers={users.filter((u) => u.role === "Player" && u.teamId && u.rosterName).map((u) => ({ ...u, teamName: (savedTeams.find((t) => t.id === u.teamId) || {}).name || "" }))}
@@ -6001,6 +6276,10 @@ export default function App() {
                           style={{ fontSize: 9.5, background: "none", color: "#B9C7BC", fontWeight: 600, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>
                           {n.kind === "score" ? "Submit result" : "Open"}
                         </button>
+                      )}
+                      {n.kind === "pitch" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); setViewPitch(n.pitchId); openPage("pitches"); }}
+                          style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Answer</button>
                       )}
                       {n.kind === "warning" && (
                         <button className="tappable" onClick={async () => {
@@ -7581,6 +7860,204 @@ function FixtureList({ list, now, onOpen, grouped = true }) {
   );
 }
 
+/* ── MATCH STATISTICS ────────────────────────────────────────────────────────
+   Possession, shots, on target, corners, fouls and offsides are stored. Saves
+   and conversion rate are calculated from them: a save is an opponent's shot on
+   target that didn't go in, and conversion is goals over shots. Nothing here
+   needs a new column. */
+function MatchStats({ m, colorA = "#E6B31E", colorB = "#3FA35B" }) {
+  const a = { shots: m.shotsA ?? 0, on: m.shotsOnTargetA ?? 0, corners: m.cornersA ?? 0, fouls: m.foulsA ?? 0, off: m.offsidesA ?? 0, goals: m.finalA ?? m.liveA ?? 0 };
+  const b = { shots: m.shotsB ?? 0, on: m.shotsOnTargetB ?? 0, corners: m.cornersB ?? 0, fouls: m.foulsB ?? 0, off: m.offsidesB ?? 0, goals: m.finalB ?? m.liveB ?? 0 };
+  a.saves = Math.max(0, b.on - b.goals);
+  b.saves = Math.max(0, a.on - a.goals);
+  const conv = (x) => (x.shots > 0 ? Math.round((x.goals / x.shots) * 100) : 0);
+  const poss = m.possessionA ?? 50;
+  const anyData = a.shots + b.shots + a.corners + b.corners + a.fouls + b.fouls + a.off + b.off > 0;
+
+  const Block = ({ label, children }) => (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 10.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".09em", fontWeight: 700, textAlign: "center", marginBottom: 10 }}>{label}</div>
+      {children}
+    </div>
+  );
+  const Pair = ({ label, va, vb }) => {
+    const tot = va + vb;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0", borderTop: "1px solid #1a231b" }}>
+        <span className="display" style={{ fontSize: 17, width: 32, textAlign: "left", color: colorA }}>{va}</span>
+        <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+          <div style={{ fontSize: 10.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".07em", fontWeight: 700, marginBottom: 5 }}>{label}</div>
+          <div style={{ height: 6, borderRadius: 99, display: "flex", overflow: "hidden", background: "#1a231b", gap: 2 }}>
+            <div style={{ width: `${tot ? (va / tot) * 100 : 50}%`, background: colorA }} />
+            <div style={{ width: `${tot ? (vb / tot) * 100 : 50}%`, background: colorB }} />
+          </div>
+        </div>
+        <span className="display" style={{ fontSize: 17, width: 32, textAlign: "right", color: colorB }}>{vb}</span>
+      </div>
+    );
+  };
+  const Ring = ({ label, va, vb }) => {
+    const tot = va + vb, C = 2 * Math.PI * 27;
+    const frac = tot ? va / tot : 0.5;
+    return (
+      <div className="card" style={{ flex: 1, padding: "14px 6px", textAlign: "center" }}>
+        <svg width="62" height="62" viewBox="0 0 66 66" style={{ display: "block", margin: "0 auto 8px" }}>
+          <circle cx="33" cy="33" r="27" fill="none" stroke="#1a231b" strokeWidth="8" />
+          <circle cx="33" cy="33" r="27" fill="none" stroke={colorA} strokeWidth="8" strokeLinecap="round"
+            strokeDasharray={`${C * frac} ${C}`} transform="rotate(-90 33 33)" />
+          <text x="33" y="38" textAnchor="middle" fontFamily="Anton, sans-serif" fontSize="16" fill="#F7F4EA">{tot}</text>
+        </svg>
+        <div style={{ fontSize: 10, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".07em", fontWeight: 700 }}>{label}</div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 5, fontFamily: "'Anton', sans-serif", fontSize: 14 }}>
+          <span style={{ color: colorA }}>{va}</span><span style={{ color: colorB }}>{vb}</span>
+        </div>
+      </div>
+    );
+  };
+
+  if (!anyData && poss === 50) {
+    return <div className="card" style={{ color: "#7d8f83", lineHeight: 1.6 }}>No statistics recorded for this match.</div>;
+  }
+  return (
+    <>
+      <Block label="Ball possession">
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+          <span className="display" style={{ fontSize: 27, color: colorA }}>{poss}<span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600 }}>%</span></span>
+          <span className="display" style={{ fontSize: 27, color: colorB }}>{100 - poss}<span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600 }}>%</span></span>
+        </div>
+        <div style={{ height: 8, borderRadius: 99, display: "flex", overflow: "hidden", background: "#1a231b" }}>
+          <div style={{ width: `${poss}%`, background: colorA }} />
+          <div style={{ width: `${100 - poss}%`, background: colorB }} />
+        </div>
+      </Block>
+
+      {(a.shots > 0 || b.shots > 0) && (
+        <Block label="Conversion rate">
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+            <span className="display" style={{ fontSize: 27, color: colorA }}>{conv(a)}<span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600 }}>%</span></span>
+            <span className="display" style={{ fontSize: 27, color: colorB }}>{conv(b)}<span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 13, fontWeight: 600 }}>%</span></span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#4e5c53" }}>
+            <span>{a.goals} from {a.shots} shot{a.shots === 1 ? "" : "s"}</span>
+            <span>{b.goals} from {b.shots} shot{b.shots === 1 ? "" : "s"}</span>
+          </div>
+        </Block>
+      )}
+
+      <div className="card" style={{ marginBottom: 10 }}>
+        <Pair label="Attempts" va={a.shots} vb={b.shots} />
+        <Pair label="On target" va={a.on} vb={b.on} />
+        <Pair label="Corners" va={a.corners} vb={b.corners} />
+        <Pair label="Saves" va={a.saves} vb={b.saves} />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        <Ring label="Fouls" va={a.fouls} vb={b.fouls} />
+        <Ring label="Offsides" va={a.off} vb={b.off} />
+        <Ring label="Shots" va={a.shots} vb={b.shots} />
+      </div>
+    </>
+  );
+}
+
+/* ── LINE-UPS ────────────────────────────────────────────────────────────────
+   The pitch, the formations and each player's position already exist — they run
+   the team editor and team profiles. This puts them on the match. Names replace
+   squad numbers because grassroots players are known by name, not number. */
+function LineupPitch({ team, names = [], scorers = "", color = "#E6B31E" }) {
+  const slots = (team && team.formation && FORMATIONS[team.formation]) || null;
+  const positions = (team && team.positions) || {};
+  const scored = (scorers || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const initials = (n) => (n || "?").trim().split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
+  if (!slots) {
+    if (names.length === 0) return <div className="card" style={{ color: "#7d8f83" }}>No line-up recorded.</div>;
+    return (
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        {names.map((n) => (
+          <div key={n} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", borderTop: "1px solid #1a231b" }}>
+            <span style={{ width: 28, height: 28, borderRadius: 999, flexShrink: 0, background: color, display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 10, color: "rgba(10,13,10,.85)" }}>{initials(n)}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n}</span>
+            {scored.includes(n.trim().toLowerCase()) && <span style={{ fontSize: 12 }}>⚽</span>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 11 }}>
+        <div><div className="display" style={{ fontSize: 20 }}>{team.formation}</div>
+          <div style={{ fontSize: 10, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".08em", fontWeight: 700 }}>Formation</div></div>
+        <div style={{ textAlign: "right" }}><div className="display" style={{ fontSize: 20 }}>{Object.keys(positions).length}</div>
+          <div style={{ fontSize: 10, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".08em", fontWeight: 700 }}>Named</div></div>
+      </div>
+      <div style={{ position: "relative", width: "100%", aspectRatio: "0.68", borderRadius: 16, overflow: "hidden", marginBottom: 14,
+        background: "repeating-linear-gradient(0deg,#1c6b3a 0 8.33%,#17602f 8.33% 16.66%)", border: "1px solid #14532D" }}>
+        <div style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 2, background: "rgba(255,255,255,.3)" }} />
+        <div style={{ position: "absolute", left: "50%", top: "50%", width: "26%", aspectRatio: "1", transform: "translate(-50%,-50%)", border: "2px solid rgba(255,255,255,.3)", borderRadius: "50%" }} />
+        <div style={{ position: "absolute", left: "22%", right: "22%", top: -1, height: "15%", border: "2px solid rgba(255,255,255,.3)", borderTop: 0 }} />
+        <div style={{ position: "absolute", left: "22%", right: "22%", bottom: -1, height: "15%", border: "2px solid rgba(255,255,255,.3)", borderBottom: 0 }} />
+        {slots.map((slot) => {
+          const nm = positions[slot.key];
+          if (!nm) return null;
+          const didScore = scored.includes(String(nm).trim().toLowerCase());
+          return (
+            <div key={slot.key} style={{ position: "absolute", left: `${slot.x}%`, top: `${slot.y}%`, transform: "translate(-50%,-50%)", width: "19%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ position: "relative", width: 36, height: 36, borderRadius: 999, background: color, display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 12, color: "rgba(10,13,10,.85)", boxShadow: "0 2px 5px rgba(0,0,0,.35)" }}>
+                {initials(nm)}
+                {didScore && <span style={{ position: "absolute", top: -5, left: -6, fontSize: 11 }}>⚽</span>}
+              </div>
+              <div style={{ fontSize: 9, color: "#fff", fontWeight: 600, marginTop: 4, textAlign: "center", lineHeight: 1.15, textShadow: "0 1px 3px rgba(0,0,0,.75)", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nm}</div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ── TIMELINE ────────────────────────────────────────────────────────────────
+   Every event is already written to match_events as one string with the minute
+   prefixed and an emoji for the type, so the whole timeline can be read back
+   without any new columns. Real columns would be cleaner; they aren't needed. */
+function MatchTimeline({ events = [], teamAName = "" }) {
+  if (!events || events.length === 0) {
+    return <div className="card" style={{ color: "#7d8f83" }}>Nothing recorded yet.</div>;
+  }
+  const parse = (e) => {
+    const msg = e.message || "";
+    const min = (msg.match(/^(\d+)'/) || [])[1] || null;
+    const text = msg.replace(/^\d+'\s*/, "");
+    const icon = (text.match(/^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{23F0}-\u{23FF}])/u) || [])[1] || "•";
+    const body = text.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+    const key = icon;
+    const big = key === "⚽" || key === "📰" || key === "🏁";
+    const sideA = teamAName && body.toLowerCase().startsWith(teamAName.toLowerCase());
+    return { min, icon, body, big, sideA };
+  };
+  return (
+    <div style={{ position: "relative", paddingLeft: 52 }}>
+      <div style={{ position: "absolute", left: 48, top: 8, bottom: 8, width: 2, background: "#1a231b" }} />
+      {events.map((e) => {
+        const p = parse(e);
+        return (
+          <div key={e.id} style={{ position: "relative", display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 0" }}>
+            <span style={{ position: "absolute", left: -52, width: 32, textAlign: "right", fontFamily: "'Anton', sans-serif", fontSize: 13, color: "#4e5c53", top: 13 }}>
+              {p.min ? `${p.min}'` : ""}
+            </span>
+            <span style={{ position: "absolute", left: -8, top: 16, width: 10, height: 10, borderRadius: 999, background: p.big ? "#E6B31E" : "#3a4a3e", border: "2px solid #0E140F" }} />
+            <span style={{ width: 28, height: 28, borderRadius: 9, background: "#16211a", display: "grid", placeItems: "center", fontSize: 13, flexShrink: 0 }}>{p.icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: p.big ? 14 : 13, fontWeight: p.big ? 600 : 500, lineHeight: 1.35 }}>{p.body}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* One card design across the app. Status decides the left edge and the label;
    everything else stays put, so a live match and a finished one read the same
    way down the page. Props are unchanged from the old scoreboard version. */
@@ -7677,7 +8154,20 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, tournamentName, tou
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, teamAObj = null, teamBObj = null, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+  const [detailTab, setDetailTab] = useState("timeline");
+  const [lineupSide, setLineupSide] = useState(0);
+  const [detailEvents, setDetailEvents] = useState([]);
+  /* The timeline reads the events already written for this match — nothing new
+     is stored, it's just never been shown on a finished match before. */
+  useEffect(() => {
+    if (m.status !== "ResultPublished") return;
+    let cancelled = false;
+    supabase.from("match_events").select("*").eq("match_id", m.id)
+      .order("created_at", { ascending: false }).limit(60)
+      .then(({ data }) => { if (!cancelled && data) setDetailEvents(data); });
+    return () => { cancelled = true; };
+  }, [m.id, m.status]);
   const [fa, setFa] = useState("");
   const [fb, setFb] = useState("");
   const [postponing, setPostponing] = useState(false);
@@ -7772,7 +8262,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             } else if (paused) {
               chipText = "PAUSED"; chipColor = "#EBC65C"; chipBg = "rgba(214,168,29,.12)"; chipBorder = "rgba(214,168,29,.35)";
             } else if (live) {
-              chipText = "LIVE · " + minute(m) + "\u2032"; chipColor = "#e8776a"; chipBg = "rgba(232,68,46,.12)"; chipBorder = "rgba(232,68,46,.35)";
+              chipText = "LIVE · " + minute(m) + "′"; chipColor = "#e8776a"; chipBg = "rgba(232,68,46,.12)"; chipBorder = "rgba(232,68,46,.35)";
             } else if (m.status === "ResultPublished") {
               chipText = "FULL TIME"; chipColor = "#7d8f83"; chipBg = "#141c16"; chipBorder = "#24302a";
             } else if (m.status === "AwaitingScore") {
@@ -7783,9 +8273,9 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
               const untilText = typeof untilKickoff === "function" ? untilKickoff(m) : null;
               chipText = untilText ? String(untilText).toUpperCase() + " TO GO" : "SCHEDULED"; chipColor = "#7d8f83"; chipBg = "#141c16"; chipBorder = "#24302a";
             }
-            const scoreText = m.status === "ResultPublished" ? (m.finalA + "\u2013" + m.finalB)
-              : live ? ((m.liveA ?? 0) + "\u2013" + (m.liveB ?? 0))
-              : m.status === "AwaitingScore" ? "FT" : m.status === "Cancelled" ? "\u2014" : "VS";
+            const scoreText = m.status === "ResultPublished" ? (m.finalA + "–" + m.finalB)
+              : live ? ((m.liveA ?? 0) + "–" + (m.liveB ?? 0))
+              : m.status === "AwaitingScore" ? "FT" : m.status === "Cancelled" ? "—" : "VS";
             return (
               <>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: chipBg, border: "1px solid " + chipBorder, borderRadius: 5, padding: "3px 10px", fontSize: 9.5, fontWeight: 700, color: chipColor, letterSpacing: "1.4px", marginBottom: 14 }}>
@@ -7812,7 +8302,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                   );
                 })()}
                 <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 12, letterSpacing: ".4px" }}>
-                  {m.location}{m.date ? " \u00b7 " + m.date : ""}{m.time ? " at " + m.time : ""}
+                  {m.location}{m.date ? " · " + m.date : ""}{m.time ? " at " + m.time : ""}
                 </div>
                 {captainName && (
                   <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 4, letterSpacing: ".4px" }}>
@@ -7824,6 +8314,45 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             );
           })()}
         </div>
+
+        {/* ── TIMELINE / STATISTICS / LINE-UPS ──────────────────────────────
+            A finished match is when people study the numbers, so the three tabs
+            live here rather than on the live view. */}
+        {m.status === "ResultPublished" && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", borderBottom: "1px solid #243128", marginBottom: 14 }}>
+              {[["timeline", "Timeline"], ["stats", "Statistics"], ["lineups", "Line-ups"]].map(([k, label]) => (
+                <button key={k} onClick={() => setDetailTab(k)}
+                  style={{ flex: 1, background: "none", border: 0, borderBottom: `2px solid ${detailTab === k ? "#E6B31E" : "transparent"}`,
+                    color: detailTab === k ? "#F7F4EA" : "#7d8f83", fontWeight: detailTab === k ? 700 : 500,
+                    fontSize: 13, padding: "11px 3px", fontFamily: "inherit", cursor: "pointer" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {detailTab === "stats" ? (
+              <MatchStats m={m} colorA={m.teamA.color} colorB={m.teamB.color} />
+            ) : detailTab === "lineups" ? (
+              <>
+                <div style={{ display: "flex", borderBottom: "1px solid #243128", marginBottom: 14 }}>
+                  {[[0, m.teamA.name], [1, m.teamB.name]].map(([i, nm]) => (
+                    <button key={i} onClick={() => setLineupSide(i)}
+                      style={{ flex: 1, background: "none", border: 0, borderBottom: `2px solid ${lineupSide === i ? "#F7F4EA" : "transparent"}`,
+                        color: lineupSide === i ? "#F7F4EA" : "#7d8f83", fontWeight: lineupSide === i ? 700 : 500, fontSize: 12.5,
+                        padding: "9px 4px", fontFamily: "inherit", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {nm}
+                    </button>
+                  ))}
+                </div>
+                {lineupSide === 0
+                  ? <LineupPitch team={teamAObj} names={rosterNames(m.playersA)} scorers={m.scorersA} color={m.teamA.color} />
+                  : <LineupPitch team={teamBObj} names={rosterNames(m.playersB)} scorers={m.scorersB} color={m.teamB.color} />}
+              </>
+            ) : (
+              <MatchTimeline events={detailEvents} teamAName={m.teamA.name} />
+            )}
+          </div>
+        )}
 
         {/* GOALS — who scored, readable at a glance. Published results only. */}
         {m.status === "ResultPublished" && (m.scorersA || m.scorersB) && (() => {
