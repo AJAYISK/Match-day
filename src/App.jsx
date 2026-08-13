@@ -1720,6 +1720,7 @@ export default function App() {
     if (patch.pin !== undefined) row.pin = patch.pin;
     if (patch.contactInfo !== undefined) row.contact_info = sanitizeText(patch.contactInfo, 60);
     if (patch.contactPublic !== undefined) row.contact_public = patch.contactPublic;
+    if (patch.state !== undefined) row.state = patch.state;
     const { error } = await supabase.from("profiles").update(row).eq("id", me.id);
     if (error) return notify(error.message);
     setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, ...patch } : u)));
@@ -2576,6 +2577,16 @@ export default function App() {
   const homeMatchCount = matches.filter((m) => m.published && captainState(m) === myState).length;
   const stateFallback = !myState || homeMatchCount < 3;
   const inScope = (m) => stateFallback || captainState(m) === myState;
+  /* A browser can't tell us a Nigerian state — the timezone is Africa/Lagos for
+     the whole country, and anything better needs a geolocation permission and a
+     reverse-geocode service. So this suggests rather than detects: the states
+     with the most activity, which is where a new user is most likely to be
+     because that's where the app is being used. They can still pick any other. */
+  const suggestedStates = (() => {
+    const tally = {};
+    matches.forEach((m) => { if (!m.published) return; const st = captainState(m); if (st) tally[st] = (tally[st] || 0) + 1; });
+    return Object.keys(tally).sort((a, b) => tally[b] - tally[a]).slice(0, 3);
+  })();
   /* A pitch is found or created from the location text a captain types. Matching
      on the normalised name stops "Campos", "campos" and "Campos Field" becoming
      three pages for one pitch — the thing that would fragment the directory and
@@ -2738,13 +2749,13 @@ export default function App() {
        The negative margin pulls the row back so "Feed" lines up with the logo
        above it, while the active pill still has room to breathe. */
     .topnav { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
-      scrollbar-width: none; scroll-snap-type: x proximity; }
+      scrollbar-width: none; scroll-snap-type: x proximity; scroll-padding-inline: 12px; overscroll-behavior-x: contain; }
     .topnav::-webkit-scrollbar { display: none; }
-    /* Four tabs should fill the row on any screen rather than bunching to the
-       left with dead space beside them. flex:1 shares the width equally;
-       min-width:max-content stops a label breaking if the row ever overflows,
-       at which point it scrolls instead. */
-    .topnav button { flex: 1 1 0; min-width: max-content; text-align: center; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(12px, 3.4vw, 14.5px); padding: 10px 6px; cursor: pointer; border-radius: 8px; }
+    /* flex-grow fills the row when the tabs fit, so four or five tabs spread
+       evenly with no dead space. flex-shrink 0 means they never squeeze: once
+       the labels stop fitting the row scrolls sideways instead, and the active
+       tab is scrolled back into view on every page change. */
+    .topnav button { flex: 1 0 auto; min-width: max-content; text-align: center; white-space: nowrap; scroll-snap-align: start; background: none; border: 0; color: #8FA396; font-family: 'Space Grotesk'; font-weight: 700; font-size: clamp(12px, 3.4vw, 14.5px); padding: 10px 6px; cursor: pointer; border-radius: 8px; }
     .topnav button.on { color: #12160f; background: #E6B31E; }
     .topnav button:hover:not(.on) { color: #F5F0E1; }
     /* ---------- Feed rails: sections scroll sideways instead of stacking, so a
@@ -3771,6 +3782,7 @@ export default function App() {
             {me.role === "Captain" && <button className={page === "mymatches" || page === "create" ? "on" : ""} onClick={() => setPage("mymatches")}>Matches</button>}
             {TOURNAMENTS_ENABLED && <button className={page === "tournaments" ? "on" : ""} onClick={() => { setViewTournament(null); setPage("tournaments"); }}>Tournaments</button>}
             <button className={page === "about" ? "on" : ""} onClick={() => setPage("about")}>About</button>
+            <button className={page === "profile" ? "on" : ""} onClick={() => setPage("profile")}>Profile</button>
           </nav>
         </div>
       </header>
@@ -3873,6 +3885,24 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* No state on the account at all — usually an older signup from
+                before the field existed. One prompt on the feed, dismissible,
+                because gating can't work until this is answered. */}
+            {!myState && (
+              <div className="card" style={{ marginBottom: 18, borderLeft: "2px solid #E6B31E" }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 4 }}>📍 Where do you play?</div>
+                <div style={{ fontSize: 12, color: "#8FA396", lineHeight: 1.5, marginBottom: 11 }}>
+                  You're seeing matches from across Nigeria. Pick your state and the feed becomes local.
+                </div>
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  {suggestedStates.map((st) => (
+                    <button key={st} className="statechip" onClick={() => updateProfile({ state: st })}>{st}</button>
+                  ))}
+                  <button className="statechip" onClick={() => setPage("profile")}>Another state ▾</button>
+                </div>
+              </div>
+            )}
 
             {/* Cold start: their own state is too quiet to be worth gating to, so
                 the app widens to nationwide and says why. It switches itself off
@@ -8161,7 +8191,6 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, tournamentName, tou
 }
 
 function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, teamAObj = null, teamBObj = null, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
-  const [detailTab, setDetailTab] = useState("timeline");
   const [lineupSide, setLineupSide] = useState(0);
   const [detailEvents, setDetailEvents] = useState([]);
   /* The timeline reads the events already written for this match — nothing new
@@ -8190,7 +8219,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   const [reqOpen, setReqOpen] = useState(false);
   const [streamInput, setStreamInput] = useState("");
   const [ctrlTab, setCtrlTab] = useState("score"); // score | stats | commentary | stream — captain's live-match control tabs
-  const [detailTab, setDetailTab] = useState("summary");
+  const [detailTab, setDetailTab] = useState("timeline"); // timeline | stats | lineups
   /* Deliberately empty strings, not zeros — captains type the real score. */
   const [tsA, setTsA] = useState("");
   const [tsB, setTsB] = useState(""); // summary | lineups | form — what fans and captains browse
@@ -9504,6 +9533,7 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
   const [curPin, setCurPin] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
+  const [stateChoice, setStateChoice] = useState(me.state || "");
   const digits = (v) => v.replace(/\D/g, "").slice(0, 4);
 
   const saveName = () => {
@@ -9649,6 +9679,24 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
 
       {/* SETTINGS */}
       <div style={{ display: selfTab === "settings" ? "block" : "none" }}>
+
+      {/* Your state decides everything you see — there's no filter anywhere else
+          in the app, so this is the one control that changes the whole feed. */}
+      <div className="card" style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+        <div className="display" style={{ fontSize: 14, color: "#E6B31E" }}>📍 Your state</div>
+        <div style={{ fontSize: 12, color: "#8FA396", lineHeight: 1.5 }}>
+          {me.state
+            ? `You're seeing matches, teams, captains and players in ${me.state}. Moved? Change it here.`
+            : "You haven't set a state yet, so you're seeing matches from across Nigeria. Set it to see what's happening where you are."}
+        </div>
+        <StatePicker value={stateChoice} allLabel={null} label="Your state"
+          placeholder="Select your state…" onChange={setStateChoice} />
+        <button className="btn btn-gold" disabled={!stateChoice || stateChoice === me.state}
+          style={!stateChoice || stateChoice === me.state ? { opacity: .5 } : null}
+          onClick={() => { onSave({ state: stateChoice }); notify(`Showing ${stateChoice} ✔`); }}>
+          {me.state ? "Change state" : "Set my state"}
+        </button>
+      </div>
 
 
       {/* Captain team-join contact */}
