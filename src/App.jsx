@@ -349,6 +349,9 @@ const TOURNAMENTS_ENABLED = false;
 /* The pitch questionnaire. Answers are crowdsourced — anyone can answer, and a
    prompt appears after a match you played in. Keep this list short: a form
    nobody finishes is worse than three fields everybody does. */
+/* Deliberately small. A long picker turns a match room into a sticker board. */
+const CHAT_EMOJI = ["🔥", "⚽", "😂", "👏", "😮", "💚"];
+
 const PITCH_QUESTIONS = [
   { key: "real", q: "Is this a real place?", opts: ["Yes, I've played here", "No, I don't think so"] },
   { key: "area", q: "Where exactly is it?", free: true, hint: "Nearest landmark or bus stop" },
@@ -786,7 +789,7 @@ function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
    24 hours. Polls rather than using Realtime, so it costs nothing extra on a
    plan billed by concurrent connections. Emoji only: no image or GIF uploads,
    which keeps moderation tractable and data use low. ---------- */
-function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, fullHeight = false }) {
+function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, fullHeight = false, reactions = [], onReact }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const endRef = useRef(null);
@@ -856,6 +859,41 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, f
                 {msg.reported && (
                   <div style={{ fontSize: 8.5, color: "#e08a7d", marginTop: 3 }}>⚑ This message has been reported</div>
                 )}
+                {/* Reactions. A chip only appears once someone has used it, so a
+                    quiet room stays quiet; ＋ opens the small set. */}
+                {onReact && (() => {
+                  const mine2 = (reactions || []).filter((r) => r.chatId === msg.id && r.userId === me.id).map((r) => r.emoji);
+                  const tally = {};
+                  (reactions || []).filter((r) => r.chatId === msg.id).forEach((r) => { tally[r.emoji] = (tally[r.emoji] || 0) + 1; });
+                  const used = Object.keys(tally);
+                  return (
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+                      {used.map((e) => (
+                        <button key={e} onClick={() => onReact(msg.id, e)}
+                          style={{ fontFamily: "inherit", fontSize: 11, padding: "4px 9px", borderRadius: 999, cursor: "pointer",
+                            display: "flex", alignItems: "center", gap: 4,
+                            background: mine2.includes(e) ? "rgba(230,179,30,.12)" : "#141c16",
+                            border: `1px solid ${mine2.includes(e) ? "rgba(230,179,30,.5)" : "#243128"}`,
+                            color: mine2.includes(e) ? "#E6B31E" : "#8FA396" }}>
+                          {e} <span>{tally[e]}</span>
+                        </button>
+                      ))}
+                      {CHAT_EMOJI.filter((e) => !used.includes(e)).length > 0 && (
+                        <details style={{ display: "inline-block" }}>
+                          <summary style={{ listStyle: "none", cursor: "pointer", fontSize: 11, padding: "4px 9px", borderRadius: 999,
+                            background: "#141c16", border: "1px solid #243128", color: "#4e5c53" }}>＋</summary>
+                          <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+                            {CHAT_EMOJI.filter((e) => !used.includes(e)).map((e) => (
+                              <button key={e} onClick={() => onReact(msg.id, e)}
+                                style={{ fontFamily: "inherit", fontSize: 13, padding: "4px 8px", borderRadius: 999, cursor: "pointer",
+                                  background: "#141c16", border: "1px solid #243128" }}>{e}</button>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div style={{ display: "flex", gap: 10, paddingTop: 3 }}>
                   {live && (
                     <button onClick={() => setReplyTo(msg)}
@@ -1100,6 +1138,20 @@ export default function App() {
   const [captainSearch, setCaptainSearch] = useState("");
   const [playerSearch, setPlayerSearch] = useState("");
   const [pitchSearch, setPitchSearch] = useState("");
+  const [chatReactions, setChatReactions] = useState([]);
+  /* Reminders are a local preference, not shared data — the bell reads them to
+     nudge you before kick-off, so there's nothing to store server-side. */
+  const [reminders, setReminders] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("am-reminders") || "[]"); } catch { return []; }
+  });
+  const toggleRemind = (id) => {
+    setReminders((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      try { localStorage.setItem("am-reminders", JSON.stringify(next)); } catch {}
+      notify(prev.includes(id) ? "Reminder off" : "We'll remind you before kick-off ✔");
+      return next;
+    });
+  };
   const [pitches, setPitches] = useState([]);
   const [pitchAnswers, setPitchAnswers] = useState([]);
   const [viewPitch, setViewPitch] = useState(null);
@@ -1336,6 +1388,10 @@ export default function App() {
       const { data: trRows2 } = await supabase.from("tournament_rounds").select("*").order("round_number");
       if (trRows2) setTournamentRounds(trRows2.map((r) => ({ id: r.id, tournamentId: r.tournament_id, roundNumber: r.round_number, matchDate: r.match_date })));
     } catch (e) { /* tables not created yet — tournaments simply stay empty */ }
+    try {
+      const { data: rx } = await supabase.from("chat_reactions").select("*");
+      if (rx) setChatReactions(rx.map((r) => ({ id: r.id, chatId: r.chat_id, userId: r.user_id, emoji: r.emoji })));
+    } catch (e) { /* table not created yet — reactions stay off */ }
     /* Pitches load defensively too — if the SQL hasn't been applied yet the app
        carries on with an empty directory rather than failing to start. */
     try {
@@ -1748,9 +1804,51 @@ export default function App() {
   /* Bell feed — kick-off reminders and awaiting-score prompts are derived from
      match state rather than stored, so they stay accurate without extra SQL.
      Join requests come from real rows. Each needs a stable id so "read" sticks. */
+  /* Teams the signed-in user follows, and whether a given match involves one.
+     Names are normalised because a match stores team names as text. */
+  const myFollowedTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
+  const myFollowedTeamNames = savedTeams.filter((t) => myFollowedTeamIds.includes(t.id)).map((t) => normName(t.name));
+  const involvesFollowedTeam = (m) =>
+    myFollowedTeamNames.includes(normName(m.teamA.name)) || myFollowedTeamNames.includes(normName(m.teamB.name));
+
   const bellItems = useMemo(() => {
     if (!me) return [];
     const out = [];
+
+    /* Teams you follow: kicking off soon, live now, or just finished. Following
+       a team did nothing until this — the button was decorative. */
+    myFollowedTeamIds.forEach((tid) => {
+      const team = savedTeams.find((t) => t.id === tid);
+      if (!team) return;
+      const theirs = matches.filter((x) => x.published && involvesFollowedTeam(x) &&
+        (normName(x.teamA.name) === normName(team.name) || normName(x.teamB.name) === normName(team.name)));
+      theirs.forEach((x) => {
+        if (x.status === "Live") {
+          out.push({ id: "ft-live-" + x.id, kind: "team", icon: "🔴", matchId: x.id,
+            title: `${team.name} are live now`, sub: `${x.teamA.name} ${x.liveA ?? 0}–${x.liveB ?? 0} ${x.teamB.name}`,
+            at: now });
+        } else if (x.status === "Scheduled" && x.date && x.time) {
+          const mins = (new Date(`${x.date}T${x.time}`).getTime() - now) / 60000;
+          if (mins > 0 && mins <= 120) {
+            out.push({ id: "ft-soon-" + x.id, kind: "team", icon: "🛡", matchId: x.id,
+              title: `${team.name} play in ${Math.round(mins)} minutes`,
+              sub: `${x.teamA.name} v ${x.teamB.name} · ${x.location}`, at: now });
+          }
+        }
+      });
+    });
+
+    /* A match you asked to be reminded about. */
+    reminders.forEach((id) => {
+      const x = matches.find((mm) => mm.id === id);
+      if (!x || x.status !== "Scheduled" || !x.date || !x.time) return;
+      const mins = (new Date(`${x.date}T${x.time}`).getTime() - now) / 60000;
+      if (mins > 0 && mins <= 120) {
+        out.push({ id: "rem-" + x.id, kind: "team", icon: "🔔", matchId: x.id,
+          title: `Kick-off in ${Math.round(mins)} minutes`,
+          sub: `${x.teamA.name} v ${x.teamB.name} · ${x.location}`, at: now });
+      }
+    });
 
     /* After a match you were part of, ask one thing about the pitch. One
        question, not seven — a form nobody finishes is worse than three fields
@@ -2618,6 +2716,18 @@ export default function App() {
       return data.id;
     } catch (e) { return null; }
   };
+  /* Tapping the same emoji again removes it, so a reaction is a toggle. */
+  const toggleReaction = async (chatId, emoji) => {
+    const existing = chatReactions.find((r) => r.chatId === chatId && r.userId === me.id && r.emoji === emoji);
+    if (existing) {
+      setChatReactions((prev) => prev.filter((r) => r !== existing));
+      try { await supabase.from("chat_reactions").delete().eq("chat_id", chatId).eq("user_id", me.id).eq("emoji", emoji); } catch (e) {}
+      return;
+    }
+    setChatReactions((prev) => [...prev, { id: `local-${Date.now()}`, chatId, userId: me.id, emoji }]);
+    try { await supabase.from("chat_reactions").insert({ chat_id: chatId, user_id: me.id, emoji }); } catch (e) {}
+  };
+
   const answerPitch = async (pitchId, question, answer) => {
     try {
       await supabase.from("pitch_answers")
@@ -3106,12 +3216,6 @@ export default function App() {
     const list = (str || "").split(",").map((s) => s.trim()).filter(Boolean);
     return list.length ? list : Array.from({ length: 7 }, (_, i) => `Player ${i + 1}`);
   };
-  /* Teams the signed-in user follows, and whether a given match involves one.
-     Names are normalised because a match stores team names as text. */
-  const myFollowedTeamIds = teamSupporters.filter((x) => x.fanId === me.id).map((x) => x.teamId);
-  const myFollowedTeamNames = savedTeams.filter((t) => myFollowedTeamIds.includes(t.id)).map((t) => normName(t.name));
-  const involvesFollowedTeam = (m) =>
-    myFollowedTeamNames.includes(normName(m.teamA.name)) || myFollowedTeamNames.includes(normName(m.teamB.name));
   /* The single predicate every feed list runs through. */
   const followsAnyone = follows.length > 0 || myFollowedTeamIds.length > 0;
   /* The feed filters by state only. Follow filters live on the destination
@@ -6036,6 +6140,14 @@ export default function App() {
       {/* ---------- MATCH DETAIL ---------- */}
       {openMatch && (
         <MatchDetail
+          followersA={(() => { const mm = matches.find((x) => x.id === openMatch); if (!mm) return 0;
+            const t = savedTeams.find((x) => normName(x.name) === normName(mm.teamA.name));
+            return t ? teamSupporters.filter((x) => x.teamId === t.id).length : 0; })()}
+          followersB={(() => { const mm = matches.find((x) => x.id === openMatch); if (!mm) return 0;
+            const t = savedTeams.find((x) => normName(x.name) === normName(mm.teamB.name));
+            return t ? teamSupporters.filter((x) => x.teamId === t.id).length : 0; })()}
+          reminded={reminders.includes(openMatch)}
+          onToggleRemind={toggleRemind}
           pitchInfo={(() => {
             const mm = matches.find((x) => x.id === openMatch);
             if (!mm || !mm.pitchId) return null;
@@ -6331,6 +6443,10 @@ export default function App() {
                           {n.kind === "score" ? "Submit result" : "Open"}
                         </button>
                       )}
+                      {n.kind === "team" && (
+                        <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); openMatchDetail(n.matchId); }}
+                          style={{ fontSize: 9.5, background: "none", color: "#D6A81D", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: "1px solid #243128", fontFamily: "inherit", cursor: "pointer" }}>Open</button>
+                      )}
                       {n.kind === "pitch" && (
                         <button className="tappable" onClick={() => { markRead([n.id]); setBellOpen(false); setViewPitch(n.pitchId); openPage("pitches"); }}
                           style={{ fontSize: 9.5, background: "#D6A81D", color: "#12160f", fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: 0, fontFamily: "inherit", cursor: "pointer" }}>Answer</button>
@@ -6430,7 +6546,7 @@ export default function App() {
               )}
             </div>
             <div style={{ flex: 1, minHeight: 0, maxWidth: 430, width: "100%", margin: "0 auto", padding: "0 15px 12px", display: "flex", flexDirection: "column" }}>
-              <MatchChat m={cm} me={me} messages={msgs} users={users}
+              <MatchChat reactions={chatReactions} onReact={toggleReaction} m={cm} me={me} messages={msgs} users={users}
                 onSend={(t, rid) => sendChat(cm.id, t, rid)}
                 onReport={reportChat} onDelete={deleteChat}
                 live={cm.status === "Live"} fullHeight />
@@ -8080,6 +8196,10 @@ function LineupPitch({ team, names = [], scorers = "", color = "#E6B31E" }) {
    prefixed and an emoji for the type, so the whole timeline can be read back
    without any new columns. Real columns would be cleaner; they aren't needed. */
 function MatchTimeline({ events = [], teamAName = "" }) {
+  /* A 90-minute match logs kick-off, every pause, half time and full time as
+     well as the goals — so on Everything the goals get buried. Key moments
+     keeps the whistle and the scoring and drops the rest. */
+  const [tlView, setTlView] = useState("key");
   if (!events || events.length === 0) {
     return <div className="card" style={{ color: "#7d8f83" }}>Nothing recorded yet.</div>;
   }
@@ -8094,10 +8214,24 @@ function MatchTimeline({ events = [], teamAName = "" }) {
     const sideA = teamAName && body.toLowerCase().startsWith(teamAName.toLowerCase());
     return { min, icon, body, big, sideA };
   };
+  const shown = tlView === "all" ? events : events.filter((e) => parse(e).big);
   return (
+    <>
+      <div style={{ display: "flex", background: "#141c16", borderRadius: 11, padding: 3, marginBottom: 16 }}>
+        {[["key", "Key moments"], ["all", "Everything"]].map(([k, label]) => (
+          <button key={k} onClick={() => setTlView(k)}
+            style={{ flex: 1, fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, background: tlView === k ? "#0E140F" : "none",
+              border: 0, color: tlView === k ? "#F7F4EA" : "#7d8f83", padding: "10px 5px", borderRadius: 9, cursor: "pointer" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {shown.length === 0 && (
+        <div className="card" style={{ color: "#7d8f83" }}>No goals recorded — switch to Everything for the full log.</div>
+      )}
     <div style={{ position: "relative", paddingLeft: 52 }}>
       <div style={{ position: "absolute", left: 48, top: 8, bottom: 8, width: 2, background: "#1a231b" }} />
-      {events.map((e) => {
+      {shown.map((e) => {
         const p = parse(e);
         return (
           <div key={e.id} style={{ position: "relative", display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 0" }}>
@@ -8113,6 +8247,7 @@ function MatchTimeline({ events = [], teamAName = "" }) {
         );
       })}
     </div>
+    </>
   );
 }
 
@@ -8212,7 +8347,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, tournamentName, tou
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, teamAObj = null, teamBObj = null, pitchInfo = null, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, teamAObj = null, teamBObj = null, pitchInfo = null, followersA = 0, followersB = 0, reminded = false, onToggleRemind, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [lineupSide, setLineupSide] = useState(0);
   const [detailEvents, setDetailEvents] = useState([]);
   /* The timeline reads the events already written for this match — nothing new
@@ -8448,6 +8583,51 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
 
           return (
             <>
+              {/* Countdown, who's following each side, and the three things
+                  someone actually wants to do before a match. */}
+              {(() => {
+                const ko = new Date(`${m.date}T${m.time || "00:00"}`).getTime();
+                const mins = Math.max(0, Math.round((ko - Date.now()) / 60000));
+                const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), mi = mins % 60;
+                const label = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${mi}m` : `${mi}m`;
+                return (
+                  <div style={{ textAlign: "center", margin: "2px 0 14px" }}>
+                    <div className="display" style={{ fontSize: 28, color: "#E6B31E", lineHeight: 1 }}>{label}</div>
+                    <div style={{ fontSize: 10.5, color: "#4e5c53", letterSpacing: ".09em", textTransform: "uppercase", marginTop: 5 }}>
+                      to kick-off · {fmtDay(m.date)} {m.time}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {(followersA > 0 || followersB > 0) && (
+                <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+                  {[[m.teamA.name, followersA], [m.teamB.name, followersB]].map(([nm, n]) => (
+                    <div key={nm} style={{ flex: 1, minWidth: 0, textAlign: "center", fontSize: 10.5, color: "#D6A81D", fontWeight: 600 }}>
+                      {n} following
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+                <button onClick={() => onToggleRemind && onToggleRemind(m.id)}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "inherit",
+                    fontSize: 12.5, fontWeight: 700, padding: "13px 6px", borderRadius: 12, cursor: "pointer", minHeight: 46,
+                    background: reminded ? "#E6B31E" : "#0E140F", border: `1px solid ${reminded ? "#E6B31E" : "#243128"}`,
+                    color: reminded ? "#12160f" : "#F7F4EA" }}>
+                  🔔 {reminded ? "Reminder on" : "Remind me"}
+                </button>
+                <button onClick={() => onOpenChat && onOpenChat(m.id)}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "inherit",
+                    fontSize: 12.5, fontWeight: 700, padding: "13px 6px", borderRadius: 12, cursor: "pointer", minHeight: 46,
+                    background: "#0E140F", border: "1px solid #243128", color: "#F7F4EA" }}>💬 Chat</button>
+                <button onClick={onPoster}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "inherit",
+                    fontSize: 12.5, fontWeight: 700, padding: "13px 6px", borderRadius: 12, cursor: "pointer", minHeight: 46,
+                    background: "#0E140F", border: "1px solid #243128", color: "#F7F4EA" }}>🎨 Share</button>
+              </div>
+
               {/* THE PITCH — the most useful thing before a match: can I get
                   there, is it lit, what does it cost. */}
               {pitchInfo && (
