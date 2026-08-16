@@ -1042,6 +1042,19 @@ export default function App() {
   /* setPage on its own leaves nothing for Back to unwind, which is why Back did
      nothing on Upcoming and Highlights. Any page reached from content opens
      through here instead. */
+  /* Every page header is this: the name on the left, the way back on the right,
+     on one row. Previously the button sat on its own line above the title,
+     which wasted a whole row and read as an orphan. */
+  const PageHead = ({ title, onBack = goBackPage, label = "Back", right = null }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+      <button onClick={onBack} className="goldpill sm" style={{ flexShrink: 0 }}>
+        <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> {label}
+      </button>
+      <div className="display" style={{ fontSize: 22, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+      {right}
+    </div>
+  );
+
   const openPage = (name) => {
     const from = page;
     setPage(name);
@@ -2748,8 +2761,12 @@ export default function App() {
        is what made the gaps uneven and left a gutter before the first label.
        The negative margin pulls the row back so "Feed" lines up with the logo
        above it, while the active pill still has room to breathe. */
-    .topnav { display: flex; gap: 2px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
-      scrollbar-width: none; scroll-snap-type: x proximity; scroll-padding-inline: 12px; overscroll-behavior-x: contain; }
+    /* width:100% and space-between belt-and-braces the fill: even if a browser
+       declines to grow the flex items, the row still spreads instead of
+       bunching left with dead space beside it. */
+    .topnav { display: flex; width: 100%; justify-content: space-between; gap: 2px; flex-wrap: nowrap;
+      overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+      scroll-snap-type: x proximity; scroll-padding-inline: 12px; overscroll-behavior-x: contain; }
     .topnav::-webkit-scrollbar { display: none; }
     /* flex-grow fills the row when the tabs fit, so four or five tabs spread
        evenly with no dead space. flex-shrink 0 means they never squeeze: once
@@ -2813,6 +2830,9 @@ export default function App() {
     .lens button { font-family: inherit; font-size: 11.5px; font-weight: 700; background: none; border: 0; color: #8FA396;
       padding: 8px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
     .lens button.on { background: #E6B31E; color: #0A0D0A; }
+    /* Page descriptions are context, not content — they were 13px and eating a
+       screenful across five pages. */
+    .pagesub { font-size: 11px; color: #6b7a6f; line-height: 1.45; margin: 4px 0 14px; }
     .seccount { display: block; font-size: 10px; color: #4e5c53; letter-spacing: .05em; text-transform: uppercase; margin-top: 3px; }
     .chiprow { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin-bottom: 14px; padding-bottom: 2px; }
     .chiprow::-webkit-scrollbar { display: none; }
@@ -3789,54 +3809,55 @@ export default function App() {
 
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px 60px" }}>
 
-        {/* KICK-OFF PERMISSION BANNER — scheduled time is due, captain decides.
-            Feed only: a prompt that follows you onto every page is nagging, and
-            the bell already carries it wherever you are. */}
+        {/* ── ONE ACTION BANNER ────────────────────────────────────────────
+            Kick-offs due and results owed used to stack as two separate blocks,
+            which meant a captain could open the app to a wall of red. They now
+            share one window: the most urgent item shows, the rest sit behind
+            arrows. Feed only — the bell carries these everywhere else. */}
         {page === "feed" && me.role === "Captain" && (() => {
-          const due = matches.filter((m) => m.status === "Scheduled" && m.createdBy === me.id && isDue(m));
-          if (due.length === 0) return null;
-          /* One compact line however many are due — the bell holds the detail. */
+          const due = matches.filter((m) => m.status === "Scheduled" && m.createdBy === me.id && isDue(m))
+            .map((m) => ({ kind: "kickoff", m }));
+          const owed = pendingScores.map((m) => ({ kind: "score", m }));
+          /* Results owed first: a match nobody has scored is blocking the feed
+             for everyone who watched it. */
+          const items = [...owed, ...due];
+          if (items.length === 0) return null;
+          const idx = pendingScoreSlide % items.length;
+          const it = items[idx];
+          const m = it.m;
+          const late = it.kind === "score" && m.awaitingSince
+            ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
+          const urgent = it.kind === "score";
           return (
-            <div className="tappable" onClick={() => setBellOpen(true)}
-              style={{ background: "#0E140F", border: "1px solid #243128", borderLeft: "2px solid #D6A81D", borderRadius: 13, padding: 12, marginBottom: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 9, letterSpacing: "1.5px", textTransform: "uppercase", color: "#D6A81D", fontWeight: 700 }}>
-                  {due.length === 1 ? "1 match ready" : `${due.length} matches ready`}
-                </div>
-                <div className="display" style={{ fontSize: 15, marginTop: 6, color: "#F7F4EA", letterSpacing: ".02em" }}>KICK-OFF TIME REACHED</div>
-                <div style={{ fontSize: 10, color: "#7d8f83", marginTop: 3, lineHeight: 1.45 }}>
-                  {due.length === 1
-                    ? `${due[0].teamA.name} vs ${due[0].teamB.name} — tap to start or postpone.`
-                    : "Tap to start them, or postpone."}
-                </div>
-              </div>
-              <span style={{ fontSize: 11, color: "#4e5c53", flexShrink: 0 }}>›</span>
-            </div>
-          );
-        })()}
-
-        {/* SCORE REQUEST BANNER — carousel when a captain has more than one
-            overdue score. Feed only, for the same reason. */}
-        {page === "feed" && pendingScores.length > 0 && (() => {
-          const idx = pendingScoreSlide % pendingScores.length;
-          const m = pendingScores[idx];
-          const mins = m.awaitingSince ? Math.floor((now - new Date(m.awaitingSince).getTime()) / 60000) : 0;
-          return (
-            <div className="banner" style={{ marginBottom: 16, flexDirection: "column", alignItems: "stretch", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                <span>
-                  {mins >= 20 ? `⚠️ ${mins} MINUTES LATE — ` : "🏁 Full time: "}
-                  {m.teamA.name} vs {m.teamB.name}. Upload the result to publish it.
-                </span>
-                <button className="btn btn-gold" style={{ padding: "8px 14px", flexShrink: 0 }} onClick={() => openMatchDetail(m.id)}>Upload result</button>
-              </div>
-              {pendingScores.length > 1 && (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-                  <button onClick={() => setPendingScoreSlide((i) => (i - 1 + pendingScores.length) % pendingScores.length)} style={{ background: "none", border: "1px solid rgba(255,255,255,.3)", color: "#fff", borderRadius: 8, width: 26, height: 26, fontSize: 13 }}>‹</button>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    {pendingScores.map((_, i) => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: i === idx ? "#fff" : "rgba(255,255,255,.35)" }} />)}
+            <div className="card" style={{ marginBottom: 16, borderLeft: `3px solid ${urgent ? "#E8442E" : "#E6B31E"}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 9, letterSpacing: "1.5px", textTransform: "uppercase", color: urgent ? "#E8442E" : "#D6A81D", fontWeight: 700 }}>
+                    {urgent
+                      ? (late >= 20 ? `${late} minutes late` : "Result needed")
+                      : (items.length > 1 ? `${due.length} match${due.length === 1 ? "" : "es"} ready` : "1 match ready")}
                   </div>
-                  <button onClick={() => setPendingScoreSlide((i) => (i + 1) % pendingScores.length)} style={{ background: "none", border: "1px solid rgba(255,255,255,.3)", color: "#fff", borderRadius: 8, width: 26, height: 26, fontSize: 13 }}>›</button>
+                  <div className="display" style={{ fontSize: 15, marginTop: 5, letterSpacing: ".02em" }}>
+                    {urgent ? "FULL TIME — UPLOAD THE RESULT" : "KICK-OFF TIME REACHED"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#7d8f83", marginTop: 5, lineHeight: 1.45 }}>
+                    {m.teamA.name} vs {m.teamB.name}{urgent ? "" : " — tap to start or postpone."}
+                  </div>
+                </div>
+                <button className="linkbtn" style={{ flexShrink: 0, background: urgent ? "#E8442E" : "#E6B31E", borderColor: urgent ? "#E8442E" : "#E6B31E", color: urgent ? "#fff" : "#12160f" }}
+                  onClick={() => openMatchDetail(m.id)}>
+                  {urgent ? "Upload" : "Open"}
+                </button>
+              </div>
+              {items.length > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 12, paddingTop: 11, borderTop: "1px solid #1a231b" }}>
+                  <button onClick={() => setPendingScoreSlide((k) => (k - 1 + items.length) % items.length)}
+                    style={{ background: "none", border: "1px solid #243128", color: "#B9C7BC", borderRadius: 8, width: 28, height: 28, fontSize: 13, cursor: "pointer" }}>‹</button>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {items.map((_, k) => <div key={k} style={{ width: 6, height: 6, borderRadius: "50%", background: k === idx ? "#E6B31E" : "#2c3d31" }} />)}
+                  </div>
+                  <button onClick={() => setPendingScoreSlide((k) => (k + 1) % items.length)}
+                    style={{ background: "none", border: "1px solid #243128", color: "#B9C7BC", borderRadius: 8, width: 28, height: 28, fontSize: 13, cursor: "pointer" }}>›</button>
                 </div>
               )}
             </div>
@@ -4655,6 +4676,10 @@ export default function App() {
         {page === "create" && me.role === "Captain" && (
           <div style={{ maxWidth: 560 }}>
             <CreateMatch
+              knownPitches={pitches
+                .filter((x) => stateFallback || x.state === myState)
+                .map((x) => ({ ...x, played: matches.filter((mm) => mm.pitchId === x.id).length }))
+                .sort((a, b) => b.played - a.played)}
               myTeams={savedTeams.filter((t) => t.captainId === me.id)}
               myTournaments={TOURNAMENTS_ENABLED ? tournaments.filter((t) => t.hostId === me.id && t.status === "active") : []}
               onCancel={() => setPage("mymatches")}
@@ -5229,10 +5254,7 @@ export default function App() {
             : cfg.days && day !== "all" ? shown.filter((m) => dayGroupOf(m) === day) : shown;
           return (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <button onClick={goBackPage} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
-                <div className="display" style={{ fontSize: 20, flex: 1, minWidth: 0 }}>{cfg.title}</div>
-              </div>
+              <PageHead title={cfg.title} />
               <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 12 }}>
                 Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{scopeStateLabel}</b>
               </div>
@@ -5287,11 +5309,8 @@ export default function App() {
             questions. Newcomers to a state get somewhere to start. */}
         {page === "pitches" && !viewPitch && (
           <>
-            <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
-            </button>
-            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Pitches</div>
-            <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+            <PageHead title="Pitches" />
+            <div className="pagesub">
               Every pitch played on in {scopeStateLabel}. Tap one to see what it's like — or to tell others.
             </div>
             <input className="input" placeholder="🔍 Search a pitch…" value={pitchSearch}
@@ -5351,12 +5370,12 @@ export default function App() {
           const unanswered = PITCH_QUESTIONS.filter((qq) => !pitchConsensus(pit.id, qq.key));
           return (
             <>
-              <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
-                <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
-              </button>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
-                <div style={{ width: 50, height: 50, borderRadius: 14, flexShrink: 0, background: "#16211a", border: "1px solid #243128", display: "grid", placeItems: "center", fontSize: 21 }}>🥅</div>
-                <div style={{ minWidth: 0 }}>
+                <button onClick={goBackPage} className="goldpill sm" style={{ flexShrink: 0 }}>
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
+                </button>
+                <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, background: "#16211a", border: "1px solid #243128", display: "grid", placeItems: "center", fontSize: 18 }}>🥅</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="display" style={{ fontSize: 22, lineHeight: 1.1 }}>{pit.name}</div>
                   <div style={{ fontSize: 11.5, color: "#7d8f83", marginTop: 3 }}>
                     {pit.state || scopeStateLabel} · {played.length} match{played.length === 1 ? "" : "es"} played
@@ -5432,11 +5451,8 @@ export default function App() {
 
         {page === "referees" && (
           <>
-            <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
-            </button>
-            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Referees</div>
-            <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+            <PageHead title="Referees" />
+            <div className="pagesub">
               Referees in {scopeStateLabel}, built from the names captains add to their matches.
             </div>
             {(() => {
@@ -5485,11 +5501,8 @@ export default function App() {
             Everything here comes from existing Player accounts — no new data. */}
         {page === "players" && (
           <>
-            <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
-            </button>
-            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Players</div>
-            <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+            <PageHead title="Players" />
+            <div className="pagesub">
               Players in {scopeStateLabel} who've claimed an account. Tap a name for their record.
             </div>
             <input className="input" placeholder="🔍 Search a player or team…" value={playerSearch}
@@ -5561,11 +5574,8 @@ export default function App() {
 
         {page === "teams" && (
           <>
-            <button onClick={goBackPage} className="goldpill sm" style={{ marginBottom: 14 }}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
-            </button>
-            <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Teams</div>
-            <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Every team on Area Match. Follow the ones you want to keep up with.</div>
+            <PageHead title="Teams" />
+            <div className="pagesub">Every team on Area Match. Follow the ones you want to keep up with.</div>
             <input className="input" placeholder="🔍 Search a team or captain…" value={teamSearch}
               onChange={(e) => setTeamSearch(sanitizeText(e.target.value, 40))} style={{ marginBottom: 14 }} />
             {(() => {
@@ -5641,7 +5651,7 @@ export default function App() {
             {!viewCaptain ? (
               <>
                 <div className="display" style={{ fontSize: 24, marginBottom: 6 }}>Captains</div>
-                <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>Browse captains and find their matches. Tap a profile to see everything they've published.</div>
+                <div className="pagesub">Browse captains and find their matches. Tap a profile to see everything they've published.</div>
                 {/* Same controls as Teams: state chips, a search box, and the one
                     filter that isn't about place. */}
                 {follows.length > 0 && (
@@ -5972,18 +5982,13 @@ export default function App() {
         {/* ---------- LIVE ---------- */}
         {page === "live" && (
           <div>
-            <div className="display" style={{ fontSize: 24, marginBottom: 4 }}>🔴 Live</div>
-            <div style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>
-              Every live match. Filter by state and by the captains you follow — the two stack.
-            </div>
+            <PageHead title="🔴 Live" onBack={() => setPage("feed")} label="Feed" />
+            <div className="pagesub">Every live match, filtered by the captains and teams you follow.</div>
             {/* Follow filter leads — it's the one most people want — and the state
                 chips sit after it. Both narrow the same live-only list. */}
             <div style={{ fontSize: 11, color: "#7d8f83", marginBottom: 10 }}>
               Showing <b style={{ color: "#D6A81D", fontWeight: 600 }}>{scopeStateLabel}</b>
             </div>
-            <button onClick={() => setPage("feed")} className="goldpill sm" style={{ marginBottom: 12 }}>
-              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Feed
-            </button>
             <FollowTabs k="live" list={liveAll} />
             {liveForUser.length === 0 && (
               <div className="card" style={{ color: T.muted }}>
@@ -6031,6 +6036,19 @@ export default function App() {
       {/* ---------- MATCH DETAIL ---------- */}
       {openMatch && (
         <MatchDetail
+          pitchInfo={(() => {
+            const mm = matches.find((x) => x.id === openMatch);
+            if (!mm || !mm.pitchId) return null;
+            const pit = pitches.find((x) => x.id === mm.pitchId);
+            if (!pit) return null;
+            const val = (q) => { const c = pitchConsensus(pit.id, q); return c ? c.answer : null; };
+            const facts = [["Surface", val("surface")], ["Floodlights", val("lights")], ["Cost", val("cost")], ["Size", val("size")]]
+              .filter(([, v]) => v);
+            return {
+              name: pit.name, area: val("area"), played: pitchMatches(pit.id).length, facts,
+              onOpen: () => { setViewPitch(pit.id); openPage("pitches"); },
+            };
+          })()}
           teamAObj={savedTeams.find((t) => normName(t.name) === normName((matches.find((x) => x.id === openMatch) || { teamA: {} }).teamA.name || "")) || null}
           teamBObj={savedTeams.find((t) => normName(t.name) === normName((matches.find((x) => x.id === openMatch) || { teamB: {} }).teamB.name || "")) || null}
           m={matches.find((x) => x.id === openMatch)}
@@ -6551,8 +6569,8 @@ export default function App() {
         return (
           <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-              <button onClick={goBackPage} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
-              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Fixtures</div>
+              <button onClick={goBackPage} className="goldpill sm" style={{ flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+              <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: "#F7F4EA", flex: 1, minWidth: 0 }}>Fixtures</div>
             </div>
             <div style={{ padding: "0 17px 4px", flexShrink: 0 }}>
               <FollowTabs k="fixtures" list={inState} />
@@ -6607,8 +6625,8 @@ export default function App() {
       {showLeaderboards && (
         <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 91, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "15px 17px", flexShrink: 0 }}>
-            <button onClick={goBackPage} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
-            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#F7F4EA", flex: 1 }}>Leaderboards</div>
+            <button onClick={goBackPage} className="goldpill sm" style={{ flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+            <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: "#F7F4EA", flex: 1, minWidth: 0 }}>Leaderboards</div>
           </div>
           <div style={{ display: "flex", padding: "0 17px", borderBottom: "1px solid #151c16", gap: 24 }}>
             {[["scorers", "Top scorers"], ["teams", "Top teams"], ["form", "Team form"], ["supported", "Most followed"]].map(([key, lbl]) => (
@@ -7158,10 +7176,12 @@ function SquadManageModal({ team, linkedPlayers, playerLevel, playerStats, playe
   return (
     <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 92, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
-        <button onClick={onClose} className="goldpill sm">
+        <button onClick={onClose} className="goldpill sm" style={{ flexShrink: 0 }}>
           <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back
         </button>
-        <div style={{ flex: 1 }} />
+        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 20, color: "#F7F4EA", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {team.name}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto" }}>
@@ -7334,8 +7354,10 @@ function TeamProfileModal({ team, record, onClose, linkedPlayers = [], onOpenPla
   return (
     <div style={{ position: "fixed", inset: 0, background: "#060907", zIndex: 90, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 16px", flexShrink: 0 }}>
-        <button onClick={onClose} className="goldpill sm"><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
-        <div style={{ flex: 1 }} />
+        <button onClick={onClose} className="goldpill sm" style={{ flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+        <div style={{ fontFamily: "'Anton', sans-serif", fontSize: 19, color: "#F7F4EA", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {team.name}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", maxWidth: 430, width: "100%", margin: "0 auto" }}>
@@ -8190,7 +8212,7 @@ function MatchCard({ m, minute, breakLeft, onOpen, onPoster, tournamentName, tou
   );
 }
 
-function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, teamAObj = null, teamBObj = null, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
+function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [], onPosterLineup, teamAObj = null, teamBObj = null, pitchInfo = null, matchAwards = [], myTournaments = [], onSetTournament, tournamentInfo = null, canSubmitScore = false, isTournamentHost = false, onSubmitTournamentScore, onHostResolve, chatMessages = [], allUsers = [], onSendChat, onReportChat, onDeleteChat, onOpenChat, minute, breakLeft, captainName, isDue, untilKickoff, alreadyRequested, onClose, onStart, onPauseResume, onLiveScore, onSetStream, onCancelMatch, onDeleteMatch, onLike, liked, likeCount, onRequestChange, onHalfTime, onPostpone, onPublish, onSubmitScore, onPoster, notify, onUpdateStats, onPostCommentary }) {
   const [lineupSide, setLineupSide] = useState(0);
   const [detailEvents, setDetailEvents] = useState([]);
   /* The timeline reads the events already written for this match — nothing new
@@ -8280,8 +8302,8 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
   return (
     <div style={{ position: "fixed", inset: 0, background: T.night, zIndex: 50, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #243128", flexShrink: 0 }}>
-        <button onClick={onClose} className="goldpill"><span style={{ fontSize: 16, lineHeight: 1 }}>‹</span> Back</button>
-        <div className="display" style={{ fontSize: 15, color: T.floodlight, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
+        <button onClick={onClose} className="goldpill sm" style={{ flexShrink: 0 }}><span style={{ fontSize: 14, lineHeight: 1 }}>‹</span> Back</button>
+        <div className="display" style={{ fontSize: 16, color: T.floodlight, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.teamA.name} vs {m.teamB.name}</div>
         <StatusChip m={m} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 14, maxWidth: 560, width: "100%", margin: "0 auto" }}>
@@ -8349,6 +8371,229 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
             );
           })()}
         </div>
+
+        {/* ── BEFORE KICK-OFF ──────────────────────────────────────────────
+            A scheduled match had almost nothing on it — two names and a date.
+            Everything below is derived from data already stored: the pitch
+            directory, past results between these two, and player stats. Each
+            section hides itself when there's nothing to show, so the page never
+            looks broken on a first-ever fixture. */}
+        {m.status === "Scheduled" && (() => {
+          const nameKey = (x) => (x || "").trim().toLowerCase();
+          const played = (allMatches || []).filter((x) => x.status === "ResultPublished");
+
+          /* Last five for a team, newest first, as W/D/L. */
+          const formFor = (teamName) => played
+            .filter((x) => nameKey(x.teamA.name) === nameKey(teamName) || nameKey(x.teamB.name) === nameKey(teamName))
+            .sort((a, b) => `${b.date}`.localeCompare(`${a.date}`))
+            .slice(0, 5)
+            .map((x) => {
+              const ours = nameKey(x.teamA.name) === nameKey(teamName);
+              const us = ours ? x.finalA : x.finalB, them = ours ? x.finalB : x.finalA;
+              return us > them ? "W" : us < them ? "L" : "D";
+            });
+
+          /* Only meetings between these two, newest first. */
+          const h2h = played.filter((x) => {
+            const a = nameKey(x.teamA.name), b = nameKey(x.teamB.name);
+            const A = nameKey(m.teamA.name), B = nameKey(m.teamB.name);
+            return (a === A && b === B) || (a === B && b === A);
+          }).sort((a, b) => `${b.date}`.localeCompare(`${a.date}`));
+
+          const h2hTally = h2h.reduce((acc, x) => {
+            const aIsOurA = nameKey(x.teamA.name) === nameKey(m.teamA.name);
+            const us = aIsOurA ? x.finalA : x.finalB, them = aIsOurA ? x.finalB : x.finalA;
+            if (us > them) acc.a += 1; else if (us < them) acc.b += 1; else acc.d += 1;
+            return acc;
+          }, { a: 0, d: 0, b: 0 });
+
+          /* Top scorer on each side, from the results already published. */
+          const topScorerFor = (teamName) => {
+            const tally = {};
+            played.forEach((x) => {
+              const ours = nameKey(x.teamA.name) === nameKey(teamName);
+              if (!ours && nameKey(x.teamB.name) !== nameKey(teamName)) return;
+              (((ours ? x.scorersA : x.scorersB) || "").split(",")).forEach((part) => {
+                const t = part.trim(); if (!t) return;
+                const mm = /^(.*?)\s*x\s*(\d+)$/i.exec(t);
+                const nm = (mm ? mm[1] : t).trim();
+                const n = mm ? parseInt(mm[2], 10) : 1;
+                if (nm) tally[nm] = (tally[nm] || 0) + n;
+              });
+            });
+            const best = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0];
+            return best ? { name: best, goals: tally[best] } : null;
+          };
+
+          const pill = (r) => (
+            <span key={Math.random()} style={{
+              width: 21, height: 21, borderRadius: 6, display: "grid", placeItems: "center",
+              fontFamily: "'Anton', sans-serif", fontSize: 10,
+              background: r === "W" ? "rgba(63,163,91,.16)" : r === "L" ? "rgba(232,68,46,.13)" : "#16211a",
+              color: r === "W" ? "#3FA35B" : r === "L" ? "#c9705f" : "#7d8f83",
+              border: `1px solid ${r === "W" ? "rgba(63,163,91,.35)" : r === "L" ? "rgba(232,68,46,.3)" : "#243128"}`,
+            }}>{r}</span>
+          );
+          const Sec = ({ children, right }) => (
+            <div style={{ fontSize: 10.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".09em", fontWeight: 700, margin: "22px 0 10px", display: "flex", alignItems: "center", gap: 9 }}>
+              {children}{right}<span style={{ flex: 1, height: 1, background: "#1a231b" }} />
+            </div>
+          );
+
+          const formA = formFor(m.teamA.name), formB = formFor(m.teamB.name);
+          const watchA = topScorerFor(m.teamA.name), watchB = topScorerFor(m.teamB.name);
+          const chatCount = (chatMessages || []).length;
+          const lastChat = chatCount ? chatMessages[chatMessages.length - 1] : null;
+          const lastChatName = lastChat ? ((allUsers.find((u) => u.id === lastChat.userId) || {}).name || "") : "";
+
+          return (
+            <>
+              {/* THE PITCH — the most useful thing before a match: can I get
+                  there, is it lit, what does it cost. */}
+              {pitchInfo && (
+                <>
+                  <Sec>The pitch{pitchInfo.onOpen ? <span onClick={pitchInfo.onOpen} style={{ color: "#D6A81D", letterSpacing: 0, textTransform: "none", fontWeight: 600, cursor: "pointer" }}>Full page ›</span> : null}</Sec>
+                  <div className="card tappable" onClick={pitchInfo.onOpen}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 42, height: 42, borderRadius: 12, background: "#16211a", border: "1px solid #243128", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>🥅</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pitchInfo.name}</div>
+                        <div style={{ fontSize: 11, color: "#7d8f83", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {pitchInfo.area ? `${pitchInfo.area} · ` : ""}{pitchInfo.played} match{pitchInfo.played === 1 ? "" : "es"} played
+                        </div>
+                      </div>
+                      <span style={{ color: "#4e5c53", flexShrink: 0 }}>›</span>
+                    </div>
+                    {pitchInfo.facts.length > 0 && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 11 }}>
+                        {pitchInfo.facts.map(([k, v]) => (
+                          <span key={k} style={{ fontSize: 10.5, color: "#B9C7BC", background: "#16211a", border: "1px solid #243128", borderRadius: 7, padding: "5px 9px" }}>
+                            {k} <b style={{ color: "#D6A81D", fontWeight: 600 }}>{v}</b>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* FORM */}
+              {(formA.length > 0 || formB.length > 0) && (
+                <>
+                  <Sec>Form · last five</Sec>
+                  <div className="card">
+                    {[[m.teamA, m.badgeA, formA], [m.teamB, m.badgeB, formB]].map(([team, badge, form], i) => (
+                      <div key={team.name} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderTop: i === 0 ? "none" : "1px solid #1a231b" }}>
+                        <MiniLogo team={team} badge={badge} size={26} />
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</span>
+                        <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                          {form.length ? form.map(pill) : <span style={{ fontSize: 11, color: "#4e5c53" }}>No results yet</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* HEAD TO HEAD */}
+              {h2h.length > 0 && (
+                <>
+                  <Sec>Head to head</Sec>
+                  <div className="card">
+                    <div style={{ display: "flex", textAlign: "center", marginBottom: 12 }}>
+                      {[[h2hTally.a, m.teamA.name, "#E6B31E"], [h2hTally.d, "Drawn", "#7d8f83"], [h2hTally.b, m.teamB.name, "#8FA396"]].map(([v, k, c]) => (
+                        <div key={k} style={{ flex: 1, minWidth: 0 }}>
+                          <div className="display" style={{ fontSize: 23, color: c }}>{v}</div>
+                          <div style={{ fontSize: 9.5, color: "#4e5c53", textTransform: "uppercase", letterSpacing: ".07em", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {h2h.slice(0, 3).map((x) => {
+                      const aIsOurA = nameKey(x.teamA.name) === nameKey(m.teamA.name);
+                      const us = aIsOurA ? x.finalA : x.finalB, them = aIsOurA ? x.finalB : x.finalA;
+                      const who = us > them ? `${m.teamA.name} won` : us < them ? `${m.teamB.name} won` : "Drawn";
+                      return (
+                        <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderTop: "1px solid #1a231b", fontSize: 12.5 }}>
+                          <span style={{ color: "#4e5c53", fontSize: 10.5, width: 54, flexShrink: 0 }}>{x.date}</span>
+                          <span className="display" style={{ fontSize: 14, flexShrink: 0 }}>{us}–{them}</span>
+                          <span style={{ flex: 1, minWidth: 0, color: "#7d8f83", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {who}{x.location ? ` · ${x.location}` : ""}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* PLAYERS TO WATCH */}
+              {(watchA || watchB) && (
+                <>
+                  <Sec>Players to watch</Sec>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    {[[watchA, m.teamA.name], [watchB, m.teamB.name]].filter(([w]) => w).map(([w, team]) => (
+                      <div key={team} className="card" style={{ flex: 1, minWidth: 0, textAlign: "center", padding: "13px 10px" }}>
+                        <div style={{ width: 42, height: 42, borderRadius: 999, margin: "0 auto 8px", background: "#1b2a1f", border: "1.5px solid #E6B31E", display: "grid", placeItems: "center", fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
+                          {(w.name || "?").trim().slice(0, 2).toUpperCase()}
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team}</div>
+                        <div style={{ marginTop: 7, fontFamily: "'Anton', sans-serif", fontSize: 15, color: "#E6B31E" }}>
+                          {w.goals}<span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 9, color: "#7d8f83", fontWeight: 500, marginLeft: 3 }}>gls</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* LINE-UPS — the pitch when a formation is saved, a squad list when not */}
+              {(rosterNames(m.playersA).length > 0 || rosterNames(m.playersB).length > 0) && (
+                <>
+                  <Sec>Line-ups</Sec>
+                  <div className="card">
+                    <div style={{ display: "flex", borderBottom: "1px solid #243128", marginBottom: 14 }}>
+                      {[[0, m.teamA.name], [1, m.teamB.name]].map(([i, nm]) => (
+                        <button key={i} onClick={() => setLineupSide(i)}
+                          style={{ flex: 1, background: "none", border: 0, borderBottom: `2px solid ${lineupSide === i ? "#E6B31E" : "transparent"}`,
+                            color: lineupSide === i ? "#F7F4EA" : "#7d8f83", fontWeight: lineupSide === i ? 700 : 500, fontSize: 12.5,
+                            padding: "9px 4px", fontFamily: "inherit", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {nm}
+                        </button>
+                      ))}
+                    </div>
+                    {lineupSide === 0
+                      ? <LineupPitch team={teamAObj} names={rosterNames(m.playersA)} color={m.teamA.color} />
+                      : <LineupPitch team={teamBObj} names={rosterNames(m.playersB)} color={m.teamB.color} />}
+                  </div>
+                </>
+              )}
+
+              {/* MATCH ROOM */}
+              {chatCount > 0 && (
+                <>
+                  <Sec>Match room</Sec>
+                  <div className="card tappable" onClick={() => onOpenChat && onOpenChat(m.id)}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 999, background: "#1b2a1f", border: "1px solid #2c3d31", display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#E6B31E", flexShrink: 0 }}>
+                        {(lastChatName || "?").slice(0, 2).toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          “{(lastChat && lastChat.message) || ""}”
+                        </div>
+                        <div style={{ fontSize: 10.5, color: "#4e5c53", marginTop: 2 }}>
+                          {lastChatName}{lastChatName ? " · " : ""}{chatCount} message{chatCount === 1 ? "" : "s"} before kick-off
+                        </div>
+                      </div>
+                      <span style={{ color: "#4e5c53", flexShrink: 0 }}>›</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* ── TIMELINE / STATISTICS / LINE-UPS ──────────────────────────────
             A finished match is when people study the numbers, so the three tabs
@@ -9771,7 +10016,7 @@ function ProfilePage({ me, stats, onSave, notify, follows = [], users = [], onOp
   );
 }
 
-function CreateMatch({ onSave, onCancel, myTeams = [], myTournaments = [] }) {
+function CreateMatch({ onSave, onCancel, myTeams = [], myTournaments = [], knownPitches = [] }) {
   const [f, setF] = useState({
     teamAName: "", teamAColor: "#E6B31E", teamBName: "", teamBColor: "#1DB954",
     badgeA: "⚽", badgeB: "🦁",
@@ -9866,7 +10111,35 @@ function CreateMatch({ onSave, onCancel, myTeams = [], myTournaments = [] }) {
         <span style={{ fontSize: 11, color: "#8FA396", marginRight: 4 }}>Badge:</span>
         {BADGES.map((b) => <button key={"b" + b} className={`btn ${f.badgeB === b ? "btn-gold" : "btn-ghost"}`} style={{ padding: "5px 7px", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setF({ ...f, badgeB: b })}><MiniLogo team={{ name: "", color: f.badgeB === b ? "#1a1405" : "#3a4a3e" }} badge={b} size={24} /></button>)}
       </div>
-      <input className="input" placeholder="Location (e.g. Campos Mini Stadium)" maxLength={60} value={f.location} onChange={(e) => setF({ ...f, location: sanitizeText(e.target.value, 60) })} />
+      {/* Suggest pitches already in the directory as the captain types. Tapping
+          one reuses that exact name, which is what keeps "Campos", "campos" and
+          "Campos Field" from becoming three separate pitch pages. */}
+      <div>
+        <input className="input" placeholder="Location (e.g. Campos Mini Stadium)" maxLength={60} value={f.location}
+          onChange={(e) => setF({ ...f, location: sanitizeText(e.target.value, 60) })} />
+        {(() => {
+          const q = f.location.trim().toLowerCase();
+          const exact = knownPitches.some((x) => (x.name || "").trim().toLowerCase() === q);
+          const hits = knownPitches
+            .filter((x) => q.length >= 2 && (x.name || "").toLowerCase().includes(q))
+            .slice(0, 5);
+          if (exact || hits.length === 0) {
+            return q.length >= 2 && !exact ? (
+              <div style={{ fontSize: 10.5, color: "#4e5c53", marginTop: 6 }}>New pitch — it'll be added to the directory.</div>
+            ) : null;
+          }
+          return (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              {hits.map((x) => (
+                <button key={x.id} type="button" className="statechip"
+                  onClick={() => setF({ ...f, location: x.name })}>
+                  {x.name}{x.played ? <span className="n">{x.played}</span> : null}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
+      </div>
       {/* Optional, and just a name — no referee role, no account, no permissions.
           Typed often enough, these names become a referee directory on their own;
           typed rarely, it costs one column and nobody notices. */}
