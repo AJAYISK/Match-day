@@ -2578,7 +2578,7 @@ export default function App() {
   const sendChat = async (matchId, message, replyTo = null) => {
     const { data, error } = await supabase.from("match_chat")
       .insert({ match_id: matchId, user_id: me.id, message, reply_to: replyTo }).select().single();
-    if (error) return notify(error.message.includes("row-level") ? "Chat is only open while the match is live" : error.message);
+    if (error) return notify(error.message.includes("row-level") ? "This room isn't open for posting yet." : error.message);
     if (data) setChatMsgs((xs) => xs.concat({ id: data.id, matchId, userId: me.id, message, reported: false, reportCount: 0, replyTo, createdAt: data.created_at }));
   };
   const reportChat = async (id, reason = "") => {
@@ -10487,7 +10487,7 @@ function PosterModal({ m, onClose, notify, tournament = null, posA = null, posB 
   const isResult = m.status === "ResultPublished";
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 400, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
         <svg ref={svgRef} viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
           <defs>
@@ -10876,7 +10876,7 @@ function StatsPosterModal({ m, onClose, notify }) {
     [m.offsidesA ?? 0, "OFFSIDES", m.offsidesB ?? 0],
   ];
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 340, width: "100%", display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
         <svg ref={svgRef} viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
           <defs>
@@ -10961,7 +10961,7 @@ function LineupPosterModal({ m, onClose, notify }) {
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "#12161c", borderRadius: 20, padding: 16, maxWidth: 360, width: "100%", display: "grid", gap: 12, maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <svg ref={svgRef} viewBox={`0 0 400 ${totalH}`} xmlns="http://www.w3.org/2000/svg" style={{ width: "100%", borderRadius: 12 }}>
           <defs>
