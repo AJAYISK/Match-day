@@ -350,6 +350,19 @@ const TOURNAMENTS_ENABLED = false;
    prompt appears after a match you played in. Keep this list short: a form
    nobody finishes is worse than three fields everybody does. */
 /* Deliberately small. A long picker turns a match room into a sticker board. */
+/* A match room is open from two hours before kick-off until the result is
+   published — the useful conversation happens before a match, not only during
+   it. Messages are still deleted 24 hours after full time either way. */
+const CHAT_OPENS_MINUTES_BEFORE = 120;
+function chatPhase(m) {
+  if (!m) return "closed";
+  if (m.status === "Live" || m.status === "AwaitingScore") return "open";
+  if (m.status === "ResultPublished" || m.status === "Cancelled") return "closed";
+  if (!m.date || !m.time) return "waiting";
+  const mins = (new Date(`${m.date}T${m.time}`).getTime() - Date.now()) / 60000;
+  return mins <= CHAT_OPENS_MINUTES_BEFORE ? "open" : "waiting";
+}
+
 const CHAT_EMOJI = ["🔥", "⚽", "😂", "👏", "😮", "💚"];
 
 const PITCH_QUESTIONS = [
@@ -789,7 +802,12 @@ function TournamentCreateModal({ myTeams, defaultState, onCreate, onClose }) {
    24 hours. Polls rather than using Realtime, so it costs nothing extra on a
    plan billed by concurrent connections. Emoji only: no image or GIF uploads,
    which keeps moderation tractable and data use low. ---------- */
-function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, fullHeight = false, reactions = [], onReact }) {
+function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, fullHeight = false, reactions = [], onReact }) {
+  /* `live` used to be the only thing this knew, so every non-live match fell
+     into the finished branch: no composer, and copy written in the past tense.
+     A scheduled match is a third state — open, but nothing has happened yet. */
+  const phase = chatPhase(m);
+  const canPost = phase === "open";
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const endRef = useRef(null);
@@ -814,13 +832,18 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, f
     <div style={{ display: "flex", flexDirection: "column", height: fullHeight ? "100%" : 340, minHeight: 0 }}>
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 2px" }}>
         <div style={{ textAlign: "center", fontSize: 9, color: "#5a6a5f", background: "#0E140F", border: "1px solid #1b241c", borderRadius: 8, padding: "7px 10px", marginBottom: 13, lineHeight: 1.4 }}>
-          {live ? "Chat is open until full time. Messages are deleted 24 hours after the match."
-                : `Chat closed at full time. These messages are deleted in ${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}.`}
+          {phase === "open"
+            ? "Chat is open until full time. Messages are deleted 24 hours after the match."
+            : phase === "waiting"
+              ? "The room opens two hours before kick-off."
+              : `Chat closed at full time. These messages are deleted in ${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}.`}
         </div>
 
         {messages.length === 0 && (
           <div style={{ textAlign: "center", fontSize: 11, color: "#4e5c53", padding: "26px 12px", lineHeight: 1.5 }}>
-            {live ? "Nothing yet — say something." : "Nobody chatted during this match."}
+            {phase === "open" ? "Nothing yet — say something."
+              : phase === "waiting" ? "The room opens two hours before kick-off."
+              : "Nobody chatted during this match."}
           </div>
         )}
 
@@ -862,7 +885,8 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, f
                 {/* Reactions. A chip only appears once someone has used it, so a
                     quiet room stays quiet; ＋ opens the small set. */}
                 {onReact && (() => {
-                  const mine2 = (reactions || []).filter((r) => r.chatId === msg.id && r.userId === me.id).map((r) => r.emoji);
+                  const own = (reactions || []).find((r) => r.chatId === msg.id && r.userId === me.id);
+                  const mine2 = own ? [own.emoji] : [];
                   const tally = {};
                   (reactions || []).filter((r) => r.chatId === msg.id).forEach((r) => { tally[r.emoji] = (tally[r.emoji] || 0) + 1; });
                   const used = Object.keys(tally);
@@ -895,7 +919,7 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, f
                   );
                 })()}
                 <div style={{ display: "flex", gap: 10, paddingTop: 3 }}>
-                  {live && (
+                  {canPost && (
                     <button onClick={() => setReplyTo(msg)}
                       style={{ background: "none", border: 0, padding: 0, fontFamily: "inherit", fontSize: 8.5, color: "#3f4b43", cursor: "pointer" }}>Reply</button>
                   )}
@@ -911,7 +935,7 @@ function MatchChat({ m, me, messages, users, onSend, onReport, onDelete, live, f
         <div ref={endRef} />
       </div>
 
-      {live ? (
+      {canPost ? (
         <div style={{ paddingTop: 10, borderTop: "1px solid #151c16" }}>
         {replyTo && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#0E140F", border: "1px solid #1b241c", borderLeft: "2px solid #D6A81D", borderRadius: "0 8px 8px 0", padding: "7px 9px", marginBottom: 8 }}>
@@ -2716,16 +2740,27 @@ export default function App() {
       return data.id;
     } catch (e) { return null; }
   };
-  /* Tapping the same emoji again removes it, so a reaction is a toggle. */
+  /* One reaction per person per message. Tapping the same emoji removes it;
+     tapping a different one replaces what you had. Errors surface instead of
+     being swallowed — a silent catch here looked exactly like a working write. */
   const toggleReaction = async (chatId, emoji) => {
-    const existing = chatReactions.find((r) => r.chatId === chatId && r.userId === me.id && r.emoji === emoji);
-    if (existing) {
-      setChatReactions((prev) => prev.filter((r) => r !== existing));
-      try { await supabase.from("chat_reactions").delete().eq("chat_id", chatId).eq("user_id", me.id).eq("emoji", emoji); } catch (e) {}
-      return;
+    const mine = chatReactions.find((r) => r.chatId === chatId && r.userId === me.id);
+    const removing = mine && mine.emoji === emoji;
+    setChatReactions((prev) => [
+      ...prev.filter((r) => !(r.chatId === chatId && r.userId === me.id)),
+      ...(removing ? [] : [{ id: `local-${Date.now()}`, chatId, userId: me.id, emoji }]),
+    ]);
+    try {
+      if (mine) await supabase.from("chat_reactions").delete().eq("chat_id", chatId).eq("user_id", me.id);
+      if (!removing) {
+        const { error } = await supabase.from("chat_reactions").insert({ chat_id: chatId, user_id: me.id, emoji });
+        if (error) throw error;
+      }
+    } catch (e) {
+      notify("Couldn't save that reaction.");
+      const { data } = await supabase.from("chat_reactions").select("*");
+      if (data) setChatReactions(data.map((r) => ({ id: r.id, chatId: r.chat_id, userId: r.user_id, emoji: r.emoji })));
     }
-    setChatReactions((prev) => [...prev, { id: `local-${Date.now()}`, chatId, userId: me.id, emoji }]);
-    try { await supabase.from("chat_reactions").insert({ chat_id: chatId, user_id: me.id, emoji }); } catch (e) {}
   };
 
   const answerPitch = async (pitchId, question, answer) => {
@@ -6396,8 +6431,11 @@ export default function App() {
         return <PosterModal m={pm} tournament={tn} posA={posA} posB={posB} tableTop={top}
           onClose={goBackPage} notify={notify} />;
       })()}
-      {statsPosterFor && <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={goBackPage} notify={notify} />}
-      {lineupPosterFor && <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={goBackPage} notify={notify} />}
+      {/* Guard the lookup — a poster with no match behind it used to throw. */}
+      {statsPosterFor && matches.some((x) => x.id === statsPosterFor) &&
+        <StatsPosterModal m={matches.find((x) => x.id === statsPosterFor)} onClose={goBackPage} notify={notify} />}
+      {lineupPosterFor && matches.some((x) => x.id === lineupPosterFor) &&
+        <LineupPosterModal m={matches.find((x) => x.id === lineupPosterFor)} onClose={goBackPage} notify={notify} />}
       {/* NOTIFICATION PANEL — tap-outside closes it */}
       {bellOpen && me.role !== "Admin" && (
         <>
@@ -6536,7 +6574,10 @@ export default function App() {
                   {cm.teamA.name} vs {cm.teamB.name}
                 </div>
                 <div style={{ fontSize: 9.5, color: "#4e5c53", marginTop: 2 }}>
-                  {cm.status === "Live" ? `Live · ${minute(cm)}′` : "Full time"}{here ? ` · ${here} here` : ""}
+                  {cm.status === "Live" ? `Live · ${minute(cm)}′`
+                    : cm.status === "AwaitingScore" ? "Awaiting result"
+                    : cm.status === "ResultPublished" ? "Full time"
+                    : `Kick-off ${cm.time || ""}`}{here ? ` · ${here} here` : ""}
                 </div>
               </div>
               {cm.status === "Live" && (
@@ -6549,7 +6590,7 @@ export default function App() {
               <MatchChat reactions={chatReactions} onReact={toggleReaction} m={cm} me={me} messages={msgs} users={users}
                 onSend={(t, rid) => sendChat(cm.id, t, rid)}
                 onReport={reportChat} onDelete={deleteChat}
-                live={cm.status === "Live"} fullHeight />
+                fullHeight />
             </div>
           </div>
         );
@@ -6941,9 +6982,13 @@ export default function App() {
           alertsOn={goalAlertIds.includes(liveDetailMatch.id)}
           onToggleAlerts={() => setGoalAlertIds((ids) => ids.includes(liveDetailMatch.id) ? ids.filter((x) => x !== liveDetailMatch.id) : [...ids, liveDetailMatch.id])}
           onShare={() => { goBackPage(); openPoster(liveDetailMatch.id); }}
-          onShareLineup={() => { goBackPage(); openLineupPoster(liveDetailMatch.id); }}
+          onShareLineup={() => openLineupPoster(liveDetailMatch.id)}
           allMatches={matches}
-          onShareStats={() => { goBackPage(); openStatsPoster(liveDetailMatch.id); }}
+          /* Don't close the live view first: history.back() resolves on a later
+             tick, so the popstate that followed was closing the poster we'd just
+             pushed. Opening on top also lands you back on the match afterwards,
+             which is where you were. */
+          onShareStats={() => openStatsPoster(liveDetailMatch.id)}
           onClose={goBackPage}
         />
       )}
@@ -8750,7 +8795,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
               )}
 
               {/* MATCH ROOM */}
-              {chatCount > 0 && (
+              {(chatCount > 0 || chatPhase(m) === "open") && (
                 <>
                   <Sec>Match room</Sec>
                   <div className="card tappable" onClick={() => onOpenChat && onOpenChat(m.id)}>
@@ -8760,7 +8805,7 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          “{(lastChat && lastChat.message) || ""}”
+                          {lastChat ? `“${lastChat.message}”` : "Be the first to say something"}
                         </div>
                         <div style={{ fontSize: 10.5, color: "#4e5c53", marginTop: 2 }}>
                           {lastChatName}{lastChatName ? " · " : ""}{chatCount} message{chatCount === 1 ? "" : "s"} before kick-off
@@ -9035,7 +9080,9 @@ function MatchDetail({ m, me, linkedPlayers = [], onOpenPlayer, allMatches = [],
 
         {/* CHAT — captains land here rather than the live view, so the entry
             point has to exist on both screens. Opens the same full-screen chat. */}
-        {(m.status === "Live" || chatMessages.length > 0) && (
+        {/* The row used to need a message to exist before it rendered, so the
+            room could never receive its first one. */}
+        {(chatPhase(m) !== "closed" || chatMessages.length > 0) && (
           <button className="tappable" onClick={() => onOpenChat && onOpenChat(m.id)}
             style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", fontFamily: "inherit", cursor: "pointer",
               background: "#0E140F", border: "1px solid #1b241c", borderLeft: `2px solid ${m.status === "Live" ? "#E6B31E" : "#243128"}`,
